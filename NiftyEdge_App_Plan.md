@@ -75,10 +75,11 @@ This is the sheet replacement — all 7 sheet sections consolidated into one vie
 **Layout:** Header bar + sidebar + two-column main area.
 
 #### Header bar (persistent across all screens)
-- App logo/name (left)
-- **Global expiry selector** (dropdown, filters everything)
-- Last refresh timestamp with live countdown
-- User avatar with dropdown (profile, settings, logout)
+- App logo/name with colored icon badge (left)
+- **Global expiry selector** (dropdown) — fetched **live from NSE** via `/api/market/expiries`, works even when market is closed. Selecting a non-default expiry calls `/api/market/compute-for-expiry` which recalculates: calc range, VIX offset range, DTE, tendency, 25-delta RR, directional signal, max pain, and OI+Fib / Pivot+OI S/R levels — all for the selected expiry chain.
+- Market status badge (Market Open / Market Closed)
+- Notification bell with unread count
+- User avatar with dropdown (dark mode toggle, logout)
 
 #### Sidebar (icon-based, collapsible)
 - Dashboard, Option Chain, Positions, Analytics, Journal, Alerts
@@ -235,7 +236,7 @@ The biggest upgrade from sheets — full CRUD for positions with P&L tracking.
 
 ### 3.5 Analytics (intelligence layer)
 
-Five sub-tabs, each providing different analytical views.
+Six sub-tabs, each providing different analytical views.
 
 #### Tab 1: Performance overview
 - **Summary metrics** (4 cards): Total realized P&L, Win rate (wins/total), Avg profit per expiry, Max drawdown
@@ -269,6 +270,14 @@ Five sub-tabs, each providing different analytical views.
 - **Backtest results:** How often spot stayed within calculated range. Hit rate displayed.
 - **Range accuracy chart:** For each historical expiry, show the predicted range vs actual spot movement. Visual: predicted range as a band, actual as a line.
 - **Suggested calibration:** Based on backtest, suggest optimal VIX offset or range width.
+
+#### Tab 6: Historical Insights (NEW)
+- **EOD signal snapshot capture:** Every trading day at ~15:30, the system records Nifty close, VIX, RR value/verdict, tendency, directional direction/score/factors, and max pain.
+- **Next-day retroactive backfill:** The following day's close is written back so signal accuracy can be measured.
+- **Summary cards:** Total signals captured, bullish accuracy %, bearish accuracy %, tendency agreement %.
+- **Dual-axis chart:** Signal score (line, blue) vs next-day Nifty change % (bars, green/red). Dots colored by correctness.
+- **Signal history table:** Scrollable table of every daily snapshot with date, close, VIX, RR, tendency, direction, score, next-day change, and correct/incorrect badge.
+- **API endpoints:** `GET /api/analytics/historical-signals?days=90`, `GET /api/analytics/signal-accuracy?days=90`.
 
 ---
 
@@ -318,6 +327,12 @@ Simple, clean historical record of all closed trades.
 - Log of all triggered alerts with timestamp and the value at trigger time
 - Useful for reviewing what happened and when
 
+#### Trade Signals tab (NEW)
+- **Active trade suggestions:** Shows pending auto-generated buy suggestions with strike, entry, CMP, SL, target, live P/L %, confidence, rationale, and expiry. User can **Dismiss** or **Take Trade**.
+- **Past suggestions:** Historical list of resolved suggestions (rejected, executed, expired, SL hit) with the same detail cards.
+- **Real-time updates:** Refreshes via WebSocket `trade_suggestions` broadcast when the signals tab is open.
+- **API endpoints:** `GET /api/suggestions/` (active), `GET /api/suggestions/history` (past), `POST /api/suggestions/{id}/reject`, `POST /api/suggestions/{id}/execute`.
+
 #### Notification center
 - Bell icon in header with unread count badge
 - Dropdown panel showing recent notifications
@@ -343,6 +358,9 @@ Simple, clean historical record of all closed trades.
 - calculated_range_top, calculated_range_bottom
 - vix_range_top, vix_range_bottom
 - expected_move, days_to_expiry, tendency
+- expiry_date, expiries_json (full list of available expiries)
+- max_pain, directional_direction, directional_score, directional_factors_agree
+- rr_ce_strike, rr_ce_iv, rr_pe_strike, rr_pe_iv, rr_value, rr_verdict
 
 ### Strike data (per strike per timestamp)
 - timestamp, strike, expiry_date, option_type (CE/PE)
@@ -358,6 +376,18 @@ Simple, clean historical record of all closed trades.
 ### Support/resistance levels (per refresh)
 - timestamp, expiry_date, source (OI_PIVOT, OI_FIB)
 - support_levels (array), resistance_levels (array)
+
+### Daily signal snapshot (NEW — EOD capture for historical insights)
+- id, date (unique), nifty_close, india_vix
+- rr_value, rr_verdict, tendency, directional_direction, directional_score, directional_factors_agree, max_pain
+- next_day_close, next_day_change, next_day_change_pct, signal_correct (backfilled retroactively)
+
+### Trade suggestion (NEW — auto-generated buy signals)
+- id, suggestion_type (OVERNIGHT/INTRADAY), direction (BULLISH/BEARISH), option_type (CE/PE)
+- strike, entry_price, stop_loss, target, expiry_date
+- directional_score, directional_factors, tendency, rr_value, confidence (0-100), rationale
+- status (PENDING/ACTIVE/REJECTED_AUTO/REJECTED_USER/EXECUTED/EXPIRED/SL_HIT)
+- created_at, sanity_checked_at, resolved_at, current_price, nifty_spot_at_creation
 
 ---
 
@@ -400,13 +430,16 @@ Every 15-30 seconds:
 - Dark mode support (traders often prefer it).
 
 ### Color system
-- **Background:** Off-white (#FAFAF9) for main, white for cards
-- **Text:** Near-black (#1A1A1A) primary, gray (#6B6B6B) secondary
+- **Background:** Slate-tinted off-white (#F0F2F5) for main, white (#FFFFFF) for cards — avoids the "all white" problem
+- **Sidebar:** Dark (#111827) in both themes
+- **Text:** Near-black (#111827) primary, muted slate (#475569) secondary, light gray (#94A3B8) muted
 - **Green:** Profit, safe, OK states (#16A34A)
 - **Red:** Loss, danger, critical states (#DC2626)
 - **Amber:** Warning, caution (#D97706)
-- **Blue:** Info, neutral highlights (#2563EB)
-- **Purple:** Analytics/insights accent
+- **Blue:** Info, neutral highlights, primary accent (#2563EB)
+- **Purple:** Analytics/insights accent (#7C3AED)
+- **Borders:** Soft slate (#CBD5E1 / #E2E8F0) for depth without harshness
+- **Dark mode:** Deep navy backgrounds (#0B0F19, #111827) with soft borders (#1E293B)
 
 ### Typography
 - System font stack (Inter or similar sans-serif)
@@ -481,6 +514,61 @@ Every 15-30 seconds:
 | Visual quality | Sheet charts | Smooth interactive canvas |
 | Mobile/tablet | Barely works | Responsive design |
 | Dark mode | Not possible | Supported |
+
+---
+
+## 9. Trade Suggestion Engine (NEW)
+
+Auto-generated buy trade suggestions triggered when directional signal and tendency agree. Designed with strict thresholds because buy trades are inherently risky.
+
+### Two Suggestion Types
+
+| Type | Trigger Window | Sanity Check | SL | Target |
+|------|---------------|--------------|-----|--------|
+| **Overnight** | ~3:15 PM | Once at ~3:25 PM | 70% of entry | 150% of entry |
+| **Intraday** | ~10:00 AM | Every 15 min until 2:00 PM | 75% of entry | 140% of entry |
+
+### Trigger Thresholds
+
+| Parameter | Overnight | Intraday |
+|-----------|-----------|----------|
+| Min factors agree | 6/8 | 6/8 |
+| Min absolute score | 2.0 | 2.5 |
+| Min confidence | 60% | 65% |
+| Sanity min factors | 5/8 | 5/8 |
+
+### Rules
+- Tendency MUST agree with directional signal (strict filter)
+- Suggestions persist as notifications until user dismisses, SL hits, or target is achieved
+- Stale suggestions (>24h) are auto-expired
+- Scheduler broadcasts `trade_suggestions` via WebSocket for real-time UI updates
+
+---
+
+## 10. Page Header Design (NEW)
+
+Each page has a colored icon badge beside the page name:
+
+| Page | Icon | Color |
+|------|------|-------|
+| Dashboard | Target circle | Blue (#2563EB) |
+| Option Chain | Grid square | Red (#DC2626) |
+| Positions | Box | Green (#16A34A) |
+| Analytics | Pie chart | Purple (#7C3AED) |
+| Journal | List | Indigo (#6366F1) |
+| Alerts | Lightning | Amber (#D97706) |
+
+---
+
+## 11. Key Configuration
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| NIFTY lot size | **65** | Updated as of April 2026. Do not change without verification. |
+| Fast refresh | 15 seconds | Spot, VIX, LTP, P&L, risk scores |
+| Slow refresh | 180 seconds | S/R levels, Fibonacci, Pivots |
+| Market hours | Weekdays 9:00-15:45 IST | NSE APIs only hit during this window |
+| VIX Offset default | 50% | Resets to 50 on each page load |
 
 ---
 

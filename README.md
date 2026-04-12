@@ -12,13 +12,14 @@ A real-time web app for NIFTY options traders to monitor positions, track risk, 
 4. [Positions](#positions)
 5. [Trade Journal](#trade-journal)
 6. [Analytics](#analytics)
-7. [Alerts — Setup Guide](#alerts--setup-guide)
-8. [Risk Scoring — How It Works](#risk-scoring--how-it-works)
-9. [Hedge Suggestions](#hedge-suggestions)
-10. [Directional Signal](#directional-signal)
-11. [Support & Resistance Levels](#support--resistance-levels)
-12. [Settings & Preferences](#settings--preferences)
-13. [Running the App](#running-the-app)
+7. [Trade Suggestion Engine](#trade-suggestion-engine)
+8. [Alerts — Setup Guide](#alerts--setup-guide)
+9. [Risk Scoring — How It Works](#risk-scoring--how-it-works)
+10. [Hedge Suggestions](#hedge-suggestions)
+11. [Directional Signal](#directional-signal)
+12. [Support & Resistance Levels](#support--resistance-levels)
+13. [Settings & Preferences](#settings--preferences)
+14. [Running the App](#running-the-app)
 
 ---
 
@@ -207,11 +208,61 @@ Click **Export CSV** to download your full trade history as a spreadsheet file. 
 - **Win Rate by VIX** — shows if you do better in low, medium, or high volatility environments
 - Insights panel with suggestions based on your trading patterns
 
+### Historical Insights Tab (NEW)
+
+Tracks how accurate the app's signals are over time by capturing a daily snapshot at market close.
+
+- **Summary cards:** Total signals, bullish accuracy %, bearish accuracy %, tendency agreement %
+- **Signal chart:** Dual-axis chart with directional score (line) vs next-day Nifty change % (bars). Dots colored green (correct) or red (incorrect)
+- **Signal table:** Full history with date, close, VIX, RR, tendency, direction, score, next-day change, and correct/wrong badge
+- The system automatically captures signals at ~3:30 PM each day and backfills the previous day's actual Nifty performance the next day
+
+---
+
+## Trade Suggestion Engine
+
+The app can auto-generate **buy trade suggestions** when the directional signal and tendency agree. These are designed to be highly selective because buy trades are inherently risky.
+
+### Two Types of Suggestions
+
+| Type | When | What Happens |
+|------|------|-------------|
+| **Overnight** | ~3:15 PM | If 6+ factors agree with score >= 2.0 and tendency confirms, a buy suggestion is created. Sanity-checked at ~3:25 PM — if signal weakens, it's auto-rejected. SL = 70% of entry, Target = 150% |
+| **Intraday** | ~10:00 AM | Stricter: 6+ factors, score >= 2.5, confidence >= 65%. Sanity-checked every 15 min until 2 PM. SL = 75%, Target = 140% |
+
+### Where to See Them
+
+- **Dashboard:** Active suggestions appear in a card at the bottom with strike, entry, CMP, SL, target, confidence, and action buttons
+- **Alerts page → Trade Signals tab:** Full view of active and past suggestions with Dismiss/Take Trade buttons
+
+### How Suggestions Resolve
+
+| Status | Meaning |
+|--------|---------|
+| PENDING | Awaiting sanity check |
+| ACTIVE | Passed sanity check, waiting for user action |
+| REJECTED_AUTO | Failed sanity check (signal weakened) |
+| REJECTED_USER | User dismissed the suggestion |
+| EXECUTED | User took the trade |
+| SL_HIT | Stop loss was hit |
+| EXPIRED | Stale (>24h old, no action taken) |
+
+### Tips
+- Only act on suggestions with confidence > 60%
+- The system is intentionally conservative — you may go days without a suggestion
+- Always verify the rationale before taking a trade
+- These are directional buy trades, not hedges — use the hedge system for risk management
+
 ---
 
 ## Alerts — Setup Guide
 
 Alerts notify you when important market conditions change. You get a toast notification on screen and the bell icon in the header shows the count of recent alerts.
+
+The Alerts page has three tabs:
+- **Active Alerts** — your armed alert rules
+- **Alert History** — log of triggered alerts
+- **Trade Signals** — auto-generated buy suggestions (see [Trade Suggestion Engine](#trade-suggestion-engine))
 
 ### How to Create an Alert
 
@@ -331,7 +382,7 @@ The app automatically adjusts which factors matter most based on how many days a
 
 - **Strike & LTP**: The option strike and price to buy
 - **Qty**: How many lots (auto-calculated, max 3 lots)
-- **Cost**: Total premium to pay (LTP x lots x 75)
+- **Cost**: Total premium to pay (LTP x lots x 65)
 - **Worst P&L**: Your total P&L if NIFTY moves 200 points against you (including the hedge)
 - **Best P&L**: Your P&L if NIFTY stays put and you keep your sold premium
 - **Confidence**: 0-100 score. Above 60 = strong suggestion. Below 40 = weak (consider alternatives)
@@ -399,7 +450,7 @@ Found on the Dashboard chart card. Controls how wide the "VIX Range" amber band 
 - **0%** = same as the calculated range (1 standard deviation)
 - **50%** (default) = 1.5x the standard move — gives you more buffer
 - **100%** = 2x the standard move — very conservative
-- Your setting is saved and remembered across sessions
+- Default resets to 50% on each page load for consistency
 
 ### Dark Mode
 
@@ -407,7 +458,17 @@ Click your name in the top-right corner, then click **Dark Mode** to switch. You
 
 ### Expiry Selector
 
-The dropdown in the header lets you switch between available expiries. The app defaults to the nearest weekly expiry.
+The dropdown in the header shows **all available NIFTY expiries** fetched live from NSE — this works even when the market is closed. Selecting a different expiry recalculates:
+- Calculated range and VIX offset range
+- Days to expiry
+- 25-delta Risk Reversal (CE/PE IV, RR value, verdict)
+- Tendency
+- Directional Signal (8 factors)
+- Max Pain
+- OI + Fibonacci S/R levels
+- Pivot + OI S/R levels
+
+This is useful when you want to plan for the next expiry before the current one expires — e.g., exiting a 7-Apr position a day early and setting up for 13-Apr.
 
 ---
 
@@ -471,7 +532,7 @@ Set these alerts first (most important to least):
 
 | Number | Meaning |
 |--------|---------|
-| **75** | NIFTY lot size (1 lot = 75 units) |
+| **65** | NIFTY lot size (1 lot = 65 units, as of April 2026) |
 | **0.25 delta** | The "comfort zone" boundary — above this your OTM option is getting risky |
 | **0.35 delta** | Hard trigger — hedge immediately |
 | **3x premium** | Hard trigger — your option has tripled against you |
