@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NiftyEdge — Strategy Builder</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <style>
+        /* ── Analytics Bar ─────────────────────────────────────────── */
+        .analytics-bar {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px 18px;
+            margin-bottom: 18px;
+        }
+        .analytics-bar-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        .analytics-bar-row + .analytics-bar-row {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+        }
+        .analytics-pill {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px 12px;
+            min-width: 80px;
+            cursor: default;
+        }
+        .analytics-pill .pill-label {
+            font-size: 9px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 2px;
+        }
+        .analytics-pill .pill-value {
+            font-size: 13px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            white-space: nowrap;
+        }
+        .analytics-pill .pill-sub {
+            font-size: 9px;
+            color: var(--text-muted);
+            margin-top: 1px;
+        }
+
+        /* ── Main Layout ───────────────────────────────────────────── */
+        .strategy-layout {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            gap: 16px;
+            align-items: start;
+        }
+
+        /* ── Rankings Panel ─────────────────────────────────────────── */
+        .rankings-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 0;
+            overflow: hidden;
+        }
+        .rankings-panel .panel-title {
+            font-size: 13px;
+            font-weight: 600;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-secondary);
+        }
+        .ranking-card {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .ranking-card:hover { background: var(--bg-secondary); }
+        .ranking-card.selected { background: color-mix(in srgb, var(--primary, #2563EB) 10%, transparent); border-left: 3px solid var(--primary, #2563EB); }
+        .ranking-card:last-child { border-bottom: none; }
+        .ranking-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 4px;
+        }
+        .ranking-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 10px;
+            color: #fff;
+            min-width: 40px;
+            text-align: center;
+        }
+        .badge-green { background: #16A34A; }
+        .badge-amber { background: #D97706; }
+        .badge-red   { background: #9CA3AF; }
+        .ranking-name {
+            font-size: 13px;
+            font-weight: 600;
+            flex: 1;
+        }
+        .ranking-rationale {
+            font-size: 11px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+        .ranking-card.high-yield {
+            border-left: 3px solid #F59E0B;
+            background: color-mix(in srgb, #F59E0B 5%, transparent);
+        }
+        .ranking-card.high-yield:hover { background: color-mix(in srgb, #F59E0B 10%, transparent); }
+        .badge-yield {
+            font-size: 9px;
+            font-weight: 800;
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: linear-gradient(90deg, #D97706, #F59E0B);
+            color: #fff;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .risk-note {
+            font-size: 10px;
+            color: #D97706;
+            margin-top: 4px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* ── Right Panel (Wizard + Active) ──────────────────────────── */
+        .wizard-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .wizard-tabs {
+            display: flex;
+            border-bottom: 2px solid var(--border);
+            background: var(--bg-secondary);
+        }
+        .wizard-tabs button {
+            padding: 12px 20px;
+            border: none;
+            background: none;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+        .wizard-tabs button.active {
+            color: var(--primary, #2563EB);
+            border-bottom-color: var(--primary, #2563EB);
+            font-weight: 600;
+        }
+        .wizard-tab-content { display: none; padding: 20px; }
+        .wizard-tab-content.active { display: block; }
+
+        /* ── Leg config ─────────────────────────────────────────────── */
+        .leg-row {
+            display: grid;
+            grid-template-columns: 60px 70px 100px 60px 36px;
+            gap: 6px;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        .leg-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+        .badge-sell { background: #FEE2E2; color: #DC2626; }
+        .badge-buy  { background: #DCFCE7; color: #16A34A; }
+
+        /* ── Payoff Canvas ──────────────────────────────────────────── */
+        #payoff-canvas { width: 100%; height: 220px; display: block; }
+
+        /* ── Active strategies table ────────────────────────────────── */
+        .strategy-row {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            margin-bottom: 10px;
+        }
+        .strategy-row-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .legs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .leg-cell {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <div class="sidebar" id="sidebar"></div>
+        <div class="main-content">
+            <div class="header" id="header"></div>
+            <div class="content-area">
+
+                <!-- Analytics Bar -->
+                <div class="analytics-bar" id="analytics-bar">
+                    <div class="analytics-bar-row" id="analytics-row1">
+                        <span style="font-size:11px;color:var(--text-muted)">Loading analytics...</span>
+                    </div>
+                    <div class="analytics-bar-row" id="analytics-row2"></div>
+                </div>
+
+                <!-- Main layout: Rankings | Wizard -->
+                <div class="strategy-layout">
+
+                    <!-- Left: Rankings -->
+                    <div class="rankings-panel">
+                        <div class="panel-title">&#9733; Strategy Rankings <span style="font-size:10px;font-weight:400;color:var(--text-muted)">(best-to-worst for current market)</span></div>
+                        <div id="rankings-container">
+                            <div class="text-muted text-center" style="padding:32px">Loading rankings...</div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Wizard Panel -->
+                    <div class="wizard-panel">
+                        <div class="wizard-tabs">
+                            <button class="active" onclick="showWizardTab('new')">New Strategy</button>
+                            <button onclick="showWizardTab('active')">Active Strategies</button>
+                        </div>
+
+                        <!-- New Strategy Tab -->
+                        <div class="wizard-tab-content active" id="tab-new">
+                            <div id="wizard-placeholder" style="text-align:center;padding:40px;color:var(--text-muted)">
+                                &#8592; Select a strategy from the rankings to configure it
+                            </div>
+                            <div id="wizard-content" style="display:none">
+                                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                                    <div>
+                                        <div style="font-size:16px;font-weight:700" id="wizard-title">Iron Condor</div>
+                                        <div style="font-size:12px;color:var(--text-muted)" id="wizard-subtitle"></div>
+                                    </div>
+                                    <span id="wizard-score-badge" class="ranking-badge badge-green" style="font-size:12px;padding:5px 12px"></span>
+                                </div>
+
+                                <!-- Strike configuration -->
+                                <div style="margin-bottom:16px">
+                                    <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text-secondary)">STRIKE CONFIGURATION</div>
+                                    <div id="wizard-legs-container"></div>
+                                    <button class="btn btn-sm btn-secondary" onclick="loadStrikeSuggestions()" style="margin-top:4px;font-size:11px">&#8635; Refresh suggestions</button>
+                                </div>
+
+                                <!-- Payoff diagram -->
+                                <div style="margin-bottom:16px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:12px">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                                        <span style="font-size:12px;font-weight:600">Payoff at Expiry</span>
+                                        <span style="font-size:11px;color:var(--text-muted)" id="payoff-info"></span>
+                                    </div>
+                                    <canvas id="payoff-canvas"></canvas>
+                                </div>
+
+                                <!-- Execute -->
+                                <div style="display:flex;gap:10px;align-items:center">
+                                    <div class="form-group" style="flex:1;margin:0">
+                                        <label class="form-label" style="font-size:11px">Lots per leg</label>
+                                        <input type="number" id="wizard-lots" class="form-input" value="1" min="1" style="padding:6px 10px" onchange="previewPayoff()">
+                                    </div>
+                                    <div class="form-group" style="flex:2;margin:0">
+                                        <label class="form-label" style="font-size:11px">Expiry</label>
+                                        <select id="wizard-expiry" class="form-select" style="padding:6px 10px"></select>
+                                    </div>
+                                </div>
+                                <button class="btn btn-primary" onclick="executeStrategy()" style="width:100%;margin-top:12px;font-size:13px">
+                                    &#9654; Execute Strategy
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Active Strategies Tab -->
+                        <div class="wizard-tab-content" id="tab-active">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                                <span style="font-size:13px;font-weight:600">Active Strategies</span>
+                                <button class="btn btn-sm btn-secondary" onclick="loadActiveStrategies()">&#8635; Refresh</button>
+                            </div>
+                            <div id="active-strategies-container">
+                                <div class="text-muted text-center" style="padding:32px">Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/utils.js"></script>
+    <script>
+        if (!API.requireAuth()) throw new Error('Not authenticated');
+
+        document.getElementById('sidebar').innerHTML = Utils.buildSidebar('strategy-builder');
+        document.getElementById('header').innerHTML = Utils.buildHeader('Strategy Builder');
+
+        let analyticsData = null;   // from /api/strategies/market-analytics
+        let rankingsData = [];      // from /api/strategies/rankings
+        let selectedStrategy = null; // {strategy_type, confidence_score, ...}
+        let currentExpiry = '';
+        let payoffData = null;      // from /api/strategies/{id}/payoff (after create)
+
+        // Default strike suggestions per strategy type (populated from analytics)
+        const strategyLegsTemplate = {
+            IRON_CONDOR: [
+                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +200 },
+                { label: 'CE BUY',  optType: 'CE', action: 'BUY',  offset: +400 },
+                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -200 },
+                { label: 'PE BUY',  optType: 'PE', action: 'BUY',  offset: -400 },
+            ],
+            STRANGLE: [
+                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +250 },
+                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -250 },
+            ],
+            BULL_PUT_SPREAD: [
+                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -100 },
+                { label: 'PE BUY',  optType: 'PE', action: 'BUY',  offset: -200 },
+            ],
+            BEAR_CALL_SPREAD: [
+                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +100 },
+                { label: 'CE BUY',  optType: 'CE', action: 'BUY',  offset: +200 },
+            ],
+            CALENDAR_SPREAD: [
+                { label: 'CE SELL (near)', optType: 'CE', action: 'SELL', offset: 0 },
+                { label: 'CE BUY (far)',   optType: 'CE', action: 'BUY',  offset: 0, useFarExpiry: true },
+            ],
+        };
+
+        // ── Init ───────────────────────────────────────────────────────
+        (async () => {
+            await Utils.initHeader();
+            const sel = document.getElementById('expiry-selector');
+            if (sel) {
+                currentExpiry = sel.value;
+                sel.addEventListener('change', () => {
+                    currentExpiry = sel.value;
+                    loadAll();
+                });
+            }
+            await loadAll();
+            showWizardTab('new');
+        })();
+
+        async function loadAll() {
+            await Promise.all([loadAnalytics(), loadRankings()]);
+        }
+
+        // ── Analytics Bar ──────────────────────────────────────────────
+        async function loadAnalytics() {
+            try {
+                analyticsData = await API.getMarketAnalytics(currentExpiry);
+                renderAnalyticsBar(analyticsData);
+            } catch (e) {
+                document.getElementById('analytics-row1').innerHTML =
+                    '<span style="font-size:11px;color:var(--text-muted)">Analytics unavailable</span>';
+            }
+        }
+
+        function renderAnalyticsBar(d) {
+            if (!d) return;
+
+            const ivRankColor = d.iv_rank > 70 ? '#DC2626' : d.iv_rank < 30 ? '#16A34A' : '#D97706';
+            const gexColor = d.gex > 0 ? '#16A34A' : '#DC2626';
+            const dirColor = d.direction === 'BULLISH' ? '#16A34A' : d.direction === 'BEARISH' ? '#DC2626' : '#D97706';
+            const rrColor  = d.rr_verdict === 'Bullish' ? '#16A34A' : d.rr_verdict === 'Bearish' ? '#DC2626' : '#D97706';
+
+            // RR historical z-score label
+            const rrZ = d.rr_zscore;
+            const rrZSub = rrZ && rrZ.z_score != null
+                ? `z=${rrZ.z_score > 0 ? '+' : ''}${rrZ.z_score.toFixed(1)} ${rrZ.classification ? '· ' + rrZ.classification.split(' ').slice(0,2).join(' ') : ''}`
+                : d.rr_verdict || '';
+
+            // GEX regime label + gamma flip
+            const gexFlipSub = d.gex_regime
+                ? d.gex_regime + (d.gamma_flip ? ` · flip@${Utils.formatNum(d.gamma_flip)}` : '')
+                : (d.gex > 0 ? 'Mean-rev' : 'Trending');
+
+            // Data quality badge on IV Rank
+            const ivRankSub = d.low_data_warning ? `${d.data_days}d — low data` : `${d.data_days}d history`;
+
+            document.getElementById('analytics-row1').innerHTML = `
+                ${pill('IV Rank', d.iv_rank != null ? d.iv_rank.toFixed(1) + '%' : '-', ivRankSub, ivRankColor)}
+                ${pill('IV %ile', d.iv_percentile != null ? d.iv_percentile.toFixed(1) + '%' : '-', '')}
+                ${pill('ATM IV', d.atm_iv != null ? d.atm_iv.toFixed(2) + '%' : '-', '')}
+                ${pill('52w Hi/Lo', d.iv_52wk_high != null ? d.iv_52wk_high.toFixed(1) + '/' + d.iv_52wk_low.toFixed(1) : '-', '')}
+                ${pill('IV Skew', d.iv_skew != null ? (d.iv_skew > 0 ? '+' : '') + d.iv_skew.toFixed(2) + '%' : '-', 'PE−CE OTM avg')}
+                ${pill('Butterfly', d.butterfly != null ? (d.butterfly > 0 ? '+' : '') + d.butterfly.toFixed(2) + '%' : '-', '25Δ wings vs ATM')}
+                ${pill('Term Structure', d.term_structure ? d.term_structure.shape : '-', d.term_structure ? (d.term_structure.near_atm_iv?.toFixed(1) + '% → ' + (d.term_structure.far_atm_iv?.toFixed(1) || '?') + '%') : '')}
+                ${pill('Straddle', d.straddle_price != null ? '₹' + Utils.formatNum(d.straddle_price) : '-', d.implied_move_pct != null ? '±' + d.implied_move_pct.toFixed(2) + '%' : '')}
+            `;
+
+            document.getElementById('analytics-row2').innerHTML = `
+                ${pill('RR', d.rr_value != null ? (d.rr_value > 0 ? '+' : '') + d.rr_value.toFixed(2) : '-', rrZSub, rrColor)}
+                ${pill('Direction', d.direction || '-', (d.factors_agree || 0) + '/8 agree', dirColor)}
+                ${pill('Tendency', d.tendency || '-', d.tendency_confidence || '')}
+                ${pill('PCR (OI)', d.pcr_oi != null ? d.pcr_oi.toFixed(2) : '-', d.pcr_oi > 1.2 ? 'Bullish' : d.pcr_oi < 0.8 ? 'Bearish' : 'Neutral')}
+                ${pill('Vol PCR', d.vol_pcr != null ? d.vol_pcr.toFixed(2) : '-', 'Near-ATM')}
+                ${pill('Max Pain', d.max_pain != null ? Utils.formatNum(d.max_pain) : '-', '')}
+                ${pill('GEX', d.gex != null ? (d.gex > 0 ? '+' : '') + (d.gex / 1e6).toFixed(2) + 'M' : '-', gexFlipSub, gexColor)}
+                ${pill('VIX', d.vix != null ? d.vix.toFixed(2) : '-', '')}
+                ${pill('OI Support', d.oi_support ? Utils.formatNum(d.oi_support) : '-', 'Max PE OI')}
+                ${pill('OI Resist', d.oi_resistance ? Utils.formatNum(d.oi_resistance) : '-', 'Max CE OI')}
+            `;
+        }
+
+        function pill(label, value, sub = '', color = '') {
+            return `<div class="analytics-pill">
+                <div class="pill-label">${label}</div>
+                <div class="pill-value" style="${color ? 'color:' + color : ''}">${value}</div>
+                ${sub ? `<div class="pill-sub">${sub}</div>` : ''}
+            </div>`;
+        }
+
+        // ── Rankings ───────────────────────────────────────────────────
+        async function loadRankings() {
+            try {
+                const resp = await API.getStrategyRankings(currentExpiry);
+                rankingsData = resp.rankings || [];
+                renderRankings();
+            } catch (e) {
+                document.getElementById('rankings-container').innerHTML =
+                    '<div class="text-muted text-center" style="padding:32px">Failed to load rankings.</div>';
+            }
+        }
+
+        function renderRankings() {
+            const c = document.getElementById('rankings-container');
+            if (!rankingsData.length) {
+                c.innerHTML = '<div class="text-muted text-center" style="padding:32px">No rankings available.</div>';
+                return;
+            }
+            c.innerHTML = rankingsData.map((r, i) => {
+                const badgeCls = r.confidence_score >= 70 ? 'badge-green' : r.confidence_score >= 45 ? 'badge-amber' : 'badge-red';
+                const isSelected = selectedStrategy && selectedStrategy.strategy_type === r.strategy_type;
+                const isStrangle = r.strategy_type === 'STRANGLE' || r.strategy_type === 'SHORT_STRANGLE';
+                const cardClass = isSelected ? 'selected' : (isStrangle ? 'high-yield' : '');
+
+                // Ranked position label — strangles always shown with their actual rank
+                const rankLabel = `<span style="font-size:12px;color:var(--text-muted);min-width:16px">${i + 1}.</span>`;
+
+                // High-yield badge only for strangles (premium collection strategy)
+                const yieldBadge = isStrangle
+                    ? `<span class="badge-yield" title="Highest raw premium collection via dual short strikes">HIGH YIELD</span>`
+                    : '';
+
+                // Risk note for unlimited-risk strategies
+                const riskNote = isStrangle
+                    ? `<div class="risk-note">⚠ Unlimited risk on both wings — size carefully and keep a hedge plan</div>`
+                    : '';
+
+                return `<div class="ranking-card ${cardClass}" onclick="selectStrategy(${i})">
+                    <div class="ranking-row">
+                        ${rankLabel}
+                        <span class="ranking-badge ${badgeCls}">${r.confidence_score.toFixed(0)}</span>
+                        <span class="ranking-name">${r.label}</span>
+                        ${yieldBadge}
+                    </div>
+                    <div class="ranking-rationale">${r.rationale}</div>
+                    ${riskNote}
+                </div>`;
+            }).join('');
+        }
+
+        function selectStrategy(idx) {
+            selectedStrategy = rankingsData[idx];
+            renderRankings(); // re-render to show selection
+            showWizardTab('new');
+            renderWizard();
+        }
+
+        // ── Wizard ─────────────────────────────────────────────────────
+        function showWizardTab(tab) {
+            document.querySelectorAll('.wizard-tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.wizard-tabs button').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+            document.querySelectorAll('.wizard-tabs button')[tab === 'new' ? 0 : 1].classList.add('active');
+            if (tab === 'active') loadActiveStrategies();
+        }
+
+        function renderWizard() {
+            if (!selectedStrategy) return;
+            document.getElementById('wizard-placeholder').style.display = 'none';
+            document.getElementById('wizard-content').style.display = 'block';
+            document.getElementById('wizard-title').textContent = selectedStrategy.label;
+
+            const score = selectedStrategy.confidence_score;
+            const badge = document.getElementById('wizard-score-badge');
+            badge.textContent = 'Score: ' + score.toFixed(0);
+            badge.className = 'ranking-badge ' + (score >= 70 ? 'badge-green' : score >= 45 ? 'badge-amber' : 'badge-red');
+
+            // Populate expiry
+            const sel = document.getElementById('wizard-expiry');
+            const headerSel = document.getElementById('expiry-selector');
+            if (headerSel) sel.innerHTML = headerSel.innerHTML;
+            sel.value = currentExpiry;
+
+            loadStrikeSuggestions();
+        }
+
+        function loadStrikeSuggestions() {
+            if (!selectedStrategy || !analyticsData) return;
+            const spot = analyticsData.spot || 22000;
+            const atm = Math.round(spot / 50) * 50;
+            const template = strategyLegsTemplate[selectedStrategy.strategy_type] || [];
+            const c = document.getElementById('wizard-legs-container');
+            c.innerHTML = template.map((leg, i) => {
+                const strike = atm + leg.offset;
+                const rounded = Math.round(strike / 50) * 50;
+                const badgeCls = leg.action === 'SELL' ? 'badge-sell' : 'badge-buy';
+                return `<div class="leg-row">
+                    <span class="leg-badge ${badgeCls}">${leg.action}</span>
+                    <select class="form-select" id="leg-opt-${i}" style="padding:4px 6px;font-size:12px">
+                        <option value="CE" ${leg.optType === 'CE' ? 'selected' : ''}>CE</option>
+                        <option value="PE" ${leg.optType === 'PE' ? 'selected' : ''}>PE</option>
+                    </select>
+                    <input type="number" class="form-input" id="leg-strike-${i}" value="${rounded}" step="50" style="padding:4px 6px;font-size:12px">
+                    <span style="font-size:11px;color:var(--text-muted)">${leg.label.split(' ')[0] === leg.optType ? '' : ''}</span>
+                    <input type="hidden" id="leg-action-${i}" value="${leg.action}">
+                </div>`;
+            }).join('');
+            previewPayoff();
+        }
+
+        function previewPayoff() {
+            if (!selectedStrategy || !analyticsData) return;
+            const spot = analyticsData.spot || 22000;
+            const lots = parseInt(document.getElementById('wizard-lots').value) || 1;
+            const LOT = 65;
+            const template = strategyLegsTemplate[selectedStrategy.strategy_type] || [];
+            const legs = template.map((_, i) => {
+                const action = document.getElementById('leg-action-' + i)?.value || 'SELL';
+                const optType = document.getElementById('leg-opt-' + i)?.value || 'CE';
+                const strike = parseInt(document.getElementById('leg-strike-' + i)?.value) || 0;
+                return { action, optType, strike, lots };
+            }).filter(l => l.strike > 0);
+
+            // Compute payoff at expiry across spot range
+            const steps = [];
+            const spotMin = Math.round(spot - 600);
+            const spotMax = Math.round(spot + 600);
+            let netPremium = 0;
+            // We don't have LTPs client-side — use intrinsic only (fair approximation)
+            for (let s = spotMin; s <= spotMax; s += 50) {
+                let pnl = netPremium;
+                for (const leg of legs) {
+                    const intrinsic = leg.optType === 'CE' ? Math.max(s - leg.strike, 0) : Math.max(leg.strike - s, 0);
+                    const qty = leg.lots * LOT;
+                    pnl += leg.action === 'SELL' ? -intrinsic * qty : intrinsic * qty;
+                }
+                steps.push({ s, pnl });
+            }
+
+            drawPayoffCanvas(steps, spot);
+        }
+
+        function drawPayoffCanvas(steps, spot) {
+            const canvas = document.getElementById('payoff-canvas');
+            if (!canvas) return;
+            const dpr = window.devicePixelRatio || 1;
+            const W = canvas.clientWidth || canvas.offsetWidth || 500;
+            const H = 220;
+            canvas.width = W * dpr;
+            canvas.height = H * dpr;
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+
+            const PAD = { top: 20, bottom: 28, left: 60, right: 20 };
+            const cW = W - PAD.left - PAD.right;
+            const cH = H - PAD.top - PAD.bottom;
+
+            const pnls = steps.map(p => p.pnl);
+            const pnlMin = Math.min(...pnls, 0);
+            const pnlMax = Math.max(...pnls, 0);
+            const pnlRange = pnlMax - pnlMin || 1;
+            const spotMin = steps[0].s;
+            const spotMax = steps[steps.length - 1].s;
+            const spotRange = spotMax - spotMin || 1;
+
+            const toX = s => PAD.left + (s - spotMin) / spotRange * cW;
+            const toY = p => PAD.top + cH - (p - pnlMin) / pnlRange * cH;
+
+            // Detect dark mode
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const bg = isDark ? '#1F2937' : '#F9FAFB';
+            const gridColor = isDark ? '#374151' : '#E5E7EB';
+            const textColor = isDark ? '#9CA3AF' : '#6B7280';
+
+            ctx.fillStyle = bg;
+            ctx.fillRect(0, 0, W, H);
+
+            // Zero line
+            const zeroY = toY(0);
+            ctx.strokeStyle = '#9CA3AF';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(PAD.left, zeroY);
+            ctx.lineTo(PAD.left + cW, zeroY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // P&L line — fill below/above zero
+            ctx.beginPath();
+            steps.forEach((p, i) => {
+                const x = toX(p.s), y = toY(p.pnl);
+                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            });
+            ctx.strokeStyle = '#2563EB';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Fill profit area
+            ctx.save();
+            ctx.beginPath();
+            steps.forEach((p, i) => {
+                const x = toX(p.s), y = toY(p.pnl);
+                i === 0 ? ctx.moveTo(x, zeroY) : null;
+                ctx.lineTo(x, y);
+            });
+            ctx.lineTo(toX(steps[steps.length - 1].s), zeroY);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(22, 163, 74, 0.15)';
+            ctx.fill();
+
+            // Fill loss area
+            ctx.beginPath();
+            steps.forEach((p, i) => {
+                const x = toX(p.s), y = toY(p.pnl);
+                if (i === 0) ctx.moveTo(x, zeroY);
+                ctx.lineTo(x, y);
+            });
+            ctx.lineTo(toX(steps[steps.length - 1].s), zeroY);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(220, 38, 38, 0.12)';
+            ctx.fill();
+            ctx.restore();
+
+            // Spot vertical line
+            const spotX = toX(spot);
+            ctx.strokeStyle = '#EF4444';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(spotX, PAD.top);
+            ctx.lineTo(spotX, PAD.top + cH);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Spot label
+            ctx.fillStyle = '#EF4444';
+            ctx.font = 'bold 10px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('CMP', spotX, PAD.top - 4);
+
+            // Y axis labels
+            ctx.fillStyle = textColor;
+            ctx.font = '10px Inter, sans-serif';
+            ctx.textAlign = 'right';
+            [pnlMin, 0, pnlMax].forEach(v => {
+                const y = toY(v);
+                ctx.fillText((v >= 0 ? '+' : '') + Math.round(v / 1000) + 'K', PAD.left - 4, y + 3);
+                ctx.strokeStyle = gridColor;
+                ctx.lineWidth = 0.5;
+                ctx.beginPath();
+                ctx.moveTo(PAD.left, y);
+                ctx.lineTo(PAD.left + cW, y);
+                ctx.stroke();
+            });
+
+            // Info
+            const maxP = Math.max(...pnls);
+            const maxL = Math.min(...pnls);
+            document.getElementById('payoff-info').textContent =
+                `Max profit: ₹${Utils.formatNum(maxP)} | Max loss: ₹${Utils.formatNum(maxL)}`;
+        }
+
+        async function executeStrategy() {
+            if (!selectedStrategy) return;
+            const lots = parseInt(document.getElementById('wizard-lots').value) || 1;
+            const expiry = document.getElementById('wizard-expiry').value;
+            if (!expiry) { Utils.toast('Select an expiry', 'warning'); return; }
+
+            const template = strategyLegsTemplate[selectedStrategy.strategy_type] || [];
+            const legs = template.map((_, i) => ({
+                option_type: document.getElementById('leg-opt-' + i)?.value || 'CE',
+                action: document.getElementById('leg-action-' + i)?.value || 'SELL',
+                strike: parseInt(document.getElementById('leg-strike-' + i)?.value) || 0,
+                lots,
+            })).filter(l => l.strike > 0);
+
+            if (!legs.length) { Utils.toast('Configure legs first', 'warning'); return; }
+            if (!confirm(`Execute ${selectedStrategy.label} with ${legs.length} legs @ ${expiry}?`)) return;
+
+            try {
+                const resp = await API.createStrategy({
+                    strategy_type: selectedStrategy.strategy_type,
+                    expiry_date: expiry,
+                    legs,
+                });
+                Utils.toast(`Strategy created: ${resp.name} (${resp.legs_created} legs)`, 'success');
+                showWizardTab('active');
+            } catch (e) {
+                Utils.toast('Strategy execution failed', 'error');
+            }
+        }
+
+        // ── Active Strategies ──────────────────────────────────────────
+        async function loadActiveStrategies() {
+            const c = document.getElementById('active-strategies-container');
+            c.innerHTML = '<div class="text-muted text-center" style="padding:24px">Loading...</div>';
+            try {
+                const resp = await API.getStrategies();
+                const strategies = resp.strategies || [];
+                if (!strategies.length) {
+                    c.innerHTML = '<div class="text-muted text-center" style="padding:32px">No active strategies. Create one from the New Strategy tab.</div>';
+                    return;
+                }
+                c.innerHTML = strategies.map(s => renderStrategyRow(s)).join('');
+            } catch (e) {
+                c.innerHTML = '<div class="text-muted text-center" style="padding:24px">Failed to load strategies.</div>';
+            }
+        }
+
+        function renderStrategyRow(s) {
+            const pnlColor = s.total_pnl >= 0 ? '#16A34A' : '#DC2626';
+            return `<div class="strategy-row">
+                <div class="strategy-row-header">
+                    <div>
+                        <div style="font-weight:600;font-size:14px">${s.name}</div>
+                        <div style="font-size:11px;color:var(--text-muted)">${s.expiry_date} | ${s.dte}d remaining | ${s.legs.length} legs</div>
+                    </div>
+                    <div style="text-align:right">
+                        <div style="font-size:16px;font-weight:700;font-family:var(--font-mono);color:${pnlColor}">${Utils.formatINR(s.total_pnl)}</div>
+                        <div style="font-size:10px;color:var(--text-muted)">Unrealized P&L</div>
+                    </div>
+                </div>
+                <div class="legs-grid">
+                    ${s.legs.map(l => `
+                        <div class="leg-cell">
+                            <div style="font-weight:600;font-size:12px">${l.trade_type} ${l.strike}</div>
+                            <div style="color:var(--text-muted);font-size:10px">Entry ₹${l.entry_premium} | LTP ₹${l.current_ltp}</div>
+                            <div style="font-weight:600;font-size:11px;color:${l.pnl >= 0 ? '#16A34A' : '#DC2626'}">${Utils.formatINR(l.pnl)}</div>
+                        </div>
+                    `).join('')}
+                </div>
+                <div style="text-align:right;margin-top:10px">
+                    <button class="btn btn-sm btn-danger" onclick="closeStrategyConfirm(${s.id}, '${s.name}')">Close All Legs</button>
+                </div>
+            </div>`;
+        }
+
+        async function closeStrategyConfirm(id, name) {
+            if (!confirm(`Close all legs of "${name}"? This will mark them as CLOSED at current LTP.`)) return;
+            try {
+                const resp = await API.closeStrategy(id);
+                Utils.toast(`Strategy closed. Realized P&L: ${Utils.formatINR(resp.total_realized_pnl)}`, 'success');
+                loadActiveStrategies();
+            } catch (e) {
+                Utils.toast('Close failed', 'error');
+            }
+        }
+
+        // Theme change: redraw canvas
+        window.addEventListener('themechange', () => {
+            if (selectedStrategy && analyticsData) previewPayoff();
+        });
+    </script>
+</body>
+</html>

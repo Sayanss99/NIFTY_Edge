@@ -4,7 +4,7 @@ import numpy as np
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from database import get_db
-from models import MarketSnapshot, SRLevel
+from models import MarketSnapshot, SRLevel, IVDailyRecord
 from auth import get_current_user
 
 
@@ -343,4 +343,236 @@ def strike_lookup(
         "volume": _py(row["Volume"]),
         "premium_rank": premium_ranking(float(row["LTP"]), strike, option_type),
         "spot": _py(spot),
+    }
+
+
+# ── IV Rank / IV Percentile ───────────────────────────────────────────────────
+
+@router.get("/iv-rank")
+def get_iv_rank(
+    days: int = Query(252, ge=5, le=1000),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Return IV Rank and IV Percentile from historical IVDailyRecord data.
+
+    IV Rank   = (current - min) / (max - min) × 100
+    IV %ile   = % of historical days where ATM IV < current
+    Signal    = dual-threshold: BOTH rank AND percentile must exceed cutoffs.
+    Data quality warning shown when history < 30 days.
+    """
+    import statistics
+    from sqlalchemy import desc as _desc
+
+    rows = (
+        db.query(IVDailyRecord)
+        .order_by(_desc(IVDailyRecord.date))
+        .limit(days)
+        .all()
+    )
+
+    if len(rows) < 5:
+        return {
+            "status": "no_data",
+            "current_atm_iv": None,
+            "iv_rank": None,
+            "iv_percentile": None,
+            "iv_52wk_high": None,
+            "iv_52wk_low": None,
+            "iv_mean": None,
+            "iv_median": None,
+            "data_days": len(rows),
+            "signal": "Insufficient data (need ≥5 records)",
+            "is_proxy_data": True,
+            "low_data_warning": True,
+        }
+
+    iv_values = [r.atm_iv for r in rows]
+    current_iv = iv_values[0]  # most recent (DESC order)
+    iv_max = max(iv_values)
+    iv_min = min(iv_values)
+    n = len(iv_values)
+    iv_mean = sum(iv_values) / n
+    iv_median = statistics.median(iv_values)
+
+    iv_rank = round((current_iv - iv_min) / (iv_max - iv_min) * 100, 1) if iv_max > iv_min else 50.0
+    iv_pct = round(sum(1 for v in iv_values if v < current_iv) / n * 100, 1)
+
+    # Dual-threshold signal — both rank AND percentile must agree
+    if iv_rank >= 70 and iv_pct >= 70:
+        signal = "Elevated – Selling favoured"
+    elif iv_rank <= 30 and iv_pct <= 30:
+        signal = "Depressed – Buying favoured"
+    elif iv_rank >= 60 or iv_pct >= 60:
+        signal = "Slightly elevated"
+    elif iv_rank <= 40 or iv_pct <= 40:
+        signal = "Slightly depressed"
+    else:
+        signal = "Neutral"
+
+    # Data quality flags
+    low_data = n < 30
+    data_quality = f"{n}d{'  — low data' if low_data else ''}"
+    any_proxy = any(r.is_proxy for r in rows[:5])
+
+    return {
+        "status": "ok",
+        "current_atm_iv": round(current_iv, 2),
+        "iv_rank": iv_rank,
+        "iv_percentile": iv_pct,
+        "iv_52wk_high": round(iv_max, 2),
+        "iv_52wk_low": round(iv_min, 2),
+        "iv_mean": round(iv_mean, 2),
+        "iv_median": round(iv_median, 2),
+        "data_days": n,
+        "data_quality": data_quality,
+        "signal": signal,
+        "is_proxy_data": any_proxy,
+        "low_data_warning": low_data,
+    }
+
+
+# ── Margin Calculator ─────────────────────────────────────────────────────────
+
+from pydantic import BaseModel
+from typing import List
+
+class MarginLeg(BaseModel):
+    strike: int
+    option_type: str   # CE or PE
+    action: str        # BUY or SELL
+    lots: int = 1
+
+class MarginRequest(BaseModel):
+    strategy_type: str = "CUSTOM"
+    expiry: str = ""
+    legs: List[MarginLeg] = []
+
+
+@router.post("/margin")
+def calculate_margin(
+    req: MarginRequest,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Estimate SPAN + Exposure margin for a multi-leg options strategy.
+
+    SPAN logic:
+    - Spread = |buy_strike - sell_strike| × qty × 0.85
+    - IRON_CONDOR / paired spreads: take max of CE spread and PE spread
+    - Standalone short: spread_width = 200pts (proxy)
+    Exposure = spot × qty_max_short × 0.03
+    Total = SPAN + Exposure − net_premium_credit
+    Expiry day = Total × 1.75
+    """
+    from market_data import build_chain
+    from config import LOT_SIZE
+
+    # Get current spot
+    try:
+        expiry = req.expiry or None
+        chain_df, expiries, spot = build_chain("NIFTY", expiry)
+    except Exception:
+        snap = db.query(MarketSnapshot).order_by(MarketSnapshot.timestamp.desc()).first()
+        spot = snap.nifty_spot if snap else 22000.0
+        chain_df = None
+        expiries = []
+
+    # Get current LTP for each leg from chain
+    def get_ltp(strike, opt_type):
+        if chain_df is None or chain_df.empty:
+            return 0.0
+        row = chain_df[(chain_df["Strike"] == strike) & (chain_df["Type"] == opt_type)]
+        return float(row["LTP"].iloc[0]) if not row.empty else 0.0
+
+    qty_per_lot = LOT_SIZE
+    legs = req.legs
+    strategy_type = req.strategy_type.upper()
+
+    # Pair up SELL legs with their protective BUY legs by option_type
+    ce_sells = [l for l in legs if l.option_type == "CE" and l.action == "SELL"]
+    ce_buys  = [l for l in legs if l.option_type == "CE" and l.action == "BUY"]
+    pe_sells = [l for l in legs if l.option_type == "PE" and l.action == "SELL"]
+    pe_buys  = [l for l in legs if l.option_type == "PE" and l.action == "BUY"]
+
+    breakdown = []
+    span_amounts = []
+    net_premium = 0.0
+
+    def _compute_spread(sell_leg, buy_leg, label):
+        qty = sell_leg.lots * qty_per_lot
+        spread_w = abs(sell_leg.strike - buy_leg.strike)
+        span = spread_w * qty * 0.85
+        sell_ltp = get_ltp(sell_leg.strike, sell_leg.option_type)
+        buy_ltp  = get_ltp(buy_leg.strike,  buy_leg.option_type)
+        premium_credit = (sell_ltp - buy_ltp) * qty
+        return {"label": label, "span": round(span, 2),
+                "sell_ltp": round(sell_ltp, 2), "buy_ltp": round(buy_ltp, 2),
+                "premium_credit": round(premium_credit, 2), "qty": qty,
+                "spread_width": spread_w}
+
+    if ce_sells and ce_buys:
+        for s, b in zip(ce_sells, ce_buys):
+            entry = _compute_spread(s, b, "CE Spread (Bear Call)")
+            breakdown.append(entry)
+            span_amounts.append(("CE", entry["span"]))
+            net_premium += entry["premium_credit"]
+
+    if pe_sells and pe_buys:
+        for s, b in zip(pe_sells, pe_buys):
+            entry = _compute_spread(s, b, "PE Spread (Bull Put)")
+            breakdown.append(entry)
+            span_amounts.append(("PE", entry["span"]))
+            net_premium += entry["premium_credit"]
+
+    # Handle naked shorts (no paired buy)
+    for sell_leg in ce_sells[len(ce_buys):]:
+        qty = sell_leg.lots * qty_per_lot
+        span = 200 * qty * 0.85  # proxy spread width 200pts
+        sell_ltp = get_ltp(sell_leg.strike, sell_leg.option_type)
+        entry = {"label": "CE Naked Short", "span": round(span, 2),
+                 "sell_ltp": round(sell_ltp, 2), "buy_ltp": 0,
+                 "premium_credit": round(sell_ltp * qty, 2), "qty": qty, "spread_width": 200}
+        breakdown.append(entry)
+        span_amounts.append(("CE", span))
+        net_premium += sell_ltp * qty
+
+    for sell_leg in pe_sells[len(pe_buys):]:
+        qty = sell_leg.lots * qty_per_lot
+        span = 200 * qty * 0.85
+        sell_ltp = get_ltp(sell_leg.strike, sell_leg.option_type)
+        entry = {"label": "PE Naked Short", "span": round(span, 2),
+                 "sell_ltp": round(sell_ltp, 2), "buy_ltp": 0,
+                 "premium_credit": round(sell_ltp * qty, 2), "qty": qty, "spread_width": 200}
+        breakdown.append(entry)
+        span_amounts.append(("PE", span))
+        net_premium += sell_ltp * qty
+
+    # SPAN logic
+    ce_span = sum(v for k, v in span_amounts if k == "CE")
+    pe_span = sum(v for k, v in span_amounts if k == "PE")
+
+    if strategy_type in ("IRON_CONDOR",) and ce_span > 0 and pe_span > 0:
+        total_span = max(ce_span, pe_span)
+        span_note = "IRON CONDOR: max(CE spread, PE spread)"
+    else:
+        total_span = ce_span + pe_span
+        span_note = "Sum of all spreads"
+
+    # Max short quantity across all sell legs
+    max_short_qty = max((l.lots * qty_per_lot for l in legs if l.action == "SELL"), default=0)
+    exposure = round(spot * max_short_qty * 0.03, 2)
+
+    total_margin = round(total_span + exposure - net_premium, 2)
+    expiry_day_margin = round(total_margin * 1.75, 2)
+
+    return {
+        "spot": round(spot, 2),
+        "span": round(total_span, 2),
+        "span_note": span_note,
+        "exposure": exposure,
+        "net_premium_credit": round(net_premium, 2),
+        "total_margin": total_margin,
+        "expiry_day_margin": expiry_day_margin,
+        "breakdown": breakdown,
     }

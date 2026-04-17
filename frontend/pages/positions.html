@@ -48,6 +48,30 @@
             padding: 12px;
             margin-top: 12px;
         }
+        /* SELL card: left red border, subtle warm tint */
+        .position-card.sell-card {
+            border-left: 3px solid #DC2626;
+            background: linear-gradient(to right, rgba(220,38,38,0.04) 0%, transparent 40%);
+        }
+        /* BUY card: left green border, subtle cool tint */
+        .position-card.buy-card {
+            border-left: 3px solid #16A34A;
+            background: linear-gradient(to right, rgba(22,163,74,0.04) 0%, transparent 40%);
+        }
+        [data-theme="dark"] .position-card.sell-card { background: linear-gradient(to right, rgba(220,38,38,0.07) 0%, transparent 40%); }
+        [data-theme="dark"] .position-card.buy-card  { background: linear-gradient(to right, rgba(22,163,74,0.07) 0%, transparent 40%); }
+        .trade-direction-badge {
+            display:inline-flex; align-items:center; gap:3px;
+            font-size:10px; font-weight:700; padding:2px 7px;
+            border-radius:999px; letter-spacing:0.3px;
+        }
+        .trade-direction-badge.sell { background:rgba(220,38,38,0.12); color:#DC2626; }
+        .trade-direction-badge.buy  { background:rgba(22,163,74,0.12);  color:#16A34A; }
+        /* Action toggle for add trade modal */
+        .action-toggle { display:flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; margin-bottom:10px; }
+        .action-toggle button { flex:1; border:none; padding:8px; font-size:13px; font-weight:600; cursor:pointer; background:var(--bg-secondary); color:var(--text-secondary); transition:0.15s; }
+        .action-toggle button.active.sell { background:#DC2626; color:#fff; }
+        .action-toggle button.active.buy  { background:#16A34A; color:#fff; }
     </style>
 </head>
 <body>
@@ -72,6 +96,7 @@
                             <option value="">All</option>
                         </select>
                         <button class="btn btn-primary" onclick="openAddModal()">+ Add Trade</button>
+                        <button class="btn btn-secondary" onclick="openMarginModal()" style="margin-left:8px">&#8382; Margin Calc</button>
                     </div>
                 </div>
 
@@ -88,13 +113,19 @@
             <div class="modal-title">Add Trade</div>
             <form id="add-trade-form" onsubmit="submitAddTrade(event)">
                 <div class="form-group">
-                    <label class="form-label">Type</label>
-                    <select id="add-type" class="form-select" required>
-                        <option value="CE_SELL">CE SELL</option>
-                        <option value="PE_SELL">PE SELL</option>
-                        <option value="CE_BUY">CE BUY (Hedge)</option>
-                        <option value="PE_BUY">PE BUY (Hedge)</option>
-                    </select>
+                    <label class="form-label">Action</label>
+                    <div class="action-toggle">
+                        <button type="button" id="action-sell-btn" class="active sell" onclick="selectTradeAction('SELL')">SELL — Collect Premium</button>
+                        <button type="button" id="action-buy-btn" class="buy" onclick="selectTradeAction('BUY')">BUY — Pay Premium</button>
+                    </div>
+                    <div style="display:flex;gap:8px">
+                        <button type="button" id="opt-ce-btn" class="btn btn-sm btn-secondary active" onclick="selectOptionType('CE')" style="flex:1">CE (Call)</button>
+                        <button type="button" id="opt-pe-btn" class="btn btn-sm btn-secondary" onclick="selectOptionType('PE')" style="flex:1">PE (Put)</button>
+                    </div>
+                    <input type="hidden" id="add-type" value="CE_SELL">
+                    <div id="trade-type-display" style="margin-top:6px;font-size:11px;color:var(--text-muted)">
+                        Selling a Call option — profit if NIFTY stays below strike
+                    </div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Expiry</label>
@@ -107,6 +138,7 @@
                 <div class="form-group">
                     <label class="form-label">Entry Premium</label>
                     <input type="number" id="add-premium" class="form-input" step="0.05" required>
+                    <span id="ltp-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px;display:block;min-height:16px"></span>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Quantity (lots)</label>
@@ -168,6 +200,58 @@
         </div>
     </div>
 
+    <!-- Margin Calculator Modal -->
+    <div class="modal-overlay" id="margin-modal" style="display:none">
+        <div class="modal" style="max-width:540px">
+            <div class="modal-title">&#8382; Margin Calculator</div>
+            <div class="form-group">
+                <label class="form-label">Strategy Type</label>
+                <select id="margin-strategy-type" class="form-select">
+                    <option value="IRON_CONDOR">Iron Condor</option>
+                    <option value="STRANGLE">Short Strangle</option>
+                    <option value="BULL_PUT_SPREAD">Bull Put Spread</option>
+                    <option value="BEAR_CALL_SPREAD">Bear Call Spread</option>
+                    <option value="CALENDAR_SPREAD">Calendar Spread</option>
+                    <option value="CUSTOM">Custom</option>
+                </select>
+            </div>
+            <div id="margin-legs-container">
+                <!-- Leg rows added dynamically -->
+            </div>
+            <button class="btn btn-sm btn-secondary" onclick="addMarginLeg()" style="margin-bottom:16px">+ Add Leg</button>
+            <div id="margin-result" style="display:none;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px">
+                <div style="font-weight:600;margin-bottom:10px">Margin Breakdown</div>
+                <div style="display:grid;gap:6px;font-size:13px">
+                    <div style="display:flex;justify-content:space-between"><span>SPAN Margin</span><span id="mr-span">-</span></div>
+                    <div style="display:flex;justify-content:space-between"><span>Exposure Margin</span><span id="mr-exposure">-</span></div>
+                    <div style="display:flex;justify-content:space-between"><span>Net Premium Credit</span><span id="mr-premium" style="color:#16A34A">-</span></div>
+                    <hr style="border-color:var(--border);margin:4px 0">
+                    <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px"><span>Total Margin Required</span><span id="mr-total" style="color:#DC2626">-</span></div>
+                    <div style="display:flex;justify-content:space-between;color:var(--text-secondary)"><span>Expiry Day Margin</span><span id="mr-expiry-day">-</span></div>
+                    <div style="margin-top:8px;font-size:11px;color:var(--text-muted)" id="mr-note"></div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeMarginModal()">Close</button>
+                <button class="btn btn-primary" onclick="calculateMargin()">Calculate</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Roll Scenarios Modal -->
+    <div class="modal-overlay" id="roll-modal" style="display:none">
+        <div class="modal" style="max-width:620px">
+            <div class="modal-title">Roll Options</div>
+            <div id="roll-trade-info" style="font-size:13px;padding:10px;background:var(--bg-secondary);border-radius:6px;margin-bottom:16px"></div>
+            <div id="roll-scenarios-container" style="display:grid;gap:12px">
+                <div class="text-muted text-center" style="padding:24px">Loading scenarios...</div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeRollModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/ws.js"></script>
@@ -180,20 +264,118 @@
         let trades = [];
         let livePositions = {};  // trade_id -> live data from WS
         let closingTrade = null;
-        const LOT_SIZE = 75;
+        const LOT_SIZE = 65;
+
+        // ── LTP Auto-fetch for Add Trade modal ─────────────────────────
+        // Cache keyed by "expiry|strike|optionType" to avoid redundant calls.
+        // Also used as a per-expiry option-chain cache if we loaded the full chain.
+        const ltpCache = {};       // "expiry|strike|CE|PE" → { ltp, iv, delta }
+        const chainCache = {};     // expiry → array of chain rows (populated if full chain was loaded)
+        let ltpFetchTimer = null;
+
+        function scheduleLTPFetch() {
+            clearTimeout(ltpFetchTimer);
+            ltpFetchTimer = setTimeout(autoFetchLTP, 450);
+        }
+
+        async function autoFetchLTP() {
+            const strikeVal = document.getElementById('add-strike').value;
+            const expiry    = document.getElementById('add-expiry').value.trim();
+            const strike    = parseInt(strikeVal);
+            if (!strike || !expiry) return;
+
+            const typeVal    = document.getElementById('add-type').value;
+            const optionType = typeVal.startsWith('CE') ? 'CE' : 'PE';
+            const cacheKey   = `${expiry}|${strike}|${optionType}`;
+            const hint       = document.getElementById('ltp-hint');
+
+            // 1. Try the per-strike cache first
+            if (ltpCache[cacheKey]) {
+                const c = ltpCache[cacheKey];
+                document.getElementById('add-premium').value = c.ltp.toFixed(2);
+                document.getElementById('add-iv').value      = c.iv;
+                document.getElementById('add-delta').value   = c.delta;
+                hint.textContent  = 'Live LTP (cached)';
+                hint.style.color  = 'var(--text-muted)';
+                return;
+            }
+
+            // 2. Try the in-memory full-chain cache for this expiry
+            if (chainCache[expiry] && chainCache[expiry].length) {
+                const ltpKey = optionType === 'CE' ? 'ce_ltp' : 'pe_ltp';
+                const ivKey  = optionType === 'CE' ? 'ce_iv'  : 'pe_iv';
+                const dKey   = optionType === 'CE' ? 'ce_delta': 'pe_delta';
+                const row    = chainCache[expiry].find(r => r.strike === strike);
+                if (row && row[ltpKey] != null) {
+                    const ltp = row[ltpKey];
+                    ltpCache[cacheKey] = { ltp, iv: row[ivKey] || 0, delta: row[dKey] || 0 };
+                    document.getElementById('add-premium').value = ltp.toFixed(2);
+                    document.getElementById('add-iv').value      = row[ivKey] || 0;
+                    document.getElementById('add-delta').value   = row[dKey]  || 0;
+                    hint.textContent = 'Live LTP (chain cache)';
+                    hint.style.color = 'var(--text-muted)';
+                    return;
+                }
+            }
+
+            // 3. Fetch from the backend strike-lookup endpoint
+            hint.textContent = 'Fetching LTP\u2026';
+            hint.style.color = 'var(--text-muted)';
+
+            try {
+                const data = await API.strikeLookup(strike, optionType, expiry);
+                if (data && data.ltp != null && !data.error) {
+                    ltpCache[cacheKey] = { ltp: data.ltp, iv: data.iv || 0, delta: data.delta || 0 };
+                    document.getElementById('add-premium').value = data.ltp.toFixed(2);
+                    document.getElementById('add-iv').value      = data.iv   || 0;
+                    document.getElementById('add-delta').value   = data.delta || 0;
+                    hint.textContent = 'Live LTP auto-filled \u2713';
+                    hint.style.color = '#16A34A';
+                } else {
+                    hint.textContent = '\u2014 strike not found for this expiry';
+                    hint.style.color = 'var(--text-muted)';
+                }
+            } catch {
+                hint.textContent = '\u2014 could not fetch LTP';
+                hint.style.color = 'var(--text-muted)';
+            }
+        }
+
+        // Attach listeners once — the form is always in the DOM, modal is just hidden.
+        document.getElementById('add-strike').addEventListener('input',  scheduleLTPFetch);
+        document.getElementById('add-strike').addEventListener('change', scheduleLTPFetch);
+        document.getElementById('add-expiry').addEventListener('input',  scheduleLTPFetch);
+        document.getElementById('add-expiry').addEventListener('change', scheduleLTPFetch);
+        // LTP auto-fetch is now triggered via _syncTradeType → selectTradeAction / selectOptionType
 
         // ── Check for pre-filled params from option chain ──────────────
 
         const params = new URLSearchParams(window.location.search);
         if (params.get('action') === 'add') {
-            // Will open add modal after page loads
             setTimeout(() => {
-                document.getElementById('add-type').value = params.get('type') || 'CE_SELL';
-                document.getElementById('add-strike').value = params.get('strike') || '';
-                document.getElementById('add-premium').value = params.get('premium') || '';
-                document.getElementById('add-expiry').value = params.get('expiry') || '';
-                document.getElementById('add-iv').value = params.get('iv') || '0';
-                document.getElementById('add-delta').value = params.get('delta') || '0';
+                const rawType = params.get('type') || 'CE_SELL';
+                // Sync the new toggle UI from the type param
+                const parts = rawType.split('_');
+                const pOptType = parts[0] || 'CE';
+                const pAction  = parts[1] || 'SELL';
+                _tradeOptType = pOptType;
+                _tradeAction  = pAction;
+                selectTradeAction(pAction);
+                selectOptionType(pOptType);
+
+                document.getElementById('add-strike').value  = params.get('strike')  || '';
+                document.getElementById('add-expiry').value  = params.get('expiry')  || '';
+                document.getElementById('add-iv').value      = params.get('iv')      || '0';
+                document.getElementById('add-delta').value   = params.get('delta')   || '0';
+                const prefilledPremium = params.get('premium') || '';
+                document.getElementById('add-premium').value = prefilledPremium;
+                if (prefilledPremium) {
+                    const hint = document.getElementById('ltp-hint');
+                    hint.textContent = 'LTP from option chain \u2713';
+                    hint.style.color = '#16A34A';
+                } else if (params.get('strike') && params.get('expiry')) {
+                    autoFetchLTP();
+                }
                 openAddModal();
             }, 300);
         }
@@ -299,20 +481,30 @@
             const isClosed = trade.status === 'CLOSED';
 
             const pnlLabel = isClosed ? 'Realized P&L' : 'Unrealized P&L';
+            const isSell = trade.trade_type.includes('SELL');
+            const isBuy = !isSell;
+            const dirBadge = isSell
+                ? `<span class="trade-direction-badge sell">θ+ SELL</span>`
+                : `<span class="trade-direction-badge buy">Δ+ BUY</span>`;
+            const profitHint = isSell ? 'Profit if LTP ↓' : 'Profit if LTP ↑';
+            const cardClass = isHedge ? 'hedge-card' : (isSell ? 'sell-card' : 'buy-card');
 
             return `
-                <div class="position-card ${isHedge ? 'hedge-card' : ''}" data-trade-id="${trade.id}">
+                <div class="position-card ${cardClass}" data-trade-id="${trade.id}">
                     <div class="position-header">
                         <div style="display:flex;align-items:center;gap:10px">
                             <span class="badge ${Utils.tradeTypeClass(trade.trade_type)}">${trade.trade_type.replace('_', ' ')}</span>
+                            ${dirBadge}
                             <span class="fw-700 font-mono" style="font-size:16px">${trade.strike}</span>
                             ${isHedge ? '<span class="badge badge-neutral" style="font-size:10px">HEDGE</span>' : ''}
                             <span class="text-muted" style="font-size:11px">${trade.quantity} lot${trade.quantity > 1 ? 's' : ''}</span>
+                            <span class="text-muted" style="font-size:10px;opacity:0.7">${profitHint}</span>
                             ${isClosed ? '<span class="badge badge-neutral">CLOSED</span>' : ''}
                         </div>
                         ${!isClosed ? `
-                            <div style="display:flex;gap:6px">
+                            <div style="display:flex;gap:6px;flex-wrap:wrap">
                                 ${!isHedge ? `<button class="btn btn-sm btn-secondary" onclick="openAddHedge(${trade.id}, '${trade.trade_type}', '${trade.expiry_date}')">Add Hedge</button>` : ''}
+                                <button class="btn btn-sm btn-secondary" onclick="openRollModal(${trade.id})" title="Roll / Hedge options">&#8635; Roll</button>
                                 <button class="btn btn-sm btn-danger" onclick="openCloseModal(${trade.id})">Close</button>
                             </div>
                         ` : ''}
@@ -383,20 +575,49 @@
             `;
         }
 
-        // ── Add Trade Modal ────────────────────────────────────────────
+        // ── Add Trade Modal — action/type state ───────────────────────
+
+        let _tradeAction = 'SELL';
+        let _tradeOptType = 'CE';
+
+        const TRADE_DESCRIPTIONS = {
+            'CE_SELL': 'Selling a Call — profit if NIFTY stays below strike (theta+)',
+            'CE_BUY':  'Buying a Call — profit if NIFTY rises above strike (delta+)',
+            'PE_SELL': 'Selling a Put — profit if NIFTY stays above strike (theta+)',
+            'PE_BUY':  'Buying a Put — profit if NIFTY falls below strike (delta+)',
+        };
+
+        function _syncTradeType() {
+            const combined = `${_tradeOptType}_${_tradeAction}`;
+            document.getElementById('add-type').value = combined;
+            document.getElementById('trade-type-display').textContent = TRADE_DESCRIPTIONS[combined] || '';
+            const isBuy = _tradeAction === 'BUY';
+            document.getElementById('add-parent-group').style.display = isBuy ? 'block' : 'none';
+            if (isBuy) populateParentSelect();
+            scheduleLTPFetch();
+        }
+
+        function selectTradeAction(action) {
+            _tradeAction = action;
+            document.getElementById('action-sell-btn').classList.toggle('active', action === 'SELL');
+            document.getElementById('action-buy-btn').classList.toggle('active', action === 'BUY');
+            _syncTradeType();
+        }
+
+        function selectOptionType(type) {
+            _tradeOptType = type;
+            document.getElementById('opt-ce-btn').classList.toggle('active', type === 'CE');
+            document.getElementById('opt-pe-btn').classList.toggle('active', type === 'PE');
+            _syncTradeType();
+        }
 
         function openAddModal() {
             document.getElementById('add-modal').classList.add('active');
-            // Show parent selector for hedge types
-            document.getElementById('add-type').addEventListener('change', function() {
-                const isBuy = this.value.includes('BUY');
-                document.getElementById('add-parent-group').style.display = isBuy ? 'block' : 'none';
-                if (isBuy) populateParentSelect();
-            });
         }
 
         function closeAddModal() {
             document.getElementById('add-modal').classList.remove('active');
+            document.getElementById('ltp-hint').textContent = '';
         }
 
         function populateParentSelect() {
@@ -435,11 +656,10 @@
         }
 
         function openAddHedge(parentId, parentType, expiry) {
-            const hedgeType = parentType.includes('CE') ? 'CE_BUY' : 'PE_BUY';
-            document.getElementById('add-type').value = hedgeType;
+            const optType = parentType.includes('CE') ? 'CE' : 'PE';
+            selectTradeAction('BUY');
+            selectOptionType(optType);
             document.getElementById('add-expiry').value = expiry;
-            document.getElementById('add-parent-group').style.display = 'block';
-            populateParentSelect();
             document.getElementById('add-parent').value = parentId;
             openAddModal();
         }
@@ -544,6 +764,171 @@
                 }
             }
             return null;
+        }
+
+        // ── Margin Calculator ──────────────────────────────────────────────────
+        let marginLegs = [];
+
+        function openMarginModal() {
+            marginLegs = [];
+            document.getElementById('margin-legs-container').innerHTML = '';
+            document.getElementById('margin-result').style.display = 'none';
+            // Add 4 default legs for Iron Condor
+            addMarginLeg('CE', 'SELL'); addMarginLeg('CE', 'BUY');
+            addMarginLeg('PE', 'SELL'); addMarginLeg('PE', 'BUY');
+            document.getElementById('margin-modal').style.display = 'flex';
+        }
+
+        function closeMarginModal() {
+            document.getElementById('margin-modal').style.display = 'none';
+        }
+
+        function addMarginLeg(optType = 'CE', action = 'SELL') {
+            const idx = marginLegs.length;
+            marginLegs.push({ optType, action, strike: '', lots: 1 });
+            const c = document.getElementById('margin-legs-container');
+            const row = document.createElement('div');
+            row.id = `margin-leg-${idx}`;
+            row.style.cssText = 'display:grid;grid-template-columns:auto 80px 90px 60px auto;gap:6px;align-items:center;margin-bottom:8px;font-size:13px';
+            row.innerHTML = `
+                <select class="form-select" style="padding:4px 6px" onchange="marginLegs[${idx}].optType=this.value">
+                    <option value="CE" ${optType==='CE'?'selected':''}>CE</option>
+                    <option value="PE" ${optType==='PE'?'selected':''}>PE</option>
+                </select>
+                <select class="form-select" style="padding:4px 6px" onchange="marginLegs[${idx}].action=this.value">
+                    <option value="SELL" ${action==='SELL'?'selected':''}>SELL</option>
+                    <option value="BUY" ${action==='BUY'?'selected':''}>BUY</option>
+                </select>
+                <input type="number" class="form-input" placeholder="Strike" style="padding:4px 6px"
+                    onchange="marginLegs[${idx}].strike=parseInt(this.value)||0">
+                <input type="number" class="form-input" placeholder="Lots" value="1" min="1" style="padding:4px 6px"
+                    onchange="marginLegs[${idx}].lots=parseInt(this.value)||1">
+                <button class="btn btn-sm btn-danger" onclick="removeMarginLeg(${idx})" style="padding:3px 8px">✕</button>
+            `;
+            c.appendChild(row);
+        }
+
+        function removeMarginLeg(idx) {
+            const row = document.getElementById(`margin-leg-${idx}`);
+            if (row) row.remove();
+            marginLegs[idx] = null;
+        }
+
+        async function calculateMargin() {
+            const stratType = document.getElementById('margin-strategy-type').value;
+            const activeLeg = marginLegs.filter(Boolean).filter(l => l.strike > 0);
+            if (!activeLeg.length) { Utils.toast('Enter at least one leg with a strike', 'warning'); return; }
+            const expiry = document.getElementById('expiry-selector')?.value || '';
+            const body = {
+                strategy_type: stratType,
+                expiry,
+                legs: activeLeg.map(l => ({ strike: l.strike, option_type: l.optType, action: l.action, lots: l.lots })),
+            };
+            try {
+                const res = await API.post('/api/market/margin', body);
+                if (res.error) { Utils.toast(res.error, 'error'); return; }
+                document.getElementById('mr-span').textContent = Utils.formatINR(res.span);
+                document.getElementById('mr-exposure').textContent = Utils.formatINR(res.exposure);
+                document.getElementById('mr-premium').textContent = Utils.formatINR(res.net_premium_credit);
+                document.getElementById('mr-total').textContent = Utils.formatINR(res.total_margin);
+                document.getElementById('mr-expiry-day').textContent = Utils.formatINR(res.expiry_day_margin);
+                document.getElementById('mr-note').textContent = res.span_note || '';
+                document.getElementById('margin-result').style.display = 'block';
+            } catch (e) { Utils.toast('Calculation failed', 'error'); }
+        }
+
+        // ── Roll Scenarios ─────────────────────────────────────────────────────
+        let rollTradeId = null;
+
+        async function openRollModal(tradeId) {
+            rollTradeId = tradeId;
+            const modal = document.getElementById('roll-modal');
+            modal.style.display = 'flex';
+            document.getElementById('roll-scenarios-container').innerHTML =
+                '<div class="text-muted text-center" style="padding:24px">Loading scenarios...</div>';
+
+            // Show trade info
+            const trade = findTrade(tradeId);
+            if (trade) {
+                document.getElementById('roll-trade-info').innerHTML =
+                    `<strong>${trade.trade_type}</strong> | Strike: <strong>${trade.strike}</strong> | Expiry: ${trade.expiry_date} | Entry: ₹${trade.entry_premium} | Lots: ${trade.quantity}`;
+            }
+
+            try {
+                const data = await API.fetch(`/api/trades/${tradeId}/roll-scenarios`);
+                renderRollScenarios(data.scenarios || []);
+            } catch (e) {
+                document.getElementById('roll-scenarios-container').innerHTML =
+                    '<div class="text-muted text-center" style="padding:24px">Failed to load roll scenarios.</div>';
+            }
+        }
+
+        function closeRollModal() {
+            document.getElementById('roll-modal').style.display = 'none';
+            rollTradeId = null;
+        }
+
+        function renderRollScenarios(scenarios) {
+            const c = document.getElementById('roll-scenarios-container');
+            if (!scenarios.length) {
+                c.innerHTML = '<div class="text-muted text-center" style="padding:24px">No roll scenarios available.</div>';
+                return;
+            }
+            c.innerHTML = scenarios.map((s, i) => {
+                const isTop = i === 0;
+                const isFutures = s.scenario_id === 'futures_hedge';
+                const scoreColor = s.recommendation_score >= 70 ? '#16A34A' : s.recommendation_score >= 45 ? '#D97706' : '#9CA3AF';
+                const detailsHtml = isFutures
+                    ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
+                        <div><div style="color:var(--text-muted)">Action</div><div style="font-weight:600">${s.futures_action || '-'} ${s.futures_lots || 0} futures lot(s)</div></div>
+                        <div><div style="color:var(--text-muted)">Hedge Margin Est.</div><div style="font-weight:600">₹${Utils.formatNum(s.hedge_margin)}</div></div>
+                        <div><div style="color:var(--text-muted)">Net Delta After</div><div style="font-weight:600;color:#16A34A">≈ 0</div></div>
+                        <div><div style="color:var(--text-muted)">Position</div><div style="font-weight:600">Unchanged</div></div>
+                       </div>`
+                    : `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px">
+                        <div><div style="color:var(--text-muted)">New Strike</div><div style="font-weight:600">${s.new_strike || '-'}</div></div>
+                        <div><div style="color:var(--text-muted)">New Expiry</div><div style="font-weight:600">${s.new_expiry || '-'}</div></div>
+                        <div><div style="color:var(--text-muted)">Debit/Credit</div><div style="font-weight:600;color:${s.roll_debit_credit >= 0 ? '#16A34A' : '#DC2626'}">${s.roll_debit_credit >= 0 ? '+' : ''}₹${Utils.formatNum(s.roll_debit_credit, 2)}</div></div>
+                        <div><div style="color:var(--text-muted)">New Delta</div><div style="font-weight:600">${s.new_delta != null ? s.new_delta.toFixed(3) : '-'}</div></div>
+                        <div><div style="color:var(--text-muted)">DTE</div><div style="font-weight:600">${s.new_dte != null ? s.new_dte + 'd' : '-'}</div></div>
+                        ${s.new_theta != null ? `<div><div style="color:var(--text-muted)">Daily Theta</div><div style="font-weight:600;color:#16A34A">₹${Utils.formatNum(s.new_theta, 2)}</div></div>` : ''}
+                       </div>`;
+                const execBtn = isFutures
+                    ? `<button class="btn btn-sm btn-secondary" onclick="executeRoll('${s.scenario_id}', ${JSON.stringify(s).replace(/"/g,'&quot;')})">Execute Hedge</button>`
+                    : `<button class="btn btn-sm btn-primary" onclick="executeRoll('${s.scenario_id}', ${JSON.stringify(s).replace(/"/g,'&quot;')})">Execute Roll</button>`;
+                return `
+                    <div style="border:1px solid ${isTop ? '#2563EB' : 'var(--border)'};border-radius:8px;padding:14px;position:relative">
+                        ${isTop ? '<span style="position:absolute;top:-10px;left:12px;background:#2563EB;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px">★ RECOMMENDED</span>' : ''}
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                            <strong>${s.label}</strong>
+                            <span style="font-size:11px;color:${scoreColor};font-weight:700">Score: ${s.recommendation_score}</span>
+                        </div>
+                        ${detailsHtml}
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:8px">${s.rationale || ''}</div>
+                        <div style="text-align:right;margin-top:10px">${execBtn}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function executeRoll(scenarioId, scenarioData) {
+            if (!rollTradeId) return;
+            const label = scenarioId === 'futures_hedge' ? 'Execute futures hedge?' : `Execute roll to ${scenarioData.new_strike || ''} @ ${scenarioData.new_expiry || ''}?`;
+            if (!confirm(label)) return;
+            try {
+                const body = {
+                    scenario_id: scenarioId,
+                    new_strike: scenarioData.new_strike || 0,
+                    new_expiry: scenarioData.new_expiry || '',
+                    new_ltp: scenarioData.new_ltp || 0,
+                    futures_lots: scenarioData.futures_lots || 0,
+                    futures_action: scenarioData.futures_action || '',
+                };
+                await API.post(`/api/trades/${rollTradeId}/roll`, body);
+                Utils.toast(scenarioId === 'futures_hedge' ? 'Futures hedge placed' : 'Roll executed successfully', 'success');
+                closeRollModal();
+                loadPositions();
+            } catch (e) { Utils.toast('Roll execution failed', 'error'); }
         }
     </script>
 </body>

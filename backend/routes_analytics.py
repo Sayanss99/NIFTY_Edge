@@ -18,7 +18,20 @@ def performance_overview(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Performance overview — P&L curve, expiry bars, monthly heatmap."""
+    """Performance overview — P&L curve, expiry bars, monthly heatmap.
+
+    Only CLOSED trades with a defined realized_pnl are included.
+    OPEN trades (even those with a past expiry) are never included — their
+    realized_pnl is undefined, so counting them would distort all metrics.
+    We do run the expiry-cleanup sweep here so that visiting Analytics also
+    transitions any lingering OPEN-but-expired trades to EXPIRED status.
+    """
+    # Sweep expired trades so the DB stays consistent regardless of which page
+    # the user visits first.  Analytics queries are unaffected (filter = CLOSED),
+    # but this keeps the positions page accurate on next visit.
+    from routes_trades import _expire_past_trades
+    _expire_past_trades(db, user.id)
+
     query = db.query(Trade).filter(
         Trade.user_id == user.id,
         Trade.status == TradeStatus.CLOSED.value,

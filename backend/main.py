@@ -14,9 +14,11 @@ from scheduler import run_scheduler
 from routes_auth import router as auth_router
 from routes_market import router as market_router
 from routes_trades import router as trades_router
+from routes_trades import router_trades as trades_roll_router
 from routes_analytics import router as analytics_router
 from routes_alerts import router as alerts_router
 from routes_suggestions import router as suggestions_router
+from routes_strategies import router as strategies_router
 
 
 @asynccontextmanager
@@ -36,9 +38,11 @@ app = FastAPI(title="NiftyEdge", version="1.0.0", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(market_router)
 app.include_router(trades_router)
+app.include_router(trades_roll_router)
 app.include_router(analytics_router)
 app.include_router(alerts_router)
 app.include_router(suggestions_router)
+app.include_router(strategies_router)
 
 
 # WebSocket endpoint
@@ -105,3 +109,8 @@ async def serve_analytics():
 @app.get("/alerts")
 async def serve_alerts():
     return FileResponse("../frontend/pages/alerts.html")
+
+
+@app.get("/strategy-builder")
+async def serve_strategy_builder():
+    return FileResponse("../frontend/pages/strategy_builder.html")

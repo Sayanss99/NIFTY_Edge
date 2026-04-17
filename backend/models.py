@@ -22,6 +22,7 @@ class TradeType(str, enum.Enum):
 class TradeStatus(str, enum.Enum):
     OPEN = "OPEN"
     CLOSED = "CLOSED"
+    EXPIRED = "EXPIRED"   # option expiry passed while trade was still open
 
 
 class AlertStatus(str, enum.Enum):
@@ -65,10 +66,12 @@ class Trade(Base):
     exit_date = Column(DateTime, nullable=True)
     status = Column(String, default=TradeStatus.OPEN.value)
     parent_trade_id = Column(Integer, ForeignKey("trades.id"), nullable=True)
+    strategy_id = Column(Integer, ForeignKey("strategies.id"), nullable=True)
     realized_pnl = Column(Float, nullable=True)
 
     user = relationship("User", back_populates="trades")
     hedges = relationship("Trade", foreign_keys=[parent_trade_id])
+    strategy = relationship("Strategy", back_populates="trades", foreign_keys=[strategy_id])
 
 
 # ── Market Snapshot (shared, written by data engine) ─────────────────────────
@@ -234,3 +237,65 @@ class AlertLog(Base):
     message = Column(String, nullable=True)
 
     rule = relationship("AlertRule", back_populates="logs")
+
+
+# ── IV Daily Record (ATM IV history for IV Rank / IV Percentile) ─────────────
+
+class IVDailyRecord(Base):
+    __tablename__ = "iv_daily_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, unique=True, nullable=False, index=True)
+    atm_iv = Column(Float, nullable=False)            # avg ATM IV (actual or VIX×1.08 proxy)
+    atm_iv_ce = Column(Float, nullable=True)          # CE-side ATM IV
+    atm_iv_pe = Column(Float, nullable=True)          # PE-side ATM IV
+    atm_straddle_price = Column(Float, nullable=True) # ATM CE LTP + ATM PE LTP
+    india_vix = Column(Float, nullable=True)
+    nifty_close = Column(Float, nullable=True)
+    atm_strike = Column(Integer, nullable=True)
+    expiry_date = Column(String, nullable=True)
+    is_proxy = Column(Boolean, default=False)         # True = bootstrapped from VIX
+
+
+# ── IV Term Structure (per-expiry ATM IV snapshot at EOD) ─────────────────────
+
+class IVTermStructureRecord(Base):
+    __tablename__ = "iv_term_structure"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, nullable=False, index=True)
+    expiry = Column(String, nullable=False)
+    dte = Column(Integer, nullable=True)
+    atm_iv = Column(Float, nullable=True)
+    atm_straddle = Column(Float, nullable=True)
+
+
+# ── IV Skew Daily (25-delta risk reversal + butterfly at EOD) ─────────────────
+
+class IVSkewDaily(Base):
+    __tablename__ = "iv_skew_daily"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, unique=True, nullable=False, index=True)
+    delta25_call_iv = Column(Float, nullable=True)   # 25-delta CE IV
+    delta25_put_iv = Column(Float, nullable=True)    # 25-delta PE IV
+    risk_reversal = Column(Float, nullable=True)     # CE_IV - PE_IV (negative = fear)
+    butterfly = Column(Float, nullable=True)         # (CE_IV + PE_IV)/2 - ATM_IV
+    atm_iv = Column(Float, nullable=True)            # ATM IV on that date
+
+
+# ── Strategy (multi-leg option strategy) ─────────────────────────────────────
+
+class Strategy(Base):
+    __tablename__ = "strategies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)         # e.g. "Iron Condor – Apr25"
+    strategy_type = Column(String, nullable=False) # IRON_CONDOR | STRANGLE | BULL_PUT_SPREAD | BEAR_CALL_SPREAD | CALENDAR_SPREAD
+    expiry_date = Column(String, nullable=False)   # DD-Mon-YYYY
+    status = Column(String, default="ACTIVE")      # ACTIVE | CLOSED
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+    trades = relationship("Trade", back_populates="strategy", foreign_keys="Trade.strategy_id")

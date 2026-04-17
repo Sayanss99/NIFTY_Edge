@@ -194,6 +194,11 @@
                         <div id="m-directional" style="margin-top:4px">-</div>
                         <div class="metric-change neutral" id="m-dir-detail" style="font-size:10px"></div>
                     </div>
+                    <div class="metric-card" id="iv-rank-card">
+                        <div class="metric-label">IV Rank</div>
+                        <div class="metric-value" id="m-iv-rank">-</div>
+                        <div class="metric-change neutral" id="m-iv-rank-signal" style="font-size:10px"></div>
+                    </div>
                 </div>
 
                 <!-- Dashboard Grid -->
@@ -209,6 +214,7 @@
                                         <label for="vix-offset-input">VIX Offset %</label>
                                         <input type="number" id="vix-offset-input" value="50" min="0" max="200" step="10"
                                                onchange="onVixOffsetChange()" onkeyup="onVixOffsetChange()">
+                                        <span id="vix-offset-display" style="font-family:var(--font-mono);font-weight:700;font-size:13px;color:var(--primary,#2563EB);min-width:38px;text-align:right">50%</span>
                                     </div>
                                     <div class="chart-zoom">
                                         <label for="y-zoom-input">Y Zoom</label>
@@ -425,11 +431,16 @@
                 if (expResp && expResp.expiries && expResp.expiries.length) {
                     const sel = document.getElementById('expiry-selector');
                     if (sel) {
-                        sel.innerHTML = expResp.expiries.map(e =>
+                        // Filter out any past expiries before populating the dropdown
+                        const futureExpiries = Utils.filterFutureExpiries(expResp.expiries);
+                        sel.innerHTML = futureExpiries.map(e =>
                             `<option value="${e}">${e}</option>`
                         ).join('');
-                        defaultExpiry = expResp.expiries[0];
-                        sel.value = defaultExpiry;
+                        defaultExpiry = futureExpiries[0];
+                        // Restore user's last selection; never select a past expiry
+                        const resolved = Utils.resolveExpiry(futureExpiries);
+                        sel.value = resolved;
+                        if (resolved !== defaultExpiry) usingCustomExpiry = true;
                     }
                 }
             } catch (e) {}
@@ -472,6 +483,31 @@
                     }
                     updateRiskMeter(risk);
                     updatePositionsSummary(risk);
+                }
+            } catch (e) {}
+
+            // Load IV Rank (independent of market hours — uses DB history)
+            try {
+                const ivResp = await API.fetch('/api/market/iv-rank');
+                const ivRankEl = document.getElementById('m-iv-rank');
+                const ivSignalEl = document.getElementById('m-iv-rank-signal');
+                if (ivResp && ivResp.status === 'ok' && ivRankEl) {
+                    const rankVal = ivResp.iv_rank;
+                    // Show rank% with ATM IV in parentheses
+                    ivRankEl.textContent = rankVal != null ? rankVal.toFixed(1) + '%' : '-';
+                    if (ivSignalEl) {
+                        const dataQuality = ivResp.low_data_warning ? ` (${ivResp.data_days}d)` : '';
+                        ivSignalEl.textContent = (ivResp.signal || '') + dataQuality;
+                        ivSignalEl.style.color = rankVal > 70 ? '#DC2626' : rankVal < 30 ? '#16A34A' : '#D97706';
+                    }
+                    // Show tooltip with ATM IV and data quality
+                    const card = document.getElementById('iv-rank-card');
+                    if (card && ivResp.current_atm_iv) {
+                        card.title = `ATM IV: ${ivResp.current_atm_iv.toFixed(2)}%  |  ${ivResp.data_days}d history  |  52wk: ${ivResp.iv_52wk_low}–${ivResp.iv_52wk_high}`;
+                    }
+                } else if (ivResp && ivResp.status === 'no_data' && ivRankEl) {
+                    ivRankEl.textContent = '-';
+                    if (ivSignalEl) { ivSignalEl.textContent = 'No history'; ivSignalEl.style.color = '#9CA3AF'; }
                 }
             } catch (e) {}
 
@@ -619,6 +655,7 @@
         // ── Expiry selector change ────────────────────────────────────
         document.getElementById('expiry-selector').addEventListener('change', async function() {
             const selected = this.value;
+            Utils.saveExpiry(selected);
             // If user returns to default expiry, resume WS updates
             if (!defaultExpiry || selected === defaultExpiry) {
                 usingCustomExpiry = false;
@@ -672,6 +709,8 @@
 
         async function onVixOffsetChange() {
             vixOffset = parseFloat(document.getElementById('vix-offset-input').value) || 0;
+            const displayEl = document.getElementById('vix-offset-display');
+            if (displayEl) displayEl.textContent = `${vixOffset}%`;
             // Save to user settings
             API.put('/api/auth/settings', { vix_offset: vixOffset }).catch(() => {});
             // Recalculate VIX range locally using current snapshot
@@ -785,9 +824,10 @@
             // Update expiry selector — only if incoming list is richer than existing
             if (data.expiries && data.expiries.length) {
                 const sel = document.getElementById('expiry-selector');
-                if (sel && data.expiries.length > sel.options.length) {
+                const futureFromData = Utils.filterFutureExpiries(data.expiries);
+                if (sel && futureFromData.length > sel.options.length) {
                     const current = sel.value;
-                    sel.innerHTML = data.expiries.map(e =>
+                    sel.innerHTML = futureFromData.map(e =>
                         `<option value="${e}" ${e === current ? 'selected' : ''}>${e}</option>`
                     ).join('');
                 }
@@ -1065,6 +1105,56 @@
                 return PAD.top + chartH * (1 - (val - yMin) / (yMax - yMin));
             }
 
+            // ── Label deconfliction: collect → resolve → draw ─────────────
+            // leftLabels / rightLabels: { lineY, y, text, color, font? }
+            // lineY = where the actual price line is; y = resolved draw position
+            const leftLabels = [];
+            const rightLabels = [];
+
+            function resolveLabels(labels, minGap) {
+                if (labels.length < 2) return;
+                labels.sort((a, b) => a.y - b.y);
+                // forward pass: push down overlapping labels
+                for (let i = 1; i < labels.length; i++) {
+                    if (labels[i].y < labels[i - 1].y + minGap)
+                        labels[i].y = labels[i - 1].y + minGap;
+                }
+                // backward pass: pull up if they ran past the plot boundary
+                for (let i = labels.length - 2; i >= 0; i--) {
+                    if (labels[i].y > labels[i + 1].y - minGap)
+                        labels[i].y = labels[i + 1].y - minGap;
+                }
+            }
+
+            function drawResolvedLabels(labels, side) {
+                const isLeft = side === 'left';
+                const tx = isLeft ? PAD.left - 8 : PAD.left + chartW + 4;
+                ctx.textAlign = isLeft ? 'right' : 'left';
+                for (const lb of labels) {
+                    ctx.fillStyle = lb.color;
+                    ctx.font = lb.font || '11px Inter, sans-serif';
+                    ctx.fillText(lb.text, tx, lb.y + 4);
+                    // thin dashed connector when label was bumped from line
+                    if (Math.abs(lb.y - lb.lineY) > 3) {
+                        ctx.save();
+                        ctx.strokeStyle = lb.color;
+                        ctx.lineWidth = 0.8;
+                        ctx.globalAlpha = 0.45;
+                        ctx.setLineDash([2, 3]);
+                        ctx.beginPath();
+                        if (isLeft) {
+                            ctx.moveTo(PAD.left - 3, lb.lineY);
+                            ctx.lineTo(PAD.left - 3, lb.y + 4);
+                        } else {
+                            ctx.moveTo(PAD.left + chartW + 1, lb.lineY);
+                            ctx.lineTo(PAD.left + chartW + 1, lb.y + 4);
+                        }
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                }
+            }
+
             // Plot panel
             roundRect(PAD.left, PAD.top, chartW, chartH, 18);
             ctx.fillStyle = theme.plotFill;
@@ -1086,7 +1176,7 @@
             }
             ctx.setLineDash([]);
 
-            // VIX range band (yellow/amber)
+            // VIX range band (yellow/amber) — lines drawn, labels collected
             if (chartState.showVix && data.vix_range_top && data.vix_range_bottom) {
                 ctx.fillStyle = 'rgba(245, 158, 11, 0.08)';
                 const y1 = yToScreen(data.vix_range_top);
@@ -1099,14 +1189,11 @@
                 ctx.moveTo(PAD.left, y2); ctx.lineTo(PAD.left + chartW, y2);
                 ctx.stroke();
                 ctx.setLineDash([]);
-                ctx.fillStyle = '#D97706';
-                ctx.font = '10px Inter, sans-serif';
-                ctx.textAlign = 'right';
-                ctx.fillText(Utils.formatNum(data.vix_range_top), PAD.left - 8, y1 + 4);
-                ctx.fillText(Utils.formatNum(data.vix_range_bottom), PAD.left - 8, y2 + 4);
+                leftLabels.push({ lineY: y1, y: y1, text: Utils.formatNum(data.vix_range_top), color: '#D97706' });
+                leftLabels.push({ lineY: y2, y: y2, text: Utils.formatNum(data.vix_range_bottom), color: '#D97706' });
             }
 
-            // Calculated range band (blue)
+            // Calculated range band (blue) — lines drawn, labels collected
             if (chartState.showCalc && data.calc_range_top && data.calc_range_bottom) {
                 ctx.fillStyle = 'rgba(59, 130, 246, 0.11)';
                 const y1 = yToScreen(data.calc_range_top);
@@ -1118,14 +1205,11 @@
                 ctx.moveTo(PAD.left, y1); ctx.lineTo(PAD.left + chartW, y1);
                 ctx.moveTo(PAD.left, y2); ctx.lineTo(PAD.left + chartW, y2);
                 ctx.stroke();
-                ctx.fillStyle = '#2563EB';
-                ctx.font = '10px Inter, sans-serif';
-                ctx.textAlign = 'right';
-                ctx.fillText(Utils.formatNum(data.calc_range_top), PAD.left - 8, y1 + 4);
-                ctx.fillText(Utils.formatNum(data.calc_range_bottom), PAD.left - 8, y2 + 4);
+                rightLabels.push({ lineY: y1, y: y1, text: Utils.formatNum(data.calc_range_top), color: '#2563EB' });
+                rightLabels.push({ lineY: y2, y: y2, text: Utils.formatNum(data.calc_range_bottom), color: '#2563EB' });
             }
 
-            // CMP diamond + line
+            // CMP diamond + line — diamond & pill drawn inline, left label collected
             const cmpY = yToScreen(spot);
             const cx = PAD.left + chartW / 2;
 
@@ -1148,16 +1232,29 @@
                 ctx.stroke();
                 ctx.setLineDash([]);
 
-                ctx.fillStyle = '#EF4444';
+                // Floating price pill (stays pinned to the line — not deconflicted)
+                const pillLabel = Utils.formatNum(spot, 2);
                 ctx.font = 'bold 12px JetBrains Mono, monospace';
-                ctx.textAlign = 'right';
-                ctx.fillText(Utils.formatNum(spot, 2), PAD.left - 8, cmpY + 4);
+                const pillW = ctx.measureText(pillLabel).width + 12;
+                const pillH = 18;
+                const pillX = cx + 14;
+                const pillY = cmpY - pillH / 2;
+                ctx.fillStyle = '#EF4444';
+                roundRect(pillX, pillY, pillW, pillH, 4);
+                ctx.fill();
+                ctx.fillStyle = '#FFFFFF';
+                ctx.textAlign = 'left';
+                ctx.fillText(pillLabel, pillX + 6, cmpY + 4);
+
+                // Left-margin CMP label collected (high priority — inserted first so
+                // deconfliction pushes others away from it, not the reverse)
+                leftLabels.unshift({ lineY: cmpY, y: cmpY, text: Utils.formatNum(spot, 2), color: '#EF4444', font: 'bold 13px JetBrains Mono, monospace' });
             }
 
-            // ── Pivot + OI S/R Levels on chart ──────────────────────────
+            // ── Pivot + OI S/R Levels ────────────────────────────────────
             if (chartState.showPivot && currentSRLevels) {
                 ctx.lineWidth = 1;
-                ctx.font = '9px JetBrains Mono, monospace';
+                ctx.font = '11px JetBrains Mono, monospace';
                 const pivSups = [...(currentSRLevels.pivot?.supports || [])]
                     .map(s => ({ ...s, strike: Number(s.strike || s) }))
                     .filter(s => Number.isFinite(s.strike))
@@ -1169,45 +1266,37 @@
                     .sort((a, b) => a.strike - b.strike)
                     .slice(0, 3);
 
-                for (let i = 0; i < pivSups.length; i++) {
-                    const s = pivSups[i];
+                for (const s of pivSups) {
                     const sy = yToScreen(s.strike);
                     if (sy > PAD.top && sy < H - PAD.bottom) {
                         ctx.strokeStyle = 'rgba(16, 185, 129, 0.78)';
                         ctx.setLineDash([8, 6]);
                         ctx.beginPath();
-                        ctx.moveTo(PAD.left, sy);
-                        ctx.lineTo(PAD.left + chartW, sy);
+                        ctx.moveTo(PAD.left, sy); ctx.lineTo(PAD.left + chartW, sy);
                         ctx.stroke();
                         ctx.setLineDash([]);
-                        ctx.fillStyle = '#10B981';
-                        ctx.textAlign = 'left';
-                        ctx.fillText(Utils.formatNum(s.strike), PAD.left + chartW + 4, sy + 3);
+                        rightLabels.push({ lineY: sy, y: sy, text: Utils.formatNum(s.strike), color: '#10B981' });
                     }
                 }
 
-                for (let i = 0; i < pivRess.length; i++) {
-                    const r = pivRess[i];
+                for (const r of pivRess) {
                     const ry = yToScreen(r.strike);
                     if (ry > PAD.top && ry < H - PAD.bottom) {
                         ctx.strokeStyle = 'rgba(248, 113, 113, 0.78)';
                         ctx.setLineDash([8, 6]);
                         ctx.beginPath();
-                        ctx.moveTo(PAD.left, ry);
-                        ctx.lineTo(PAD.left + chartW, ry);
+                        ctx.moveTo(PAD.left, ry); ctx.lineTo(PAD.left + chartW, ry);
                         ctx.stroke();
                         ctx.setLineDash([]);
-                        ctx.fillStyle = '#F87171';
-                        ctx.textAlign = 'left';
-                        ctx.fillText(Utils.formatNum(r.strike), PAD.left + chartW + 4, ry + 3);
+                        rightLabels.push({ lineY: ry, y: ry, text: Utils.formatNum(r.strike), color: '#F87171' });
                     }
                 }
             }
 
-            // ── Trade position lines on chart ───────────────────────────
+            // ── Trade position lines ─────────────────────────────────────
             if (currentPositions.length) {
                 ctx.lineWidth = 1.5;
-                ctx.font = 'bold 10px JetBrains Mono, monospace';
+                ctx.font = 'bold 11px JetBrains Mono, monospace';
 
                 for (const pos of currentPositions) {
                     if (!pos.strike) continue;
@@ -1221,7 +1310,6 @@
                     const color = isCE ? '#991B1B' : '#1E3A8A';
                     const bgColor = isCE ? 'rgba(220,38,38,0.12)' : 'rgba(37,99,235,0.12)';
 
-                    // Solid line for positions
                     ctx.strokeStyle = color;
                     ctx.setLineDash(isSell ? [] : [4, 3]);
                     ctx.beginPath();
@@ -1229,7 +1317,7 @@
                     ctx.stroke();
                     ctx.setLineDash([]);
 
-                    // Label pill
+                    // Inline pill label — stays on the line itself
                     const label = (pos.trade_type || '').replace('_', ' ') + ' ' + pos.strike;
                     const labelW = ctx.measureText(label).width + 10;
                     const lx = PAD.left + 6;
@@ -1252,11 +1340,14 @@
                 ctx.moveTo(PAD.left, mpY); ctx.lineTo(PAD.left + chartW, mpY);
                 ctx.stroke();
                 ctx.setLineDash([]);
-                ctx.fillStyle = '#7C3AED';
-                ctx.font = '9px JetBrains Mono, monospace';
-                ctx.textAlign = 'left';
-                ctx.fillText('MP ' + Utils.formatNum(maxPain), PAD.left + chartW + 3, mpY + 3);
+                rightLabels.push({ lineY: mpY, y: mpY, text: 'MP ' + Utils.formatNum(maxPain), color: '#7C3AED', font: 'bold 11px JetBrains Mono, monospace' });
             }
+
+            // ── Deconflict then draw all margin labels ───────────────────
+            resolveLabels(leftLabels, 14);
+            resolveLabels(rightLabels, 14);
+            drawResolvedLabels(leftLabels, 'left');
+            drawResolvedLabels(rightLabels, 'right');
         }
 
         window.addEventListener('resize', () => {

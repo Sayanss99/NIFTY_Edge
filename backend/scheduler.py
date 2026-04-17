@@ -11,7 +11,7 @@ import numpy as np
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from database import SessionLocal
-from models import MarketSnapshot, SRLevel, Trade, TradeStatus
+from models import MarketSnapshot, SRLevel, Trade, TradeStatus, IVDailyRecord
 from config import LOT_SIZE, FAST_REFRESH_SECONDS, SLOW_REFRESH_MULTIPLIER
 
 
@@ -592,7 +592,7 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
 
 def _capture_eod_snapshot(db: Session, data: dict):
     """Capture end-of-day signal snapshot for historical insights."""
-    from models import DailySignalSnapshot
+    from models import DailySignalSnapshot, IVDailyRecord
 
     today = datetime.now(IST).date()
 
@@ -645,19 +645,178 @@ def _capture_eod_snapshot(db: Session, data: dict):
     db.commit()
     print(f"[Scheduler] EOD signal snapshot captured for {today}")
 
+    # ── Capture actual ATM IV for IV Rank history ──────────────────────────
+    try:
+        from models import IVTermStructureRecord, IVSkewDaily
+        from market_data import build_chain, find_25delta_iv, days_to_expiry as _dte
+
+        chain_df = data.get("chain_df")
+        spot = data.get("spot") or snap.get("nifty_spot", 0)
+        expiry = data.get("expiry") or snap.get("expiry_date", "")
+        expiries_list = snap.get("expiries") or (data.get("snapshot", {}).get("expiries") or [])
+
+        if chain_df is not None and not chain_df.empty and spot:
+            atm_strike = round(spot / 50) * 50
+
+            # ATM IV (CE and PE separately)
+            ce_row = chain_df[(chain_df["Strike"] == atm_strike) & (chain_df["Type"] == "CE")]
+            pe_row = chain_df[(chain_df["Strike"] == atm_strike) & (chain_df["Type"] == "PE")]
+            ce_iv = float(ce_row["IV"].iloc[0]) if not ce_row.empty else 0.0
+            pe_iv = float(pe_row["IV"].iloc[0]) if not pe_row.empty else 0.0
+            ce_ltp = float(ce_row["LTP"].iloc[0]) if not ce_row.empty else 0.0
+            pe_ltp = float(pe_row["LTP"].iloc[0]) if not pe_row.empty else 0.0
+
+            n_valid = int(ce_iv > 0) + int(pe_iv > 0)
+            if n_valid > 0:
+                atm_iv = (ce_iv + pe_iv) / n_valid
+                straddle_price = round(ce_ltp + pe_ltp, 2)
+
+                iv_rec = db.query(IVDailyRecord).filter(IVDailyRecord.date == today).first()
+                if iv_rec:
+                    iv_rec.atm_iv = round(atm_iv, 4)
+                    iv_rec.atm_iv_ce = round(ce_iv, 4) if ce_iv > 0 else None
+                    iv_rec.atm_iv_pe = round(pe_iv, 4) if pe_iv > 0 else None
+                    iv_rec.atm_straddle_price = straddle_price
+                    iv_rec.india_vix = snap.get("india_vix")
+                    iv_rec.nifty_close = spot
+                    iv_rec.atm_strike = atm_strike
+                    iv_rec.expiry_date = expiry
+                    iv_rec.is_proxy = False
+                else:
+                    iv_rec = IVDailyRecord(
+                        date=today,
+                        atm_iv=round(atm_iv, 4),
+                        atm_iv_ce=round(ce_iv, 4) if ce_iv > 0 else None,
+                        atm_iv_pe=round(pe_iv, 4) if pe_iv > 0 else None,
+                        atm_straddle_price=straddle_price,
+                        india_vix=snap.get("india_vix"),
+                        nifty_close=spot,
+                        atm_strike=atm_strike,
+                        expiry_date=expiry,
+                        is_proxy=False,
+                    )
+                    db.add(iv_rec)
+
+                # 25-delta skew (risk reversal + butterfly)
+                try:
+                    ce25_strike, ce25_iv = find_25delta_iv(chain_df, "CE")
+                    pe25_strike, pe25_iv = find_25delta_iv(chain_df, "PE")
+                    if ce25_iv > 0 and pe25_iv > 0:
+                        rr_val = round(ce25_iv - pe25_iv, 4)
+                        butterfly = round((ce25_iv + pe25_iv) / 2.0 - atm_iv, 4)
+                        skew_rec = db.query(IVSkewDaily).filter(IVSkewDaily.date == today).first()
+                        if skew_rec:
+                            skew_rec.delta25_call_iv = round(ce25_iv, 4)
+                            skew_rec.delta25_put_iv = round(pe25_iv, 4)
+                            skew_rec.risk_reversal = rr_val
+                            skew_rec.butterfly = butterfly
+                            skew_rec.atm_iv = round(atm_iv, 4)
+                        else:
+                            db.add(IVSkewDaily(
+                                date=today,
+                                delta25_call_iv=round(ce25_iv, 4),
+                                delta25_put_iv=round(pe25_iv, 4),
+                                risk_reversal=rr_val,
+                                butterfly=butterfly,
+                                atm_iv=round(atm_iv, 4),
+                            ))
+                except Exception as e_skew:
+                    print(f"[Scheduler] Skew capture error: {e_skew}")
+
+                db.commit()
+                print(f"[Scheduler] IV record captured for {today}: ATM IV={atm_iv:.2f}% (CE={ce_iv:.2f}%, PE={pe_iv:.2f}%)")
+
+        # ── Term structure: capture ATM IV for up to 4 expiries ───────────
+        try:
+            if expiries_list:
+                # Delete today's old term structure records before re-inserting
+                db.query(IVTermStructureRecord).filter(
+                    IVTermStructureRecord.date == today
+                ).delete(synchronize_session=False)
+                db.commit()
+
+                for exp in expiries_list[:4]:
+                    try:
+                        ts_df, _, ts_spot = build_chain("NIFTY", exp)
+                        if ts_df is None or ts_df.empty:
+                            continue
+                        ts_atm = round(ts_spot / 50) * 50
+                        ts_ce = ts_df[(ts_df["Strike"] == ts_atm) & (ts_df["Type"] == "CE")]
+                        ts_pe = ts_df[(ts_df["Strike"] == ts_atm) & (ts_df["Type"] == "PE")]
+                        ts_ce_iv = float(ts_ce["IV"].iloc[0]) if not ts_ce.empty else 0.0
+                        ts_pe_iv = float(ts_pe["IV"].iloc[0]) if not ts_pe.empty else 0.0
+                        ts_atm_iv = (ts_ce_iv + ts_pe_iv) / max(1, int(ts_ce_iv > 0) + int(ts_pe_iv > 0))
+                        ts_ce_ltp = float(ts_ce["LTP"].iloc[0]) if not ts_ce.empty else 0.0
+                        ts_pe_ltp = float(ts_pe["LTP"].iloc[0]) if not ts_pe.empty else 0.0
+                        db.add(IVTermStructureRecord(
+                            date=today,
+                            expiry=exp,
+                            dte=_dte(exp),
+                            atm_iv=round(ts_atm_iv, 4),
+                            atm_straddle=round(ts_ce_ltp + ts_pe_ltp, 2),
+                        ))
+                    except Exception:
+                        continue
+                db.commit()
+                print(f"[Scheduler] Term structure captured for {today} ({min(4, len(expiries_list))} expiries)")
+        except Exception as e_ts:
+            print(f"[Scheduler] Term structure capture error: {e_ts}")
+
+    except Exception as e:
+        print(f"[Scheduler] IV record capture error: {e}")
+
+
+def _expire_user_past_trades(db: Session, user_id: int) -> int:
+    """Transition OPEN trades whose expiry date has passed (IST) to EXPIRED.
+
+    Duplicates the logic in routes_trades._expire_past_trades so the scheduler
+    can call it without creating a circular import with the routes module.
+    """
+    today_ist = datetime.now(IST).date()
+
+    open_trades = db.query(Trade).filter(
+        Trade.user_id == user_id,
+        Trade.status == TradeStatus.OPEN.value,
+    ).all()
+
+    count = 0
+    for t in open_trades:
+        if not t.expiry_date:
+            continue
+        try:
+            from datetime import datetime as _dt
+            exp_date = _dt.strptime(t.expiry_date, "%d-%b-%Y").date()
+        except ValueError:
+            continue
+        if exp_date < today_ist:
+            t.status = TradeStatus.EXPIRED.value
+            if not t.exit_date:
+                t.exit_date = datetime.now(IST).replace(tzinfo=None)
+            count += 1
+
+    if count:
+        db.commit()
+        print(f"[Scheduler] Auto-expired {count} trade(s) for user {user_id}")
+
+    return count
+
 
 def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dict | None:
-    """Compute live position data for a specific user."""
-    from market_data import compute_risk_score, compute_hedge_v2, days_to_expiry
+    """Compute live position data for a specific user.
 
-    chain_df = market_data.get("chain_df")
+    Each trade's IV/delta/LTP is looked up from the chain for *that trade's own
+    expiry*, not the scheduler's current (nearest) expiry.  Chains for non-default
+    expiries are fetched on demand and cached for the duration of this call.
+    """
+    from market_data import compute_risk_score, compute_hedge_v2, days_to_expiry, build_chain
+
+    chain_df_default = market_data.get("chain_df")   # nearest-expiry chain from scheduler
     spot = market_data.get("spot", 0)
     vix = market_data["snapshot"].get("india_vix", 0)
     vix_chg_pct = market_data["snapshot"].get("vix_change_pct", 0)
-    expiry = market_data.get("expiry", "")
-    dte = days_to_expiry(expiry) if expiry else 30
+    default_expiry = market_data.get("expiry", "")
 
-    if chain_df is None or chain_df.empty:
+    if chain_df_default is None or chain_df_default.empty:
         return None
 
     open_trades = db.query(Trade).filter(
@@ -667,6 +826,35 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
 
     if not open_trades:
         return None
+
+    # Auto-expire any trades whose expiry date has passed before computing positions.
+    # This keeps the WS push consistent with the REST endpoints.
+    _expire_user_past_trades(db, user_id)
+    # Re-query after potential status changes
+    open_trades = db.query(Trade).filter(
+        Trade.user_id == user_id,
+        Trade.status == TradeStatus.OPEN.value,
+    ).all()
+    if not open_trades:
+        return None
+
+    # Build a per-expiry chain cache so we look up each trade in its own expiry.
+    # Start with the already-fetched default chain to avoid a redundant NSE call.
+    chain_by_expiry: dict = {default_expiry: chain_df_default}
+    unique_expiries = {
+        t.expiry_date for t in open_trades
+        if t.expiry_date and t.expiry_date != default_expiry
+    }
+    for exp in unique_expiries:
+        try:
+            df, _, _ = build_chain("NIFTY", exp)
+            if df is not None and not df.empty:
+                chain_by_expiry[exp] = df
+            else:
+                chain_by_expiry[exp] = chain_df_default  # fallback
+        except Exception as e:
+            print(f"[Scheduler] Failed to fetch chain for expiry {exp}: {e}")
+            chain_by_expiry[exp] = chain_df_default  # fallback
 
     # Get S/R levels for hedge engine
     sr_levels = market_data.get("sr_levels")
@@ -682,6 +870,11 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
     hedge_suggestions = []
 
     for trade in open_trades:
+        # Resolve the chain and DTE for *this trade's* expiry
+        trade_expiry = trade.expiry_date or default_expiry
+        chain_df = chain_by_expiry.get(trade_expiry, chain_df_default)
+        trade_dte = days_to_expiry(trade_expiry) if trade_expiry else 30
+
         opt_type = "CE" if "CE" in trade.trade_type else "PE"
         match = chain_df[(chain_df["Strike"] == trade.strike) & (chain_df["Type"] == opt_type)]
 
@@ -726,7 +919,7 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
                 vix_abs=vix,
                 gamma=current_gamma,
                 theta=current_theta,
-                dte=dte,
+                dte=trade_dte,        # ← per-trade DTE, not scheduler's expiry DTE
                 vix_chg_pct=vix_chg_pct,
             )
             if "CE" in trade.trade_type:
@@ -742,8 +935,8 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
                         sold_strike=trade.strike,
                         entry_premium=trade.entry_premium,
                         current_spot=spot,
-                        chain_df=chain_df,
-                        dte=dte,
+                        chain_df=chain_df,   # ← per-trade chain
+                        dte=trade_dte,       # ← per-trade DTE
                         supports=supports,
                         resistances=resistances,
                     )

@@ -146,6 +146,7 @@ const Utils = {
             { id: 'option-chain', icon: '⊞', label: 'Option Chain', href: '/option-chain' },
             { id: 'positions', icon: '◫', label: 'Positions', href: '/positions' },
             { id: 'analytics', icon: '◔', label: 'Analytics', href: '/analytics' },
+            { id: 'strategy-builder', icon: '◈', label: 'Strategy', href: '/strategy-builder' },
             { id: 'journal', icon: '☰', label: 'Journal', href: '/journal' },
             { id: 'alerts', icon: '⚡', label: 'Alerts', href: '/alerts' },
         ];
@@ -169,6 +170,7 @@ const Utils = {
         'Option Chain': { icon: '&#9638;',  color: '#DC2626' },
         'Positions':    { icon: '&#9635;',  color: '#16A34A' },
         'Analytics':    { icon: '&#9685;',  color: '#7C3AED' },
+        'Strategy Builder': { icon: '&#9672;', color: '#7C3AED' },
         'Journal':      { icon: '&#9776;',  color: '#6366F1' },
         'Alerts':       { icon: '&#9889;',  color: '#D97706' },
     },
@@ -229,6 +231,81 @@ const Utils = {
         el.textContent = `Last: ${d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
     },
 
+    /** localStorage key for persisted expiry selection */
+    EXPIRY_KEY: 'niftyedge_selected_expiry',
+
+    /**
+     * Parse an NSE expiry string "DD-Mon-YYYY" into a plain Date (year/month/day).
+     * Returns null if the string is malformed.
+     */
+    parseExpiryDate(expiry) {
+        const MONTHS = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11 };
+        const parts = (expiry || '').split('-');
+        if (parts.length !== 3) return null;
+        const d = parseInt(parts[0], 10);
+        const m = MONTHS[parts[1]];
+        const y = parseInt(parts[2], 10);
+        if (isNaN(d) || m == null || isNaN(y)) return null;
+        return new Date(y, m, d);
+    },
+
+    /**
+     * Return today's calendar date in IST (UTC+5:30), with time stripped.
+     * NSE expiry dates are always IST calendar dates, so comparisons must use IST.
+     */
+    todayIST() {
+        const now = new Date();
+        const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+        return new Date(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate());
+    },
+
+    /**
+     * Returns true if the given expiry string is today or in the future (IST).
+     * Today's expiry is still valid — it only expires at EOD IST.
+     */
+    isExpiryCurrent(expiry) {
+        const d = this.parseExpiryDate(expiry);
+        if (!d) return false;
+        return d >= this.todayIST();
+    },
+
+    /**
+     * Return only future/current expiries from the supplied list (IST comparison).
+     * If the filter would leave nothing (e.g. bad data), the original list is
+     * returned as a safe fallback so the UI never goes blank.
+     */
+    filterFutureExpiries(expiries) {
+        if (!expiries || !expiries.length) return expiries || [];
+        const future = expiries.filter(e => this.isExpiryCurrent(e));
+        return future.length ? future : expiries;
+    },
+
+    /**
+     * Save the user's expiry selection to localStorage.
+     * @param {string} expiry  e.g. "17-Apr-2026"
+     */
+    saveExpiry(expiry) {
+        if (expiry) localStorage.setItem(this.EXPIRY_KEY, expiry);
+    },
+
+    /**
+     * Given a list of available expiries (ordered nearest-first), return the
+     * expiry that should be pre-selected in the dropdown:
+     *   1. Filter the list to future/current expiries only (IST).
+     *   2. If localStorage has a saved expiry AND it's in the future list → use it.
+     *   3. Otherwise → nearest upcoming expiry (future[0]).
+     * @param {string[]} expiries  Raw list from the backend (may include past expiries)
+     * @returns {string}
+     */
+    resolveExpiry(expiries) {
+        if (!expiries || !expiries.length) return '';
+        const future = this.filterFutureExpiries(expiries);
+        const saved = localStorage.getItem(this.EXPIRY_KEY);
+        // Only restore saved expiry if it's still in the future
+        if (saved && future.includes(saved)) return saved;
+        return future[0];
+    },
+
     /**
      * Initialize common header state — loads market status, populates expiry
      * selector, and sets refresh-info text. Call on every page after buildHeader().
@@ -253,9 +330,15 @@ const Utils = {
             const expResp = await API.getExpiries();
             const sel = document.getElementById('expiry-selector');
             if (sel && expResp && expResp.expiries && expResp.expiries.length) {
-                sel.innerHTML = expResp.expiries.map(e =>
+                // Strip any past expiries before populating the dropdown
+                const futureExpiries = this.filterFutureExpiries(expResp.expiries);
+                sel.innerHTML = futureExpiries.map(e =>
                     `<option value="${e}">${e}</option>`
                 ).join('');
+                // Restore user's last selection, but never a past expiry
+                sel.value = this.resolveExpiry(futureExpiries);
+                // Persist future changes from these pages
+                sel.addEventListener('change', () => this.saveExpiry(sel.value));
             }
         } catch (e) {}
 

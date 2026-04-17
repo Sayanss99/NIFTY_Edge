@@ -150,4 +150,48 @@ const API = {
     async getRiskScores() {
         return this.fetch('/api/trades/risk');
     },
+
+    // ── Strategy Builder endpoints ────────────────────────────────────
+
+    async getMarketAnalytics(expiry) {
+        const q = expiry ? `?expiry=${encodeURIComponent(expiry)}` : '';
+        return this.fetch(`/api/strategies/market-analytics${q}`);
+    },
+
+    async getStrategyRankings(expiry) {
+        const q = expiry ? `?expiry=${encodeURIComponent(expiry)}` : '';
+        return this.fetch(`/api/strategies/rankings${q}`);
+    },
+
+    async createStrategy(body) {
+        return this.post('/api/strategies/', body);
+    },
+
+    async getStrategies() {
+        return this.fetch('/api/strategies/');
+    },
+
+    async getStrategyPayoff(id) {
+        return this.fetch(`/api/strategies/${id}/payoff`);
+    },
+
+    async closeStrategy(id) {
+        return this.post(`/api/strategies/${id}/close`, {});
+    },
+
+    async getIVRank(days = 252) {
+        return this.fetch(`/api/market/iv-rank?days=${days}`);
+    },
+
+    async calculateMargin(body) {
+        return this.post('/api/market/margin', body);
+    },
+
+    async getRollScenarios(tradeId) {
+        return this.fetch(`/api/trades/${tradeId}/roll-scenarios`);
+    },
+
+    async executeRoll(tradeId, body) {
+        return this.post(`/api/trades/${tradeId}/roll`, body);
+    },
 };

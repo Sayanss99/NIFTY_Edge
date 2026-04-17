@@ -108,6 +108,12 @@
             align-items: center;
             margin-bottom: 12px;
         }
+        .btn-success { background:#16A34A; color:#fff; border:none; }
+        .btn-success:hover { background:#15803D; }
+        .btn-danger  { background:#DC2626; color:#fff; border:none; }
+        .btn-danger:hover  { background:#B91C1C; }
+        .action-btn { opacity:0.45; transition:opacity 0.15s; }
+        .action-btn.active { opacity:1; box-shadow:0 0 0 2px rgba(0,0,0,0.12); }
     </style>
 </head>
 <body>
@@ -124,7 +130,12 @@
                     <div class="lookup-card ce">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                             <span class="fw-600" style="color:#991B1B">CE Lookup</span>
-                            <button class="btn btn-sm btn-ghost hidden" id="ce-add-trade-btn" onclick="addTradeFromLookup('CE')">Add as Trade</button>
+                            <div id="ce-add-row" class="hidden" style="display:none;align-items:center;gap:6px">
+                                <span style="font-size:11px;color:var(--text-muted)">Add as:</span>
+                                <button class="btn btn-sm btn-danger action-btn active" id="ce-sell-btn" onclick="setAction('CE','SELL')">Sell</button>
+                                <button class="btn btn-sm btn-success action-btn" id="ce-buy-btn" onclick="setAction('CE','BUY')">Buy</button>
+                                <button class="btn btn-sm btn-primary" onclick="addTradeFromLookup('CE')">+ Add</button>
+                            </div>
                         </div>
                         <div class="lookup-input-row">
                             <input type="number" id="ce-lookup-strike" placeholder="Strike" step="50">
@@ -142,7 +153,12 @@
                     <div class="lookup-card pe">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                             <span class="fw-600" style="color:#1E3A8A">PE Lookup</span>
-                            <button class="btn btn-sm btn-ghost hidden" id="pe-add-trade-btn" onclick="addTradeFromLookup('PE')">Add as Trade</button>
+                            <div id="pe-add-row" class="hidden" style="display:none;align-items:center;gap:6px">
+                                <span style="font-size:11px;color:var(--text-muted)">Add as:</span>
+                                <button class="btn btn-sm btn-danger action-btn active" id="pe-sell-btn" onclick="setAction('PE','SELL')">Sell</button>
+                                <button class="btn btn-sm btn-success action-btn" id="pe-buy-btn" onclick="setAction('PE','BUY')">Buy</button>
+                                <button class="btn btn-sm btn-primary" onclick="addTradeFromLookup('PE')">+ Add</button>
+                            </div>
                         </div>
                         <div class="lookup-input-row">
                             <input type="number" id="pe-lookup-strike" placeholder="Strike" step="50">
@@ -206,6 +222,15 @@
         let currentSpot = 0;
         let currentExpiry = '';
         let lookupData = { CE: null, PE: null };
+        // Default action is SELL (most common for option writers)
+        let lookupAction = { CE: 'SELL', PE: 'SELL' };
+
+        function setAction(side, action) {
+            lookupAction[side] = action;
+            const prefix = side.toLowerCase();
+            document.getElementById(`${prefix}-sell-btn`).classList.toggle('active', action === 'SELL');
+            document.getElementById(`${prefix}-buy-btn`).classList.toggle('active', action === 'BUY');
+        }
 
         // ── Load initial data ──────────────────────────────────────────
 
@@ -230,10 +255,23 @@
                 if (resp.expiries) {
                     const sel = document.getElementById('expiry-selector');
                     sel.innerHTML = resp.expiries.map(e =>
-                        `<option value="${e}" ${e === currentExpiry ? 'selected' : ''}>${e}</option>`
+                        `<option value="${e}">${e}</option>`
                     ).join('');
+                    // Restore user's last selection; fall back to nearest expiry
+                    const resolved = Utils.resolveExpiry(resp.expiries);
+                    sel.value = resolved;
+                    // If restored expiry differs from the default chain data, reload
+                    if (resolved !== currentExpiry) {
+                        const r = await API.getOptionChain(resolved);
+                        if (r && !r.error) {
+                            chainData = r.data;
+                            currentSpot = r.spot;
+                            currentExpiry = r.selected_expiry;
+                        }
+                    }
                     sel.addEventListener('change', async () => {
                         const newExpiry = sel.value;
+                        Utils.saveExpiry(newExpiry);
                         const r = await API.getOptionChain(newExpiry);
                         if (r && !r.error) {
                             chainData = r.data;
@@ -373,7 +411,9 @@
                 rankEl.textContent = resp.premium_rank;
                 rankEl.className = 'value badge ' + Utils.premiumRankClass(resp.premium_rank);
 
-                document.getElementById(`${prefix}-add-trade-btn`).classList.remove('hidden');
+                const addRow = document.getElementById(`${prefix}-add-row`);
+                addRow.classList.remove('hidden');
+                addRow.style.display = 'flex';
             } else {
                 Utils.toast(resp?.error || 'Lookup failed', 'error');
             }
@@ -393,10 +433,10 @@
             const data = lookupData[side];
             if (!data) return;
 
-            // Redirect to positions page with pre-filled data
+            const action = lookupAction[side] || 'SELL';
             const params = new URLSearchParams({
                 action: 'add',
-                type: side + '_SELL',
+                type: side + '_' + action,
                 strike: data.strike,
                 premium: data.ltp,
                 iv: data.iv,
