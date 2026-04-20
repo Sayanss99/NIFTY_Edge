@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NiftyEdge — Analytics</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <style>
+        .analytics-tabs {
+            display: flex;
+            border-bottom: 2px solid var(--border);
+            margin-bottom: 20px;
+        }
+        .analytics-tabs button {
+            padding: 10px 20px;
+            border: none;
+            background: none;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+        .analytics-tabs button:hover { color: var(--text-primary); }
+        .analytics-tabs button.active {
+            color: var(--primary, #2563EB);
+            border-bottom-color: var(--primary, #2563EB);
+            font-weight: 600;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .summary-strip {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .summary-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .summary-card .label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .summary-card .value {
+            font-size: 20px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+        }
+        .chart-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .chart-container .chart-title {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        .chart-container canvas {
+            width: 100%;
+            display: block;
+        }
+        .chart-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        .time-filter {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 12px;
+        }
+        .time-filter button {
+            padding: 4px 12px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg-card);
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .time-filter button.active {
+            background: var(--primary, #2563EB);
+            color: #fff;
+            border-color: var(--primary, #2563EB);
+        }
+        .vix-bar {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 12px;
+        }
+        .vix-bar .vix-label { width: 120px; }
+        .vix-bar .vix-track {
+            flex: 1;
+            height: 20px;
+            background: var(--bg-table-header);
+            border-radius: 4px;
+            margin: 0 8px;
+            position: relative;
+            overflow: hidden;
+        }
+        .vix-bar .vix-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s;
+        }
+        .vix-bar .vix-stat { width: 100px; text-align: right; font-family: var(--font-mono); font-size: 11px; }
+        .insight-card {
+            background: var(--blue-bg);
+            border: 1px solid var(--blue);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .insight-card::before {
+            content: '\26A1';
+            margin-right: 8px;
+        }
+        .empty-analytics {
+            text-align: center;
+            padding: 80px 20px;
+            color: var(--text-muted);
+        }
+        .empty-analytics .icon { font-size: 40px; margin-bottom: 12px; }
+        .monthly-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+            gap: 4px;
+        }
+        .month-cell {
+            padding: 8px 4px;
+            text-align: center;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: var(--font-mono);
+        }
+        .month-cell .month-label {
+            font-size: 9px;
+            color: var(--text-muted);
+            margin-bottom: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar" id="sidebar"></aside>
+        <div class="main-content">
+            <header class="header" id="header"></header>
+            <div class="page-content">
+                <div class="analytics-tabs">
+                    <button class="active" onclick="switchTab('performance')">Performance</button>
+                    <button onclick="switchTab('patterns')">Strike Patterns</button>
+                    <button onclick="switchTab('signals')">Historical Insights</button>
+                </div>
+
+                <!-- Tab 1: Performance -->
+                <div id="tab-performance" class="tab-content active">
+                    <div class="summary-strip" id="perf-summary">
+                        <div class="summary-card">
+                            <div class="label">Total Realized P&L</div>
+                            <div class="value" id="p-total">-</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="label">Win Rate</div>
+                            <div class="value" id="p-winrate">-</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="label">Avg P&L / Expiry</div>
+                            <div class="value" id="p-avg-expiry">-</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="label">Max Drawdown</div>
+                            <div class="value" id="p-drawdown">-</div>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">Cumulative P&L</div>
+                        <div class="time-filter" id="time-filter">
+                            <button onclick="setTimeFilter(0)" class="active">All</button>
+                            <button onclick="setTimeFilter(1)">1M</button>
+                            <button onclick="setTimeFilter(3)">3M</button>
+                            <button onclick="setTimeFilter(6)">6M</button>
+                        </div>
+                        <canvas id="pnl-chart" height="220"></canvas>
+                    </div>
+
+                    <div class="chart-row">
+                        <div class="chart-container">
+                            <div class="chart-title">P&L by Expiry</div>
+                            <canvas id="expiry-chart" height="200"></canvas>
+                        </div>
+                        <div class="chart-container">
+                            <div class="chart-title">Monthly Performance</div>
+                            <div id="monthly-heatmap" class="monthly-grid"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 2: Strike Patterns -->
+                <div id="tab-patterns" class="tab-content">
+                    <div class="chart-row">
+                        <div class="chart-container">
+                            <div class="chart-title">CE Strike Distance (OTM pts)</div>
+                            <canvas id="ce-dist-chart" height="200"></canvas>
+                        </div>
+                        <div class="chart-container">
+                            <div class="chart-title">PE Strike Distance (OTM pts)</div>
+                            <canvas id="pe-dist-chart" height="200"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">Strike Distance vs P&L</div>
+                        <canvas id="scatter-chart" height="220"></canvas>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">Win Rate by VIX Regime</div>
+                        <div id="vix-regime"></div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">Insights</div>
+                        <div id="insights-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Tab 3: Historical Insights -->
+                <div id="tab-signals" class="tab-content">
+                    <div class="summary-strip" id="signal-summary">
+                        <div class="summary-card">
+                            <div class="label">Total Signals</div>
+                            <div class="value font-mono" id="sig-total">-</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="label">Bullish Accuracy</div>
+                            <div class="value font-mono" id="sig-bull-acc">-</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="label">Bearish Accuracy</div>
+                            <div class="value font-mono" id="sig-bear-acc">-</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="label">Tendency+Dir Accuracy</div>
+                            <div class="value font-mono" id="sig-tend-acc">-</div>
+                        </div>
+                    </div>
+                    <div class="chart-container" style="margin-bottom:16px">
+                        <div class="chart-title">Signal Score vs Next-Day Nifty Change</div>
+                        <canvas id="signal-chart" height="280"></canvas>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Signal History</span>
+                            <select id="signal-days" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:11px;background:var(--bg-card)">
+                                <option value="30">Last 30 days</option>
+                                <option value="90" selected>Last 90 days</option>
+                                <option value="180">Last 180 days</option>
+                                <option value="365">Last 365 days</option>
+                            </select>
+                        </div>
+                        <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+                            <table class="data-table" id="signal-table">
+                                <thead>
+                                    <tr>
+                                        <th style="text-align:left">Date</th>
+                                        <th style="text-align:right">Close</th>
+                                        <th style="text-align:center">Direction</th>
+                                        <th style="text-align:right">Score</th>
+                                        <th style="text-align:right">Factors</th>
+                                        <th style="text-align:center">Tendency</th>
+                                        <th style="text-align:right">RR</th>
+                                        <th style="text-align:right">Next Day %</th>
+                                        <th style="text-align:center">Correct?</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="signal-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="empty-state" class="empty-analytics" style="display:none">
+                    <div class="icon">&#9683;</div>
+                    <div style="font-size:16px;font-weight:600;margin-bottom:8px">No Trade History Yet</div>
+                    <div>Close some trades to see analytics and patterns here.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/utils.js"></script>
+    <script src="/js/ws.js"></script>
+    <script>
+        if (!API.requireAuth()) throw new Error('Auth required');
+
+        document.getElementById('sidebar').innerHTML = Utils.buildSidebar('analytics');
+        document.getElementById('header').innerHTML = Utils.buildHeader('Analytics');
+
+        let perfData = null;
+        let patternData = null;
+        let signalData = null;
+
+        // ── Tab switching ─────────────────────────────────────────────
+        function switchTab(tab) {
+            document.querySelectorAll('.analytics-tabs button').forEach((b, i) => {
+                b.classList.toggle('active',
+                    (tab === 'performance' && i === 0) ||
+                    (tab === 'patterns' && i === 1) ||
+                    (tab === 'signals' && i === 2));
+            });
+            document.getElementById('tab-performance').classList.toggle('active', tab === 'performance');
+            document.getElementById('tab-patterns').classList.toggle('active', tab === 'patterns');
+            document.getElementById('tab-signals').classList.toggle('active', tab === 'signals');
+
+            if (tab === 'patterns' && patternData) renderPatterns(patternData);
+            if (tab === 'signals' && !signalData) loadSignalData();
+        }
+
+        // ── Load data ─────────────────────────────────────────────────
+        (async () => {
+            Utils.initHeader();
+            try {
+                const [perf, patterns] = await Promise.all([
+                    API.fetch('/api/analytics/performance'),
+                    API.fetch('/api/analytics/strike-patterns'),
+                ]);
+
+                perfData = perf;
+                patternData = patterns;
+
+                if (!perf || perf.summary.trade_count === 0) {
+                    document.getElementById('empty-state').style.display = 'block';
+                    document.getElementById('tab-performance').style.display = 'none';
+                    return;
+                }
+
+                renderPerformance(perf);
+            } catch (e) {
+                console.error('Analytics load error:', e);
+            }
+        })();
+
+        // ── Performance Tab ───────────────────────────────────────────
+        function renderPerformance(data) {
+            const s = data.summary;
+            document.getElementById('p-total').innerHTML = Utils.pnlHtml(s.total_pnl);
+            document.getElementById('p-winrate').textContent = s.trade_count ? `${s.win_rate}%` : '-';
+            document.getElementById('p-avg-expiry').innerHTML = Utils.pnlHtml(s.avg_per_expiry);
+            document.getElementById('p-drawdown').innerHTML =
+                s.max_drawdown > 0 ? `<span class="pnl-value loss">-${Utils.formatINR(s.max_drawdown).replace(/[+-]/,'')}</span>` : '-';
+
+            drawPnlCurve(data.cumulative_pnl);
+            drawExpiryBars(data.expiry_pnl);
+            renderMonthlyHeatmap(data.monthly_pnl);
+        }
+
+        let currentTimeFilter = 0;
+        function setTimeFilter(months) {
+            currentTimeFilter = months;
+            document.querySelectorAll('#time-filter button').forEach(b => {
+                b.classList.toggle('active', parseInt(b.textContent.replace('M','')) === months || (months === 0 && b.textContent === 'All'));
+            });
+            if (perfData) {
+                const points = perfData.cumulative_pnl;
+                if (months > 0) {
+                    const cutoff = new Date();
+                    cutoff.setMonth(cutoff.getMonth() - months);
+                    const filtered = points.filter(p => new Date(p.date) >= cutoff);
+                    drawPnlCurve(filtered);
+                } else {
+                    drawPnlCurve(points);
+                }
+            }
+        }
+
+        // ── Cumulative P&L chart ──────────────────────────────────────
+        function drawPnlCurve(points) {
+            const canvas = document.getElementById('pnl-chart');
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = 220 * dpr;
+            ctx.scale(dpr, dpr);
+            const W = rect.width, H = 220;
+            ctx.clearRect(0, 0, W, H);
+
+            if (!points.length) {
+                ctx.fillStyle = '#9CA3AF';
+                ctx.font = '12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('No data', W/2, H/2);
+                return;
+            }
+
+            const pad = { top: 20, right: 20, bottom: 30, left: 60 };
+            const cW = W - pad.left - pad.right;
+            const cH = H - pad.top - pad.bottom;
+
+            const vals = points.map(p => p.pnl);
+            const minV = Math.min(0, ...vals);
+            const maxV = Math.max(0, ...vals);
+            const range = maxV - minV || 1;
+
+            const xStep = cW / Math.max(points.length - 1, 1);
+
+            // Zero line
+            const zeroY = pad.top + cH * (1 - (0 - minV) / range);
+            ctx.strokeStyle = '#E5E7EB';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(pad.left, zeroY);
+            ctx.lineTo(W - pad.right, zeroY);
+            ctx.stroke();
+
+            // Fill area
+            ctx.beginPath();
+            ctx.moveTo(pad.left, zeroY);
+            for (let i = 0; i < points.length; i++) {
+                const x = pad.left + i * xStep;
+                const y = pad.top + cH * (1 - (vals[i] - minV) / range);
+                ctx.lineTo(x, y);
+            }
+            ctx.lineTo(pad.left + (points.length - 1) * xStep, zeroY);
+            ctx.closePath();
+            const lastVal = vals[vals.length - 1];
+            ctx.fillStyle = lastVal >= 0 ? 'rgba(22,163,74,0.1)' : 'rgba(220,38,38,0.1)';
+            ctx.fill();
+
+            // Line
+            ctx.beginPath();
+            for (let i = 0; i < points.length; i++) {
+                const x = pad.left + i * xStep;
+                const y = pad.top + cH * (1 - (vals[i] - minV) / range);
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = lastVal >= 0 ? '#16A34A' : '#DC2626';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Y-axis labels
+            ctx.fillStyle = '#6B7280';
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'right';
+            const steps = 5;
+            for (let i = 0; i <= steps; i++) {
+                const v = minV + (range * i / steps);
+                const y = pad.top + cH * (1 - i / steps);
+                ctx.fillText(Math.round(v).toLocaleString('en-IN'), pad.left - 8, y + 3);
+            }
+
+            // X-axis labels (sparse)
+            ctx.textAlign = 'center';
+            const labelCount = Math.min(points.length, 6);
+            const labelStep = Math.max(1, Math.floor(points.length / labelCount));
+            for (let i = 0; i < points.length; i += labelStep) {
+                const x = pad.left + i * xStep;
+                const d = points[i].date;
+                if (d) {
+                    const dt = new Date(d);
+                    ctx.fillText(dt.toLocaleDateString('en-IN', {day:'2-digit', month:'short'}), x, H - 8);
+                }
+            }
+        }
+
+        // ── Expiry P&L bars ───────────────────────────────────────────
+        function drawExpiryBars(expiries) {
+            const canvas = document.getElementById('expiry-chart');
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = 200 * dpr;
+            ctx.scale(dpr, dpr);
+            const W = rect.width, H = 200;
+            ctx.clearRect(0, 0, W, H);
+
+            if (!expiries.length) return;
+
+            const pad = { top: 10, right: 10, bottom: 40, left: 50 };
+            const cW = W - pad.left - pad.right;
+            const cH = H - pad.top - pad.bottom;
+
+            const vals = expiries.map(e => e.pnl);
+            const minV = Math.min(0, ...vals);
+            const maxV = Math.max(0, ...vals);
+            const range = maxV - minV || 1;
+
+            const barW = Math.min(40, cW / expiries.length - 4);
+            const gap = (cW - barW * expiries.length) / (expiries.length + 1);
+            const zeroY = pad.top + cH * (1 - (0 - minV) / range);
+
+            for (let i = 0; i < expiries.length; i++) {
+                const x = pad.left + gap + i * (barW + gap);
+                const valY = pad.top + cH * (1 - (vals[i] - minV) / range);
+                const barH = Math.abs(valY - zeroY);
+
+                ctx.fillStyle = vals[i] >= 0 ? '#16A34A' : '#DC2626';
+                if (vals[i] >= 0) {
+                    ctx.fillRect(x, valY, barW, barH);
+                } else {
+                    ctx.fillRect(x, zeroY, barW, barH);
+                }
+
+                // Label
+                ctx.save();
+                ctx.fillStyle = '#6B7280';
+                ctx.font = '9px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.translate(x + barW/2, H - 4);
+                ctx.rotate(-0.5);
+                const label = expiries[i].expiry.replace(/-20\d{2}$/, '');
+                ctx.fillText(label, 0, 0);
+                ctx.restore();
+            }
+
+            // Zero line
+            ctx.strokeStyle = '#E5E7EB';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(pad.left, zeroY);
+            ctx.lineTo(W - pad.right, zeroY);
+            ctx.stroke();
+        }
+
+        // ── Monthly heatmap ───────────────────────────────────────────
+        function renderMonthlyHeatmap(months) {
+            const container = document.getElementById('monthly-heatmap');
+            if (!months.length) {
+                container.innerHTML = '<span class="text-muted" style="font-size:11px">No data yet</span>';
+                return;
+            }
+
+            const maxAbs = Math.max(...months.map(m => Math.abs(m.pnl)), 1);
+
+            container.innerHTML = months.map(m => {
+                const intensity = Math.min(Math.abs(m.pnl) / maxAbs, 1);
+                const alpha = 0.15 + intensity * 0.6;
+                const bg = m.pnl >= 0
+                    ? `rgba(22,163,74,${alpha})`
+                    : `rgba(220,38,38,${alpha})`;
+                const color = intensity > 0.5 ? '#fff' : (m.pnl >= 0 ? '#166534' : '#991B1B');
+                const label = new Date(m.month + '-01').toLocaleDateString('en-IN', {month:'short', year:'2-digit'});
+                return `<div class="month-cell" style="background:${bg};color:${color}">
+                    <div class="month-label">${label}</div>
+                    ${Utils.formatINR(m.pnl)}
+                </div>`;
+            }).join('');
+        }
+
+        // ── Patterns Tab ──────────────────────────────────────────────
+        function renderPatterns(data) {
+            drawDistanceChart('ce-dist-chart', data.ce_distances, '#DC2626');
+            drawDistanceChart('pe-dist-chart', data.pe_distances, '#2563EB');
+            drawScatterChart(data);
+            renderVixRegime(data.vix_regime);
+            renderInsights(data.insights);
+        }
+
+        function drawDistanceChart(canvasId, distances, color) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = 200 * dpr;
+            ctx.scale(dpr, dpr);
+            const W = rect.width, H = 200;
+            ctx.clearRect(0, 0, W, H);
+
+            if (!distances.length) {
+                ctx.fillStyle = '#9CA3AF';
+                ctx.font = '12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('No trades', W/2, H/2);
+                return;
+            }
+
+            // Histogram: bucket by 200pt intervals
+            const bucketSize = 200;
+            const maxDist = Math.max(...distances.map(d => d.distance));
+            const bucketCount = Math.ceil(maxDist / bucketSize) + 1;
+            const buckets = Array(bucketCount).fill(0);
+            const winBuckets = Array(bucketCount).fill(0);
+
+            for (const d of distances) {
+                const idx = Math.floor(d.distance / bucketSize);
+                buckets[idx]++;
+                if (d.win) winBuckets[idx]++;
+            }
+
+            const pad = { top: 10, right: 10, bottom: 30, left: 30 };
+            const cW = W - pad.left - pad.right;
+            const cH = H - pad.top - pad.bottom;
+            const maxCount = Math.max(...buckets, 1);
+            const barW = Math.min(30, cW / bucketCount - 2);
+            const gap = (cW - barW * bucketCount) / (bucketCount + 1);
+
+            for (let i = 0; i < bucketCount; i++) {
+                if (buckets[i] === 0) continue;
+                const x = pad.left + gap + i * (barW + gap);
+                const barH = (buckets[i] / maxCount) * cH;
+                const y = pad.top + cH - barH;
+
+                // Total bar
+                ctx.fillStyle = color + '40';
+                ctx.fillRect(x, y, barW, barH);
+                // Win portion
+                const winH = (winBuckets[i] / maxCount) * cH;
+                ctx.fillStyle = color;
+                ctx.fillRect(x, pad.top + cH - winH, barW, winH);
+
+                // Label
+                ctx.fillStyle = '#6B7280';
+                ctx.font = '9px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${i * bucketSize}`, x + barW/2, H - 8);
+            }
+        }
+
+        // ── Scatter chart ─────────────────────────────────────────────
+        function drawScatterChart(data) {
+            const canvas = document.getElementById('scatter-chart');
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = 220 * dpr;
+            ctx.scale(dpr, dpr);
+            const W = rect.width, H = 220;
+            ctx.clearRect(0, 0, W, H);
+
+            const all = [...(data.ce_distances || []), ...(data.pe_distances || [])];
+            if (!all.length) {
+                ctx.fillStyle = '#9CA3AF';
+                ctx.font = '12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('No trades', W/2, H/2);
+                return;
+            }
+
+            const pad = { top: 15, right: 20, bottom: 30, left: 60 };
+            const cW = W - pad.left - pad.right;
+            const cH = H - pad.top - pad.bottom;
+
+            const maxDist = Math.max(...all.map(d => d.distance), 100);
+            const pnls = all.map(d => d.pnl);
+            const minP = Math.min(0, ...pnls);
+            const maxP = Math.max(0, ...pnls);
+            const rangeP = maxP - minP || 1;
+
+            // Zero line
+            const zeroY = pad.top + cH * (1 - (0 - minP) / rangeP);
+            ctx.strokeStyle = '#E5E7EB';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(pad.left, zeroY);
+            ctx.lineTo(W - pad.right, zeroY);
+            ctx.stroke();
+
+            // Dots
+            for (const d of data.ce_distances || []) {
+                const x = pad.left + (d.distance / maxDist) * cW;
+                const y = pad.top + cH * (1 - (d.pnl - minP) / rangeP);
+                ctx.beginPath();
+                ctx.arc(x, y, 5, 0, Math.PI * 2);
+                ctx.fillStyle = d.win ? 'rgba(22,163,74,0.7)' : 'rgba(220,38,38,0.7)';
+                ctx.fill();
+                ctx.strokeStyle = d.win ? '#166534' : '#991B1B';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+            for (const d of data.pe_distances || []) {
+                const x = pad.left + (d.distance / maxDist) * cW;
+                const y = pad.top + cH * (1 - (d.pnl - minP) / rangeP);
+                ctx.beginPath();
+                ctx.rect(x - 4, y - 4, 8, 8);
+                ctx.fillStyle = d.win ? 'rgba(22,163,74,0.7)' : 'rgba(220,38,38,0.7)';
+                ctx.fill();
+                ctx.strokeStyle = d.win ? '#166534' : '#991B1B';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            // Axes labels
+            ctx.fillStyle = '#6B7280';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Strike Distance (pts OTM)', W/2, H - 4);
+            ctx.textAlign = 'right';
+            ctx.fillText('P&L', pad.left - 8, pad.top + 4);
+
+            // Legend
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.beginPath(); ctx.arc(W - 140, 12, 4, 0, Math.PI*2); ctx.fillStyle = '#DC2626'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('CE', W - 132, 15);
+            ctx.beginPath(); ctx.rect(W - 100, 8, 8, 8); ctx.fillStyle = '#2563EB'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('PE', W - 88, 15);
+            ctx.beginPath(); ctx.arc(W - 60, 12, 4, 0, Math.PI*2); ctx.fillStyle = '#16A34A'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('Win', W - 52, 15);
+        }
+
+        // ── VIX regime bars ───────────────────────────────────────────
+        function renderVixRegime(regimes) {
+            const container = document.getElementById('vix-regime');
+            if (!regimes || !regimes.length) {
+                container.innerHTML = '<span class="text-muted">No data</span>';
+                return;
+            }
+
+            const maxTotal = Math.max(...regimes.map(r => r.total), 1);
+            const colors = ['#16A34A', '#D97706', '#DC2626'];
+
+            container.innerHTML = regimes.map((r, i) => `
+                <div class="vix-bar">
+                    <span class="vix-label">${r.label}</span>
+                    <div class="vix-track">
+                        <div class="vix-fill" style="width:${r.total ? (r.win_rate) : 0}%;background:${colors[i]}"></div>
+                    </div>
+                    <span class="vix-stat">${r.win_rate}% (${r.wins}/${r.total})</span>
+                </div>
+            `).join('');
+        }
+
+        // ── Insights ──────────────────────────────────────────────────
+        function renderInsights(insights) {
+            const container = document.getElementById('insights-panel');
+            if (!insights || !insights.length) {
+                container.innerHTML = '<span class="text-muted">No insights yet</span>';
+                return;
+            }
+            container.innerHTML = insights.map(i => `<div class="insight-card">${i}</div>`).join('');
+        }
+
+        // ── Historical Insights Tab ──────────────────────────────────
+
+        async function loadSignalData(days) {
+            days = days || document.getElementById('signal-days').value || 90;
+            try {
+                const [sigResp, accResp] = await Promise.all([
+                    API.fetch(`/api/analytics/historical-signals?days=${days}`),
+                    API.fetch(`/api/analytics/signal-accuracy?days=${days}`),
+                ]);
+                signalData = sigResp.signals || [];
+                renderSignalSummary(accResp);
+                renderSignalTable(signalData);
+                drawSignalChart(signalData);
+            } catch (e) {
+                console.error('Signal data load error:', e);
+            }
+        }
+
+        document.getElementById('signal-days').addEventListener('change', function() {
+            loadSignalData(this.value);
+        });
+
+        function renderSignalSummary(acc) {
+            document.getElementById('sig-total').textContent = acc.total_signals || 0;
+            document.getElementById('sig-bull-acc').textContent =
+                acc.bullish ? acc.bullish.accuracy + '%' : '-';
+            document.getElementById('sig-bear-acc').textContent =
+                acc.bearish ? acc.bearish.accuracy + '%' : '-';
+            document.getElementById('sig-tend-acc').textContent =
+                acc.tendency_agreement ? acc.tendency_agreement.accuracy + '%' : '-';
+        }
+
+        function renderSignalTable(signals) {
+            const tbody = document.getElementById('signal-table-body');
+            if (!signals.length) {
+                tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">No signal data yet. Data is captured at EOD during market hours.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = signals.slice().reverse().map(s => {
+                const dirCls = s.direction === 'BULLISH' ? 'badge-safe'
+                    : s.direction === 'BEARISH' ? 'badge-danger' : 'badge-neutral';
+                const tendCls = s.tendency === 'Positive' ? 'text-green'
+                    : s.tendency === 'Negative' ? 'text-red' : 'text-muted';
+                const chgCls = s.next_day_change_pct > 0 ? 'text-green'
+                    : s.next_day_change_pct < 0 ? 'text-red' : '';
+                const correctIcon = s.signal_correct === true ? '<span style="color:var(--green)">&#10004;</span>'
+                    : s.signal_correct === false ? '<span style="color:var(--red)">&#10008;</span>' : '-';
+                return `<tr>
+                    <td style="text-align:left">${s.date}</td>
+                    <td style="text-align:right">${Utils.formatNum(s.nifty_close)}</td>
+                    <td style="text-align:center"><span class="badge ${dirCls}">${s.direction || 'N/A'}</span></td>
+                    <td style="text-align:right">${s.score != null ? (s.score > 0 ? '+' : '') + s.score.toFixed(1) : '-'}</td>
+                    <td style="text-align:right">${s.factors_agree || '-'}/8</td>
+                    <td style="text-align:center" class="${tendCls}">${s.tendency || '-'}</td>
+                    <td style="text-align:right">${s.rr_value != null ? s.rr_value.toFixed(1) : '-'}</td>
+                    <td style="text-align:right" class="${chgCls}">${s.next_day_change_pct != null ? (s.next_day_change_pct > 0 ? '+' : '') + s.next_day_change_pct.toFixed(2) + '%' : '-'}</td>
+                    <td style="text-align:center">${correctIcon}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function drawSignalChart(signals) {
+            const canvas = document.getElementById('signal-chart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const w = canvas.parentElement.clientWidth - 32;
+            const h = 280;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+            ctx.scale(dpr, dpr);
+
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            ctx.fillStyle = isDark ? '#1A1A2E' : '#FFFFFF';
+            ctx.fillRect(0, 0, w, h);
+
+            // Filter to signals with next_day_change_pct
+            const data = signals.filter(s => s.next_day_change_pct != null && s.score != null);
+            if (data.length < 2) {
+                ctx.fillStyle = isDark ? '#9CA3AF' : '#6B7280';
+                ctx.font = '13px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Not enough data to chart yet', w / 2, h / 2);
+                return;
+            }
+
+            const pad = { top: 30, right: 60, bottom: 30, left: 60 };
+            const cw = w - pad.left - pad.right;
+            const ch = h - pad.top - pad.bottom;
+
+            // Dual Y-axes
+            const scores = data.map(d => d.score);
+            const changes = data.map(d => d.next_day_change_pct);
+            const sMin = Math.min(...scores, -1);
+            const sMax = Math.max(...scores, 1);
+            const cMin = Math.min(...changes, -1);
+            const cMax = Math.max(...changes, 1);
+
+            const xStep = cw / (data.length - 1);
+
+            // Grid
+            ctx.strokeStyle = isDark ? '#252540' : '#E2E8F0';
+            ctx.lineWidth = 0.5;
+            for (let i = 0; i <= 4; i++) {
+                const y = pad.top + (ch * i / 4);
+                ctx.beginPath();
+                ctx.moveTo(pad.left, y);
+                ctx.lineTo(pad.left + cw, y);
+                ctx.stroke();
+            }
+
+            // Bars: next-day change
+            const barW = Math.max(2, xStep * 0.4);
+            data.forEach((d, i) => {
+                const x = pad.left + i * xStep;
+                const yZero = pad.top + ch * (cMax / (cMax - cMin));
+                const yVal = pad.top + ch * (1 - (d.next_day_change_pct - cMin) / (cMax - cMin));
+                ctx.fillStyle = d.next_day_change_pct >= 0
+                    ? (isDark ? 'rgba(22,163,74,0.5)' : 'rgba(22,163,74,0.3)')
+                    : (isDark ? 'rgba(220,38,38,0.5)' : 'rgba(220,38,38,0.3)');
+                ctx.fillRect(x - barW/2, Math.min(yZero, yVal), barW, Math.abs(yVal - yZero));
+            });
+
+            // Line: directional score
+            ctx.strokeStyle = '#2563EB';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            data.forEach((d, i) => {
+                const x = pad.left + i * xStep;
+                const y = pad.top + ch * (1 - (d.score - sMin) / (sMax - sMin));
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+
+            // Dots for correct/incorrect
+            data.forEach((d, i) => {
+                const x = pad.left + i * xStep;
+                const y = pad.top + ch * (1 - (d.score - sMin) / (sMax - sMin));
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, Math.PI * 2);
+                ctx.fillStyle = d.signal_correct === true ? '#16A34A'
+                    : d.signal_correct === false ? '#DC2626' : '#9CA3AF';
+                ctx.fill();
+            });
+
+            // Y-axis labels
+            ctx.font = '10px JetBrains Mono, monospace';
+            ctx.textAlign = 'right';
+            ctx.fillStyle = '#2563EB';
+            for (let i = 0; i <= 4; i++) {
+                const val = sMax - (sMax - sMin) * i / 4;
+                ctx.fillText(val.toFixed(1), pad.left - 6, pad.top + ch * i / 4 + 3);
+            }
+            ctx.textAlign = 'left';
+            ctx.fillStyle = isDark ? '#9CA3AF' : '#6B7280';
+            for (let i = 0; i <= 4; i++) {
+                const val = cMax - (cMax - cMin) * i / 4;
+                ctx.fillText(val.toFixed(1) + '%', pad.left + cw + 6, pad.top + ch * i / 4 + 3);
+            }
+
+            // Axis labels
+            ctx.font = '11px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#2563EB';
+            ctx.save();
+            ctx.translate(12, pad.top + ch / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText('Signal Score', 0, 0);
+            ctx.restore();
+            ctx.fillStyle = isDark ? '#9CA3AF' : '#6B7280';
+            ctx.save();
+            ctx.translate(w - 8, pad.top + ch / 2);
+            ctx.rotate(Math.PI / 2);
+            ctx.fillText('Next-Day %', 0, 0);
+            ctx.restore();
+
+            // X-axis: first and last date
+            ctx.fillStyle = isDark ? '#6B7280' : '#94A3B8';
+            ctx.font = '9px Inter, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(data[0].date.slice(5), pad.left, h - 4);
+            ctx.textAlign = 'right';
+            ctx.fillText(data[data.length - 1].date.slice(5), pad.left + cw, h - 4);
+        }
+    </script>
+</body>
+</html>

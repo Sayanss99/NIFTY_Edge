@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NiftyEdge — Strategy Builder</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <style>
+        /* ── Analytics Bar wrapper (60/40 split) ───────────────────── */
+        .analytics-bar-wrapper {
+            display: flex;
+            gap: 14px;
+            margin-bottom: 18px;
+            align-items: stretch;
+        }
+        .analytics-tiles-col {
+            flex: 0 0 60%;
+            min-width: 0;
+        }
+        .analytics-outlook-col {
+            flex: 1;
+            min-width: 0;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px 18px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .analytics-outlook-col .outlook-label {
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.7px;
+            margin-bottom: 10px;
+        }
+        .analytics-outlook-col .outlook-text {
+            font-size: 11.5px;
+            line-height: 1.6;
+            color: var(--text-secondary, var(--text-muted));
+        }
+        .analytics-outlook-col .outlook-signal {
+            display: block;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 6px 12px;
+            border-radius: 6px;
+            margin-top: 12px;
+            letter-spacing: 0.01em;
+        }
+        .outlook-signal.sig-bull  { background: rgba(22,163,74,0.14);  color: #16A34A; border-left: 3px solid #16A34A; }
+        .outlook-signal.sig-bear  { background: rgba(220,38,38,0.14);  color: #DC2626; border-left: 3px solid #DC2626; }
+        .outlook-signal.sig-warn  { background: rgba(217,119,6,0.14);  color: #D97706; border-left: 3px solid #D97706; }
+        .outlook-signal.sig-mute  { background: rgba(107,114,128,0.10); color: var(--text-muted); border-left: 3px solid var(--border); }
+        [data-theme="dark"] .outlook-signal.sig-bull { background: rgba(22,163,74,0.18); }
+        [data-theme="dark"] .outlook-signal.sig-bear { background: rgba(220,38,38,0.18); }
+        [data-theme="dark"] .outlook-signal.sig-warn { background: rgba(217,119,6,0.18); }
+        .outlook-ai-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 8.5px;
+            font-weight: 600;
+            color: var(--text-muted);
+            background: rgba(107,114,128,0.10);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1px 5px;
+            letter-spacing: 0.3px;
+            vertical-align: middle;
+            margin-left: 6px;
+        }
+
+        /* ── Analytics Bar (tiles only) ─────────────────────────────── */
+        .analytics-bar {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 12px;
+        }
+        /* Equal-width tiles within each row via CSS grid */
+        .analytics-bar-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+            gap: 6px;
+            align-items: stretch;
+        }
+        .analytics-bar-row + .analytics-bar-row {
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px solid var(--border);
+        }
+        .analytics-pill {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 5px 5px 4px;
+            cursor: default;
+            transition: border-color 0.15s;
+            min-width: 0;
+            overflow: hidden;
+        }
+        .analytics-pill:hover { border-color: var(--primary, #2563EB); }
+        .analytics-pill .pill-label {
+            font-size: 7.5px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+            text-align: center;
+        }
+        .analytics-pill .pill-value {
+            font-size: 11px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            line-height: 1.2;
+            text-align: center;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            max-width: 100%;
+        }
+        .analytics-pill .pill-sub {
+            font-size: 7.5px;
+            color: var(--text-muted);
+            margin-top: 1px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+            text-align: center;
+        }
+
+        /* ── Main Layout ───────────────────────────────────────────── */
+        .strategy-layout {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            gap: 16px;
+            align-items: start;
+        }
+
+        /* ── Rankings Panel ─────────────────────────────────────────── */
+        .rankings-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 0;
+            overflow: hidden;
+        }
+        .rankings-panel .panel-title {
+            font-size: 13px;
+            font-weight: 600;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-secondary);
+        }
+        .ranking-card {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .ranking-card:hover { background: var(--bg-secondary); }
+        .ranking-card.selected { background: color-mix(in srgb, var(--primary, #2563EB) 10%, transparent); border-left: 3px solid var(--primary, #2563EB); }
+        .ranking-card:last-child { border-bottom: none; }
+        .ranking-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 4px;
+        }
+        .ranking-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 10px;
+            color: #fff;
+            min-width: 40px;
+            text-align: center;
+        }
+        .badge-green { background: #16A34A; }
+        .badge-amber { background: #D97706; }
+        .badge-red   { background: #9CA3AF; }
+        .ranking-name {
+            font-size: 13px;
+            font-weight: 600;
+            flex: 1;
+        }
+        .ranking-rationale {
+            font-size: 11px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+        .ranking-card.high-yield {
+            border-left: 3px solid #F59E0B;
+            background: color-mix(in srgb, #F59E0B 5%, transparent);
+        }
+        .ranking-card.high-yield:hover { background: color-mix(in srgb, #F59E0B 10%, transparent); }
+        .badge-yield {
+            font-size: 9px;
+            font-weight: 800;
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: linear-gradient(90deg, #D97706, #F59E0B);
+            color: #fff;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .risk-note {
+            font-size: 10px;
+            color: #D97706;
+            margin-top: 4px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* ── Right Panel (Wizard + Active) ──────────────────────────── */
+        .wizard-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .wizard-tabs {
+            display: flex;
+            border-bottom: 2px solid var(--border);
+            background: var(--bg-secondary);
+        }
+        .wizard-tabs button {
+            padding: 12px 20px;
+            border: none;
+            background: none;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+        .wizard-tabs button.active {
+            color: var(--primary, #2563EB);
+            border-bottom-color: var(--primary, #2563EB);
+            font-weight: 600;
+        }
+        .wizard-tab-content { display: none; padding: 20px; }
+        .wizard-tab-content.active { display: block; }
+
+        /* ── Leg config ─────────────────────────────────────────────── */
+        /* All legs sit on one horizontal line */
+        #wizard-legs-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        .leg-chip {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 4px 8px;
+        }
+        .leg-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .badge-sell { background: #FEE2E2; color: #DC2626; }
+        .badge-buy  { background: #DCFCE7; color: #16A34A; }
+        [data-theme="dark"] .badge-sell { background: rgba(220,38,38,0.18); }
+        [data-theme="dark"] .badge-buy  { background: rgba(22,163,74,0.18); }
+
+        /* ── Controls bar (lots / expiry / execute) above chart ─────── */
+        .wizard-controls-bar {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .wizard-controls-bar .ctrl-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .wizard-controls-bar .ctrl-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        /* ── Payoff Canvas ──────────────────────────────────────────── */
+        .payoff-wrap { position: relative; }
+        #payoff-canvas { width: 100%; height: 220px; display: block; cursor: crosshair; }
+
+        /* ── Active strategies table ────────────────────────────────── */
+        .strategy-row {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            margin-bottom: 10px;
+        }
+        .strategy-row-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .legs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .leg-cell {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <div class="sidebar" id="sidebar"></div>
+        <div class="main-content">
+            <div class="header" id="header"></div>
+            <div class="content-area">
+
+                <!-- Analytics Bar (60/40: tiles | market outlook) -->
+                <div class="analytics-bar-wrapper">
+                    <div class="analytics-tiles-col">
+                        <div class="analytics-bar" id="analytics-bar">
+                            <div class="analytics-bar-row" id="analytics-row1">
+                                <span style="font-size:11px;color:var(--text-muted)">Loading analytics...</span>
+                            </div>
+                            <div class="analytics-bar-row" id="analytics-row2"></div>
+                        </div>
+                    </div>
+                    <div class="analytics-outlook-col" id="analytics-outlook-col">
+                        <div class="outlook-label">Market Outlook <span class="outlook-ai-badge">&#10022; AI validated</span></div>
+                        <div class="outlook-text" id="analytics-outlook-text">
+                            <span style="color:var(--text-muted);font-size:11px">Loading outlook...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main layout: Rankings | Wizard -->
+                <div class="strategy-layout">
+
+                    <!-- Left: Rankings -->
+                    <div class="rankings-panel">
+                        <div class="panel-title">&#9733; Strategy Rankings <span style="font-size:10px;font-weight:400;color:var(--text-muted)">(best-to-worst for current market)</span></div>
+                        <div id="rankings-container">
+                            <div class="text-muted text-center" style="padding:32px">Loading rankings...</div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Wizard Panel -->
+                    <div class="wizard-panel">
+                        <div class="wizard-tabs">
+                            <button class="active" onclick="showWizardTab('new')">New Strategy</button>
+                            <button onclick="showWizardTab('active')">Active Strategies</button>
+                        </div>
+
+                        <!-- New Strategy Tab -->
+                        <div class="wizard-tab-content active" id="tab-new">
+                            <div id="wizard-placeholder" style="text-align:center;padding:40px;color:var(--text-muted)">
+                                &#8592; Select a strategy from the rankings to configure it
+                            </div>
+                            <div id="wizard-content" style="display:none">
+                                <!-- Header: title + score (small) + refresh button -->
+                                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                                    <div style="display:flex;align-items:center;gap:8px">
+                                        <div style="font-size:15px;font-weight:700" id="wizard-title">Iron Condor</div>
+                                        <span id="wizard-score-badge" class="ranking-badge badge-green" style="font-size:10px;padding:2px 8px"></span>
+                                    </div>
+                                    <button class="btn btn-sm btn-secondary" onclick="loadStrikeSuggestions()" style="font-size:11px">&#8635; Refresh</button>
+                                </div>
+                                <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px" id="wizard-subtitle"></div>
+
+                                <!-- Strike configuration — all legs on one horizontal line -->
+                                <div style="margin-bottom:14px">
+                                    <div style="font-size:10px;font-weight:600;margin-bottom:6px;color:var(--text-muted);letter-spacing:0.5px">STRIKE CONFIGURATION</div>
+                                    <div id="wizard-legs-container"></div>
+                                </div>
+
+                                <!-- Controls bar (lots / expiry / execute) — one line above chart -->
+                                <div class="wizard-controls-bar">
+                                    <div class="ctrl-group">
+                                        <span class="ctrl-label">Lots/leg</span>
+                                        <input type="number" id="wizard-lots" class="form-input" value="1" min="1"
+                                               style="width:56px;padding:4px 6px;font-size:12px" onchange="previewPayoff()">
+                                    </div>
+                                    <div class="ctrl-group">
+                                        <span class="ctrl-label">Expiry</span>
+                                        <select id="wizard-expiry" class="form-select" style="width:130px;padding:4px 6px;font-size:12px"></select>
+                                    </div>
+                                    <button class="btn btn-primary" onclick="executeStrategy()"
+                                            style="padding:5px 16px;font-size:12px;white-space:nowrap">
+                                        &#9654; Execute
+                                    </button>
+                                </div>
+
+                                <!-- Payoff diagram -->
+                                <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                                        <span style="font-size:12px;font-weight:600">Payoff at Expiry</span>
+                                        <span style="font-size:11px;color:var(--text-muted)" id="payoff-info"></span>
+                                    </div>
+                                    <div class="payoff-wrap">
+                                        <canvas id="payoff-canvas"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Active Strategies Tab -->
+                        <div class="wizard-tab-content" id="tab-active">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                                <span style="font-size:13px;font-weight:600">Active Strategies</span>
+                                <button class="btn btn-sm btn-secondary" onclick="loadActiveStrategies()">&#8635; Refresh</button>
+                            </div>
+                            <div id="active-strategies-container">
+                                <div class="text-muted text-center" style="padding:32px">Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/utils.js"></script>
+    <script>
+        if (!API.requireAuth()) throw new Error('Not authenticated');
+
+        document.getElementById('sidebar').innerHTML = Utils.buildSidebar('strategy-builder');
+        document.getElementById('header').innerHTML = Utils.buildHeader('Strategy Builder');
+
+        let analyticsData = null;   // from /api/strategies/market-analytics
+        let rankingsData = [];      // from /api/strategies/rankings
+        let selectedStrategy = null; // {strategy_type, confidence_score, ...}
+        let currentExpiry = '';
+        let payoffData = null;      // from /api/strategies/{id}/payoff (after create)
+
+        // Default strike suggestions per strategy type (populated from analytics)
+        const strategyLegsTemplate = {
+            IRON_CONDOR: [
+                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +200 },
+                { label: 'CE BUY',  optType: 'CE', action: 'BUY',  offset: +400 },
+                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -200 },
+                { label: 'PE BUY',  optType: 'PE', action: 'BUY',  offset: -400 },
+            ],
+            STRANGLE: [
+                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +250 },
+                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -250 },
+            ],
+            BULL_PUT_SPREAD: [
+                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -100 },
+                { label: 'PE BUY',  optType: 'PE', action: 'BUY',  offset: -200 },
+            ],
+            BEAR_CALL_SPREAD: [
+                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +100 },
+                { label: 'CE BUY',  optType: 'CE', action: 'BUY',  offset: +200 },
+            ],
+            CALENDAR_SPREAD: [
+                { label: 'CE SELL (near)', optType: 'CE', action: 'SELL', offset: 0 },
+                { label: 'CE BUY (far)',   optType: 'CE', action: 'BUY',  offset: 0, useFarExpiry: true },
+            ],
+        };
+
+        // ── Init ───────────────────────────────────────────────────────
+        (async () => {
+            await Utils.initHeader();
+            const sel = document.getElementById('expiry-selector');
+            if (sel) {
+                currentExpiry = sel.value;
+                sel.addEventListener('change', () => {
+                    currentExpiry = sel.value;
+                    loadAll();
+                });
+            }
+            await loadAll();
+            showWizardTab('new');
+        })();
+
+        async function loadAll() {
+            await Promise.all([loadAnalytics(), loadRankings()]);
+        }
+
+        // ── Analytics Bar ──────────────────────────────────────────────
+        async function loadAnalytics() {
+            try {
+                analyticsData = await API.getMarketAnalytics(currentExpiry);
+                renderAnalyticsBar(analyticsData);
+            } catch (e) {
+                document.getElementById('analytics-row1').innerHTML =
+                    '<span style="font-size:11px;color:var(--text-muted)">Analytics unavailable</span>';
+            }
+        }
+
+        function renderAnalyticsBar(d) {
+            if (!d) return;
+
+            // ── Colors ────────────────────────────────────────────────
+            const ivRankColor = d.iv_rank > 70 ? '#DC2626' : d.iv_rank < 30 ? '#16A34A' : '#D97706';
+            const gexColor    = (d.gex || 0) > 0 ? '#16A34A' : '#DC2626';
+            const dirColor    = d.direction === 'BULLISH' ? '#16A34A' : d.direction === 'BEARISH' ? '#DC2626' : '#D97706';
+            const rrColor     = d.rr_verdict === 'Bullish' ? '#16A34A' : d.rr_verdict === 'Bearish' ? '#DC2626' : '#D97706';
+
+            // ── Sub-labels ────────────────────────────────────────────
+            const rrZ    = d.rr_zscore;
+            const rrZSub = rrZ && rrZ.z_score != null
+                ? `z=${rrZ.z_score > 0 ? '+' : ''}${rrZ.z_score.toFixed(1)} · ${(rrZ.classification || '').split(' ').slice(0,2).join(' ')}`
+                : d.rr_verdict || '';
+            const gexSub = d.gex_regime
+                ? d.gex_regime + (d.gamma_flip ? ` · flip@${Utils.formatNum(d.gamma_flip)}` : '')
+                : ((d.gex || 0) > 0 ? 'Mean-Reverting' : 'Trending');
+            const ivRankSub  = d.low_data_warning ? `${d.data_days}d — low data` : `${d.data_days}d history`;
+            const tsSub      = d.term_structure
+                ? (d.term_structure.near_atm_iv?.toFixed(1) + '% → ' + (d.term_structure.far_atm_iv?.toFixed(1) || '?') + '%')
+                : '';
+            const spotDist   = d.spot && d.max_pain ? d.spot - d.max_pain : null;
+
+            const factorsAgree = d.factors_agree || 0;
+            const bCount  = d.bullish_count || 0;
+            const beCount = d.bearish_count || 0;
+            const dirFactorsSub = d.direction === 'NEUTRAL'
+                ? `${bCount}↑·${beCount}↓ · ${d.conviction || ''}`
+                : `${factorsAgree}/8 · ${d.conviction || ''}`;
+            const rrZs = d.rr_zscore?.z_score ?? null;
+            // Skew color: use z-score (relative to history) when available; absolute direction as fallback
+            const skewColor = rrZs !== null
+                ? (rrZs > 1.5 ? '#16A34A' : rrZs < -1.5 ? '#DC2626' : '#D97706')
+                : (d.tendency === 'Bullish Skew' ? '#16A34A' : d.tendency === 'Bearish Skew' ? '#DC2626' : '#D97706');
+            // Skew sub-label: confidence + raw RR value
+            const skewSub = [
+                d.tendency_confidence || '',
+                d.rr_value != null ? 'RR: ' + (d.rr_value > 0 ? '+' : '') + Number(d.rr_value).toFixed(2) : ''
+            ].filter(Boolean).join(' · ');
+
+            // ── Render tiles (no verdict pills) ──────────────────────
+            document.getElementById('analytics-row1').innerHTML = `
+                ${pill('IV Rank',
+                    d.iv_rank != null ? d.iv_rank.toFixed(1) + '%' : '-',
+                    ivRankSub, ivRankColor)}
+                ${pill('IV %ile',
+                    d.iv_percentile != null ? d.iv_percentile.toFixed(1) + '%' : '-')}
+                ${pill('ATM IV',
+                    d.atm_iv != null ? d.atm_iv.toFixed(2) + '%' : '-')}
+                ${pill('52W Hi/Lo',
+                    d.iv_52wk_high != null ? d.iv_52wk_high.toFixed(1) + ' / ' + d.iv_52wk_low.toFixed(1) : '-')}
+                ${pill('IV Skew',
+                    d.iv_skew != null ? (d.iv_skew > 0 ? '+' : '') + d.iv_skew.toFixed(2) + '%' : '-',
+                    'PE\u2212CE OTM avg')}
+                ${pill('Butterfly',
+                    d.butterfly != null ? (d.butterfly > 0 ? '+' : '') + d.butterfly.toFixed(2) + '%' : '-',
+                    '25\u0394 wings vs ATM')}
+                ${pill('Term Structure',
+                    d.term_structure ? d.term_structure.shape : '-',
+                    tsSub)}
+                ${pill('Straddle',
+                    d.straddle_price != null ? '\u20B9' + Utils.formatNum(d.straddle_price) : '-',
+                    d.implied_move_pct != null ? '\u00B1' + d.implied_move_pct.toFixed(2) + '%' : '')}
+            `;
+
+            document.getElementById('analytics-row2').innerHTML = `
+                ${pill('RR',
+                    d.rr_value != null ? (d.rr_value > 0 ? '+' : '') + d.rr_value.toFixed(2) : '-',
+                    rrZSub, rrColor)}
+                ${pill('Signal',
+                    d.direction || '-',
+                    dirFactorsSub, dirColor)}
+                ${pill('Skew',
+                    d.tendency || '-',
+                    skewSub,
+                    skewColor)}
+                ${pill('PCR (OI)',
+                    d.pcr_oi != null ? d.pcr_oi.toFixed(2) : '-',
+                    d.pcr_oi > 1.2 ? 'Bullish' : d.pcr_oi < 0.8 ? 'Bearish' : 'Neutral')}
+                ${pill('Vol PCR',
+                    d.vol_pcr != null ? d.vol_pcr.toFixed(2) : '-',
+                    'Near-ATM')}
+                ${pill('Max Pain',
+                    d.max_pain != null ? Utils.formatNum(d.max_pain) : '-',
+                    spotDist != null ? (spotDist > 0 ? '+' : '') + Utils.formatNum(spotDist) + ' from CMP' : '')}
+                ${pill('GEX',
+                    d.gex != null ? (d.gex > 0 ? '+' : '') + (d.gex / 1e6).toFixed(2) + 'M' : '-',
+                    gexSub, gexColor)}
+                ${pill('VIX',
+                    d.vix != null ? d.vix.toFixed(2) : '-')}
+                ${pill('OI Support',
+                    d.oi_support ? Utils.formatNum(d.oi_support) : '-',
+                    'Max PE OI')}
+                ${pill('OI Resist',
+                    d.oi_resistance ? Utils.formatNum(d.oi_resistance) : '-',
+                    'Max CE OI')}
+            `;
+
+            // ── Render market outlook panel ───────────────────────────
+            const outlook = generateMarketOutlook(d);
+            document.getElementById('analytics-outlook-text').innerHTML = outlook.html;
+        }
+
+        // Tile pill — no verdict line; verdicts are aggregated into the outlook panel
+        function pill(label, value, sub = '', color = '') {
+            return `<div class="analytics-pill">
+                <div class="pill-label">${label}</div>
+                <div class="pill-value" style="${color ? 'color:' + color : ''}">${value}</div>
+                ${sub ? `<div class="pill-sub">${sub}</div>` : ''}
+            </div>`;
+        }
+
+        // Build a 3–4 sentence human-readable market outlook from all analytics parameters
+        function generateMarketOutlook(d) {
+            if (!d) return { html: 'No analytics data available.', sig: 'sig-mute' };
+
+            const parts = [];
+            const _rrZ  = d.rr_zscore?.z_score ?? null;
+            const _vixC = d.vix_change_pct ?? 0;
+            const _mpDist = (d.spot && d.max_pain) ? d.spot - d.max_pain : null;
+            const _ts   = d.term_structure?.shape;
+
+            // 1. Vol environment
+            const volLine = d.iv_rank > 70
+                ? `IV Rank ${d.iv_rank?.toFixed(0)}% — premium selling conditions (IV %ile ${d.iv_percentile?.toFixed(0)}%).`
+                : d.iv_rank < 30
+                    ? `IV Rank ${d.iv_rank?.toFixed(0)}% — vol is cheap, favour long options over short premium.`
+                    : `IV Rank ${d.iv_rank?.toFixed(0)}% — mid-range vol, no strong edge on premium direction.`;
+            parts.push(volLine);
+
+            // 2. Directional read: Signal + PCR + IV Skew + VIX trend
+            const dirStr = d.direction === 'BULLISH'
+                ? `${d.conviction ? d.conviction.toLowerCase() + ' ' : ''}bullish signal (${d.factors_agree}/8 factors)`
+                : d.direction === 'BEARISH'
+                    ? `${d.conviction ? d.conviction.toLowerCase() + ' ' : ''}bearish signal (${d.factors_agree}/8 factors)`
+                    : `neutral signal (${d.factors_agree || 0}/8)`;
+            const pcrStr = d.pcr_oi > 1.2 ? '; PCR bullish' : d.pcr_oi < 0.8 ? '; PCR bearish' : '';
+            const volPcrStr = d.vol_pcr > 1.2 ? '; vol-PCR bullish' : d.vol_pcr < 0.8 ? '; vol-PCR bearish' : '';
+            const skewStr = d.iv_skew > 3 ? '; put skew elevated — hedging demand'
+                : d.iv_skew < -1 ? '; call skew — speculative bullish flow' : '';
+            const vixTrendStr = _vixC < -3 ? '; VIX falling — fear subsiding'
+                : _vixC > 5 ? '; VIX surging — risk-off' : '';
+            parts.push(`Direction: ${dirStr}${pcrStr}${volPcrStr}${skewStr}${vixTrendStr}.`);
+
+            // 3. Structure: GEX + Term Structure + Max Pain
+            const gexStr = (d.gex || 0) > 5e5
+                ? `+GEX (mean-reverting, dealers long gamma)`
+                : (d.gex || 0) < -5e5
+                    ? `−GEX (dealers short gamma, may amplify moves)`
+                    : null;
+            const tsStr = _ts === 'Backwardation' ? `term structure inverted — near-term stress`
+                : _ts === 'Contango' ? `term structure normal` : null;
+            const pinStr = _mpDist !== null
+                ? `max pain ${Utils.formatNum(d.max_pain)}` + (_mpDist < -50 ? ' — spot below, upward pull' : _mpDist > 100 ? ' — spot above, downward pull' : ' — near current price')
+                : null;
+            const structParts = [gexStr, tsStr, pinStr].filter(Boolean);
+            if (structParts.length) parts.push(structParts.join('; ') + '.');
+
+            // 4. Comprehensive verdict scoring across all directionally-relevant parameters
+            // RR uses z-score (relative to history) to avoid structural Nifty put-skew bias.
+            // Needs ≥3 out of 8 bullish / ≥3 out of 9 bearish factors for a clear verdict.
+            const bullScore = [
+                d.direction === 'BULLISH',                      // 8-factor signal says up
+                d.pcr_oi > 1.1,                                 // OI-PCR: put writers bullish
+                d.vol_pcr > 1.0,                                // volume-PCR: put volume active
+                (d.gex || 0) > 0,                               // positive GEX: mean-reverting
+                _rrZ !== null && _rrZ > 1.0,                    // RR above hist mean: less put skew
+                _vixC < -3,                                     // VIX falling: fear subsiding
+                _ts === 'Contango',                             // normal term structure
+                _mpDist !== null && _mpDist < -50,              // spot below max pain: upward pull
+            ].filter(Boolean).length;
+
+            const bearScore = [
+                d.direction === 'BEARISH',                      // 8-factor signal says down
+                d.pcr_oi < 0.9,                                 // OI-PCR: call bias
+                d.vol_pcr < 0.8,                                // volume-PCR: call volume heavy
+                (d.gex || 0) < 0,                               // negative GEX: dealers amplify moves
+                _rrZ !== null && _rrZ < -1.5,                   // RR below hist mean: elevated put skew
+                _vixC > 5,                                      // VIX surging: fear rising
+                d.iv_skew > 3,                                  // elevated put premium
+                _ts === 'Backwardation',                        // inverted curve: stress
+                _mpDist !== null && _mpDist > 100,              // spot well above max pain: downward pull
+            ].filter(Boolean).length;
+
+            let overallSig, sigCls;
+            if (bullScore >= 3)     { overallSig = 'Mildly bullish setup — favour PE selling / bull spreads'; sigCls = 'sig-bull'; }
+            else if (bearScore >= 3){ overallSig = 'Mildly bearish setup — favour CE selling / bear spreads'; sigCls = 'sig-bear'; }
+            else if (d.iv_rank > 60){ overallSig = 'Range-bound with high IV — ideal for premium collection'; sigCls = 'sig-warn'; }
+            else                    { overallSig = 'Mixed signals — no strong directional or vol edge'; sigCls = 'sig-mute'; }
+
+            const html = parts.join(' ')
+                + `<span class="outlook-signal ${sigCls}">${overallSig}</span>`;
+            return { html, sig: sigCls };
+        }
+
+        // ── Rankings ───────────────────────────────────────────────────
+        async function loadRankings() {
+            try {
+                const resp = await API.getStrategyRankings(currentExpiry);
+                rankingsData = resp.rankings || [];
+                renderRankings();
+            } catch (e) {
+                document.getElementById('rankings-container').innerHTML =
+                    '<div class="text-muted text-center" style="padding:32px">Failed to load rankings.</div>';
+            }
+        }
+
+        function renderRankings() {
+            const c = document.getElementById('rankings-container');
+            if (!rankingsData.length) {
+                c.innerHTML = '<div class="text-muted text-center" style="padding:32px">No rankings available.</div>';
+                return;
+            }
+            c.innerHTML = rankingsData.map((r, i) => {
+                const badgeCls = r.confidence_score >= 70 ? 'badge-green' : r.confidence_score >= 45 ? 'badge-amber' : 'badge-red';
+                const isSelected = selectedStrategy && selectedStrategy.strategy_type === r.strategy_type;
+                const isStrangle = r.strategy_type === 'STRANGLE' || r.strategy_type === 'SHORT_STRANGLE';
+                const cardClass = isSelected ? 'selected' : (isStrangle ? 'high-yield' : '');
+
+                // Ranked position label — strangles always shown with their actual rank
+                const rankLabel = `<span style="font-size:12px;color:var(--text-muted);min-width:16px">${i + 1}.</span>`;
+
+                // High-yield badge only for strangles (premium collection strategy)
+                const yieldBadge = isStrangle
+                    ? `<span class="badge-yield" title="Highest raw premium collection via dual short strikes">HIGH YIELD</span>`
+                    : '';
+
+                // Risk note for unlimited-risk strategies
+                const riskNote = isStrangle
+                    ? `<div class="risk-note">⚠ Unlimited risk on both wings — size carefully and keep a hedge plan</div>`
+                    : '';
+
+                return `<div class="ranking-card ${cardClass}" onclick="selectStrategy(${i})">
+                    <div class="ranking-row">
+                        ${rankLabel}
+                        <span class="ranking-badge ${badgeCls}">${r.confidence_score.toFixed(0)}</span>
+                        <span class="ranking-name">${r.label}</span>
+                        ${yieldBadge}
+                    </div>
+                    <div class="ranking-rationale">${r.rationale}</div>
+                    ${riskNote}
+                </div>`;
+            }).join('');
+        }
+
+        function selectStrategy(idx) {
+            selectedStrategy = rankingsData[idx];
+            renderRankings(); // re-render to show selection
+            showWizardTab('new');
+            renderWizard();
+        }
+
+        // ── Wizard ─────────────────────────────────────────────────────
+        function showWizardTab(tab) {
+            document.querySelectorAll('.wizard-tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.wizard-tabs button').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+            document.querySelectorAll('.wizard-tabs button')[tab === 'new' ? 0 : 1].classList.add('active');
+            if (tab === 'active') loadActiveStrategies();
+        }
+
+        function renderWizard() {
+            if (!selectedStrategy) return;
+            document.getElementById('wizard-placeholder').style.display = 'none';
+            document.getElementById('wizard-content').style.display = 'block';
+            document.getElementById('wizard-title').textContent = selectedStrategy.label;
+
+            const score = selectedStrategy.confidence_score;
+            const badge = document.getElementById('wizard-score-badge');
+            badge.textContent = 'Score: ' + score.toFixed(0);
+            badge.className = 'ranking-badge ' + (score >= 70 ? 'badge-green' : score >= 45 ? 'badge-amber' : 'badge-red');
+
+            // Populate expiry
+            const sel = document.getElementById('wizard-expiry');
+            const headerSel = document.getElementById('expiry-selector');
+            if (headerSel) sel.innerHTML = headerSel.innerHTML;
+            sel.value = currentExpiry;
+
+            loadStrikeSuggestions();
+        }
+
+        /**
+         * Compute dynamic strike offsets from ATM for each leg role.
+         *
+         *   1-SD period move     = spot × ATM-IV × √(DTE / 365)
+         *                          (if ATM-IV unavailable, fall back to VIX)
+         *   Max-pain bias [-1,1] = clamp((max_pain − spot) / 1-SD, ±1)
+         *       bias > 0 → upward pull  → widen CE short, narrow PE short
+         *       bias < 0 → downward pull → widen PE short, narrow CE short
+         *
+         * Short legs sit ~1 SD out (≈0.16 delta, ≈84 % POT) so they stay
+         * comfortably outside the VIX band; long wings go ~1.6 SD for
+         * realistic hedge cost. Spreads use tighter 0.7 SD / 1.4 SD.
+         * OI support/resistance anchor the short leg when it sits within
+         * ±0.4 SD of the computed distance — so we never short through a
+         * wall of OI. All strikes are finally snapped to the 50-pt grid.
+         */
+        function _computeStrikeOffsets(analytics, strategyType) {
+            const spot  = analytics.spot || 22000;
+            const atm   = Math.round(spot / 50) * 50;
+            const ivPct = analytics.atm_iv || analytics.vix || 15;  // %
+            const dte   = Math.max(1, analytics.dte || 7);
+            const mp    = analytics.max_pain;
+            const sup   = analytics.oi_support;
+            const res   = analytics.oi_resistance;
+
+            // Period 1-SD move (points). √(dte/365) — calendar days, standard convention.
+            const oneSD = Math.max(50, spot * (ivPct / 100) * Math.sqrt(dte / 365));
+
+            // Max-pain drift bias, clamped to ±1
+            let mpBias = 0;
+            if (mp && spot) {
+                mpBias = Math.max(-1, Math.min(1, (mp - spot) / oneSD));
+            }
+
+            // Per-strategy SD multipliers
+            const isSpread = strategyType === 'BULL_PUT_SPREAD' || strategyType === 'BEAR_CALL_SPREAD';
+            const shortSD  = isSpread ? 0.7 : 1.0;
+            const longSD   = isSpread ? 1.4 : 1.6;
+
+            // Asymmetric drift adjustment — shift short legs by 25% of mpBias SDs.
+            // Positive mpBias (MP above spot, upward pull) → CE short further, PE short closer.
+            const drift = 0.25 * mpBias * oneSD;
+
+            let ceShort = Math.round(shortSD * oneSD + drift);
+            let peShort = Math.round(shortSD * oneSD - drift);
+            const ceLong  = Math.round(longSD  * oneSD);
+            const peLong  = Math.round(longSD  * oneSD);
+
+            // S/R anchoring — snap short leg to wall if within ±0.4 SD of target
+            const anchorWin = 0.4 * oneSD;
+            if (res && !isSpread) {
+                const resDist = res - spot;
+                if (resDist > 50 && Math.abs(resDist - ceShort) < anchorWin) {
+                    ceShort = Math.round(resDist);
+                }
+            }
+            if (sup && !isSpread) {
+                const supDist = spot - sup;
+                if (supDist > 50 && Math.abs(supDist - peShort) < anchorWin) {
+                    peShort = Math.round(supDist);
+                }
+            }
+
+            // Floor: never tighter than ~0.6 SD (avoid ATM-ish strikes)
+            const floor = Math.round(0.6 * oneSD);
+            ceShort = Math.max(ceShort, floor);
+            peShort = Math.max(peShort, floor);
+
+            // Snap all to 50-pt grid
+            const snap = (x) => Math.round(x / 50) * 50;
+            return {
+                atm,
+                oneSD,
+                mpBias,
+                CE_SHORT: snap(ceShort),
+                CE_LONG:  snap(Math.max(ceLong, ceShort + 100)),  // long always at least 100 pts beyond short
+                PE_SHORT: -snap(peShort),
+                PE_LONG:  -snap(Math.max(peLong, peShort + 100)),
+            };
+        }
+
+        function loadStrikeSuggestions() {
+            if (!selectedStrategy || !analyticsData) return;
+            const template = strategyLegsTemplate[selectedStrategy.strategy_type] || [];
+            const off = _computeStrikeOffsets(analyticsData, selectedStrategy.strategy_type);
+            const atm = off.atm;
+
+            // Rationale line — shown above leg inputs so the user sees the why
+            const mpDir = off.mpBias > 0.1 ? '↑ (MP above)' : off.mpBias < -0.1 ? '↓ (MP below)' : '→ (balanced)';
+            const rationale = `ATM ${atm} · 1-SD ≈ ±${Math.round(off.oneSD)} pts · MP drift ${mpDir}`;
+
+            const c = document.getElementById('wizard-legs-container');
+            c.innerHTML = `<div style="grid-column:1/-1;font-size:10px;color:var(--text-muted);margin-bottom:2px">${rationale}</div>` +
+                template.map((leg, i) => {
+                const roleKey = `${leg.optType}_${leg.action === 'SELL' ? 'SHORT' : 'LONG'}`;
+                const dynOffset = off[roleKey] != null ? off[roleKey] : leg.offset;
+                const strike = atm + dynOffset;
+                const rounded = Math.round(strike / 50) * 50;
+                const badgeCls = leg.action === 'SELL' ? 'badge-sell' : 'badge-buy';
+                return `<div class="leg-chip">
+                    <span class="leg-badge ${badgeCls}">${leg.action}</span>
+                    <select class="form-select" id="leg-opt-${i}" onchange="previewPayoff()"
+                            style="padding:2px 4px;font-size:11px;width:48px">
+                        <option value="CE" ${leg.optType === 'CE' ? 'selected' : ''}>CE</option>
+                        <option value="PE" ${leg.optType === 'PE' ? 'selected' : ''}>PE</option>
+                    </select>
+                    <input type="number" class="form-input" id="leg-strike-${i}" value="${rounded}" step="50"
+                           onchange="previewPayoff()" style="padding:2px 4px;font-size:11px;width:70px">
+                    <input type="hidden" id="leg-action-${i}" value="${leg.action}">
+                </div>`;
+            }).join('');
+            previewPayoff();
+        }
+
+        function previewPayoff() {
+            if (!selectedStrategy || !analyticsData) return;
+            const spot = analyticsData.spot || 22000;
+            const lots = parseInt(document.getElementById('wizard-lots').value) || 1;
+            const LOT = 65;
+            const template = strategyLegsTemplate[selectedStrategy.strategy_type] || [];
+            const legs = template.map((_, i) => {
+                const action = document.getElementById('leg-action-' + i)?.value || 'SELL';
+                const optType = document.getElementById('leg-opt-' + i)?.value || 'CE';
+                const strike = parseInt(document.getElementById('leg-strike-' + i)?.value) || 0;
+                return { action, optType, strike, lots };
+            }).filter(l => l.strike > 0);
+
+            // Compute payoff at expiry across spot range
+            const steps = [];
+            const spotMin = Math.round(spot - 600);
+            const spotMax = Math.round(spot + 600);
+            let netPremium = 0;
+            // We don't have LTPs client-side — use intrinsic only (fair approximation)
+            for (let s = spotMin; s <= spotMax; s += 50) {
+                let pnl = netPremium;
+                for (const leg of legs) {
+                    const intrinsic = leg.optType === 'CE' ? Math.max(s - leg.strike, 0) : Math.max(leg.strike - s, 0);
+                    const qty = leg.lots * LOT;
+                    pnl += leg.action === 'SELL' ? -intrinsic * qty : intrinsic * qty;
+                }
+                steps.push({ s, pnl });
+            }
+
+            drawPayoffCanvas(steps, spot);
+        }
+
+        // Stored state for hover redraws
+        let _payoffState = null;
+
+        function drawPayoffCanvas(steps, spot) {
+            const canvas = document.getElementById('payoff-canvas');
+            if (!canvas) return;
+
+            // Setup canvas dimensions
+            const dpr = window.devicePixelRatio || 1;
+            const W = canvas.clientWidth || canvas.offsetWidth || 500;
+            const H = 220;
+            canvas.width = W * dpr;
+            canvas.height = H * dpr;
+
+            const PAD = { top: 20, bottom: 28, left: 60, right: 20 };
+            const cW = W - PAD.left - PAD.right;
+            const cH = H - PAD.top - PAD.bottom;
+            const pnls = steps.map(p => p.pnl);
+            const pnlMin = Math.min(...pnls, 0);
+            const pnlMax = Math.max(...pnls, 0);
+            const pnlRange = pnlMax - pnlMin || 1;
+            const spotMin = steps[0].s;
+            const spotMax = steps[steps.length - 1].s;
+            const spotRange = spotMax - spotMin || 1;
+            const toX = s => PAD.left + (s - spotMin) / spotRange * cW;
+            const toY = p => PAD.top + cH - (p - pnlMin) / pnlRange * cH;
+
+            _payoffState = { steps, spot, PAD, cW, cH, W, H, pnlMin, pnlMax, pnlRange,
+                             spotMin, spotMax, spotRange, toX, toY, dpr };
+
+            _renderPayoff(null); // no hover
+
+            // Wire hover events once
+            if (!canvas._hoverBound) {
+                canvas._hoverBound = true;
+                canvas.addEventListener('mousemove', e => {
+                    if (!_payoffState) return;
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const mx = (e.clientX - rect.left) * scaleX / _payoffState.dpr;
+                    _renderPayoff(mx);
+                });
+                canvas.addEventListener('mouseleave', () => { if (_payoffState) _renderPayoff(null); });
+            }
+
+            // Update info text
+            const maxP = Math.max(...pnls);
+            const maxL = Math.min(...pnls);
+            document.getElementById('payoff-info').textContent =
+                `Max profit: \u20B9${Utils.formatNum(maxP)} | Max loss: \u20B9${Utils.formatNum(maxL)}`;
+        }
+
+        function _renderPayoff(hoverX) {
+            if (!_payoffState) return;
+            const { steps, spot, PAD, cW, cH, W, H, pnlMin, pnlMax, pnlRange,
+                    spotMin, spotMax, spotRange, toX, toY, dpr } = _payoffState;
+
+            const canvas = document.getElementById('payoff-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const bg = isDark ? '#1F2937' : '#F9FAFB';
+            const gridColor = isDark ? '#374151' : '#E5E7EB';
+            const textColor = isDark ? '#9CA3AF' : '#6B7280';
+
+            ctx.fillStyle = bg;
+            ctx.fillRect(0, 0, W, H);
+
+            const zeroY = toY(0);
+
+            // Grid + Y-axis labels
+            const pnls = steps.map(p => p.pnl);
+            ctx.fillStyle = textColor;
+            ctx.font = '10px Inter, sans-serif';
+            ctx.textAlign = 'right';
+            [Math.min(...pnls), 0, Math.max(...pnls)].forEach(v => {
+                const y = toY(v);
+                const label = (v >= 0 ? '+' : '') + (Math.abs(v) >= 1000 ? Math.round(v / 1000) + 'K' : Math.round(v));
+                ctx.fillStyle = textColor;
+                ctx.fillText(label, PAD.left - 4, y + 3);
+                ctx.strokeStyle = gridColor;
+                ctx.lineWidth = 0.5;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + cW, y);
+                ctx.stroke();
+            });
+
+            // Zero line
+            ctx.strokeStyle = '#9CA3AF';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(PAD.left, zeroY); ctx.lineTo(PAD.left + cW, zeroY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Fill profit area (green above zero)
+            ctx.save();
+            ctx.beginPath();
+            steps.forEach((p, i) => {
+                const x = toX(p.s), y = toY(p.pnl);
+                i === 0 ? ctx.moveTo(x, zeroY) : null;
+                ctx.lineTo(x, y);
+            });
+            ctx.lineTo(toX(steps[steps.length - 1].s), zeroY);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(22,163,74,0.15)';
+            ctx.fill();
+            ctx.restore();
+
+            // Fill loss area (red below zero)
+            ctx.save();
+            ctx.beginPath();
+            steps.forEach((p, i) => {
+                const x = toX(p.s), y = toY(p.pnl);
+                if (i === 0) ctx.moveTo(x, zeroY);
+                ctx.lineTo(x, y);
+            });
+            ctx.lineTo(toX(steps[steps.length - 1].s), zeroY);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(220,38,38,0.12)';
+            ctx.fill();
+            ctx.restore();
+
+            // P&L line
+            ctx.beginPath();
+            steps.forEach((p, i) => {
+                const x = toX(p.s), y = toY(p.pnl);
+                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            });
+            ctx.strokeStyle = '#2563EB';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // CMP vertical line
+            const spotX = toX(spot);
+            ctx.strokeStyle = '#EF4444';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(spotX, PAD.top); ctx.lineTo(spotX, PAD.top + cH);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#EF4444';
+            ctx.font = 'bold 10px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('CMP', spotX, PAD.top - 4);
+
+            // ── Hover overlay ──────────────────────────────────────────
+            if (hoverX !== null && hoverX >= PAD.left && hoverX <= PAD.left + cW) {
+                // Find nearest step to cursor
+                let closest = steps[0], closestDist = Infinity;
+                for (const step of steps) {
+                    const d = Math.abs(toX(step.s) - hoverX);
+                    if (d < closestDist) { closestDist = d; closest = step; }
+                }
+                const hx = toX(closest.s);
+                const hy = toY(closest.pnl);
+                const isPnlPositive = closest.pnl >= 0;
+
+                // Crosshair vertical line
+                ctx.save();
+                ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.18)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([3, 3]);
+                ctx.beginPath();
+                ctx.moveTo(hx, PAD.top); ctx.lineTo(hx, PAD.top + cH);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.restore();
+
+                // Dot on P&L line
+                ctx.beginPath();
+                ctx.arc(hx, hy, 4, 0, Math.PI * 2);
+                ctx.fillStyle = isPnlPositive ? '#16A34A' : '#DC2626';
+                ctx.fill();
+                ctx.strokeStyle = isDark ? '#1F2937' : '#F9FAFB';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // Tooltip box
+                const pnlStr = (isPnlPositive ? '+' : '') + '\u20B9' + Utils.formatNum(Math.round(closest.pnl));
+                const spotStr = 'Spot: ' + Utils.formatNum(closest.s);
+                ctx.font = 'bold 11px JetBrains Mono, monospace';
+                const tw1 = ctx.measureText(pnlStr).width;
+                ctx.font = '10px Inter, sans-serif';
+                const tw2 = ctx.measureText(spotStr).width;
+                const tw = Math.max(tw1, tw2) + 16;
+                const th = 38;
+
+                // Position tooltip: prefer right of cursor, flip left if near edge
+                let tx = hx + 10;
+                if (tx + tw > PAD.left + cW) tx = hx - tw - 10;
+                let ty = hy - th - 8;
+                if (ty < PAD.top) ty = hy + 10;
+
+                // Box (roundRect with fallback for older browsers)
+                ctx.fillStyle = isDark ? 'rgba(30,41,59,0.95)' : 'rgba(255,255,255,0.96)';
+                ctx.strokeStyle = isPnlPositive ? '#16A34A' : '#DC2626';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                if (ctx.roundRect) {
+                    ctx.roundRect(tx, ty, tw, th, 5);
+                } else {
+                    ctx.rect(tx, ty, tw, th);
+                }
+                ctx.fill();
+                ctx.stroke();
+
+                // P&L value
+                ctx.font = 'bold 11px JetBrains Mono, monospace';
+                ctx.fillStyle = isPnlPositive ? '#16A34A' : '#DC2626';
+                ctx.textAlign = 'left';
+                ctx.fillText(pnlStr, tx + 8, ty + 14);
+
+                // Spot label
+                ctx.font = '10px Inter, sans-serif';
+                ctx.fillStyle = textColor;
+                ctx.fillText(spotStr, tx + 8, ty + 28);
+            }
+        }
+
+        async function executeStrategy() {
+            if (!selectedStrategy) return;
+            const lots = parseInt(document.getElementById('wizard-lots').value) || 1;
+            const expiry = document.getElementById('wizard-expiry').value;
+            if (!expiry) { Utils.toast('Select an expiry', 'warning'); return; }
+
+            const template = strategyLegsTemplate[selectedStrategy.strategy_type] || [];
+            const legs = template.map((_, i) => ({
+                option_type: document.getElementById('leg-opt-' + i)?.value || 'CE',
+                action: document.getElementById('leg-action-' + i)?.value || 'SELL',
+                strike: parseInt(document.getElementById('leg-strike-' + i)?.value) || 0,
+                lots,
+            })).filter(l => l.strike > 0);
+
+            if (!legs.length) { Utils.toast('Configure legs first', 'warning'); return; }
+            if (!confirm(`Execute ${selectedStrategy.label} with ${legs.length} legs @ ${expiry}?`)) return;
+
+            try {
+                const resp = await API.createStrategy({
+                    strategy_type: selectedStrategy.strategy_type,
+                    expiry_date: expiry,
+                    legs,
+                });
+                Utils.toast(`Strategy created: ${resp.name} (${resp.legs_created} legs)`, 'success');
+                showWizardTab('active');
+            } catch (e) {
+                Utils.toast('Strategy execution failed', 'error');
+            }
+        }
+
+        // ── Active Strategies ──────────────────────────────────────────
+        async function loadActiveStrategies() {
+            const c = document.getElementById('active-strategies-container');
+            c.innerHTML = '<div class="text-muted text-center" style="padding:24px">Loading...</div>';
+            try {
+                const resp = await API.getStrategies();
+                const strategies = resp.strategies || [];
+                if (!strategies.length) {
+                    c.innerHTML = '<div class="text-muted text-center" style="padding:32px">No active strategies. Create one from the New Strategy tab.</div>';
+                    return;
+                }
+                c.innerHTML = strategies.map(s => renderStrategyRow(s)).join('');
+            } catch (e) {
+                c.innerHTML = '<div class="text-muted text-center" style="padding:24px">Failed to load strategies.</div>';
+            }
+        }
+
+        function renderStrategyRow(s) {
+            const pnlColor = s.total_pnl >= 0 ? '#16A34A' : '#DC2626';
+            return `<div class="strategy-row">
+                <div class="strategy-row-header">
+                    <div>
+                        <div style="font-weight:600;font-size:14px">${s.name}</div>
+                        <div style="font-size:11px;color:var(--text-muted)">${s.expiry_date} | ${s.dte}d remaining | ${s.legs.length} legs</div>
+                    </div>
+                    <div style="text-align:right">
+                        <div style="font-size:16px;font-weight:700;font-family:var(--font-mono);color:${pnlColor}">${Utils.formatINR(s.total_pnl)}</div>
+                        <div style="font-size:10px;color:var(--text-muted)">Unrealized P&L</div>
+                    </div>
+                </div>
+                <div class="legs-grid">
+                    ${s.legs.map(l => `
+                        <div class="leg-cell">
+                            <div style="font-weight:600;font-size:12px">${l.trade_type} ${l.strike}</div>
+                            <div style="color:var(--text-muted);font-size:10px">Entry ₹${l.entry_premium} | LTP ₹${l.current_ltp}</div>
+                            <div style="font-weight:600;font-size:11px;color:${l.pnl >= 0 ? '#16A34A' : '#DC2626'}">${Utils.formatINR(l.pnl)}</div>
+                        </div>
+                    `).join('')}
+                </div>
+                <div style="text-align:right;margin-top:10px">
+                    <button class="btn btn-sm btn-danger" onclick="closeStrategyConfirm(${s.id}, '${s.name}')">Close All Legs</button>
+                </div>
+            </div>`;
+        }
+
+        async function closeStrategyConfirm(id, name) {
+            if (!confirm(`Close all legs of "${name}"? This will mark them as CLOSED at current LTP.`)) return;
+            try {
+                const resp = await API.closeStrategy(id);
+                Utils.toast(`Strategy closed. Realized P&L: ${Utils.formatINR(resp.total_realized_pnl)}`, 'success');
+                loadActiveStrategies();
+            } catch (e) {
+                Utils.toast('Close failed', 'error');
+            }
+        }
+
+        // Theme change: redraw canvas
+        window.addEventListener('themechange', () => {
+            if (selectedStrategy && analyticsData) previewPayoff();
+        });
+    </script>
+</body>
+</html>

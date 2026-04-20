@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NiftyEdge — Alerts</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <style>
+        .alerts-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+        .alert-tabs {
+            display: flex;
+            border-bottom: 2px solid var(--border);
+            margin-bottom: 16px;
+        }
+        .alert-tabs button {
+            padding: 10px 20px;
+            border: none;
+            background: none;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+        }
+        .alert-tabs button:hover { color: var(--text-primary); }
+        .alert-tabs button.active {
+            color: var(--primary, #2563EB);
+            border-bottom-color: var(--primary, #2563EB);
+            font-weight: 600;
+        }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+
+        /* Alert cards */
+        .alert-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .alert-card:hover { border-color: var(--border); }
+        .alert-card .alert-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+        .alert-card .alert-icon.armed { background: var(--blue-bg); }
+        .alert-card .alert-icon.paused { background: var(--bg-secondary); }
+        .alert-card .alert-icon.triggered { background: var(--red-bg); }
+        .alert-card .alert-body { flex: 1; }
+        .alert-card .alert-title { font-size: 13px; font-weight: 600; }
+        .alert-card .alert-detail { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+        .alert-card .alert-actions { display: flex; gap: 6px; align-items: center; }
+        .alert-toggle {
+            position: relative;
+            width: 36px;
+            height: 20px;
+            background: var(--border);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .alert-toggle.on { background: #16A34A; }
+        .alert-toggle::after {
+            content: '';
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--bg-card);
+            top: 2px;
+            left: 2px;
+            transition: left 0.2s;
+        }
+        .alert-toggle.on::after { left: 18px; }
+
+        /* Create modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.4);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal-box {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 24px;
+            width: 440px;
+            max-width: 90vw;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+        }
+        .modal-box h3 { margin: 0 0 16px; font-size: 16px; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .form-group select,
+        .form-group input {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+        /* History table */
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .history-table th {
+            background: var(--bg-secondary, #F9FAFB);
+            padding: 8px 12px;
+            text-align: left;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            border-bottom: 2px solid var(--border);
+        }
+        .history-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar" id="sidebar"></aside>
+        <div class="main-content">
+            <header class="header" id="header"></header>
+            <div class="page-content">
+                <div class="alerts-header">
+                    <div>
+                        <span style="font-size:11px;color:var(--text-muted)" id="alert-count-label"></span>
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="openCreateModal()">+ Create Alert</button>
+                </div>
+
+                <div class="alert-tabs">
+                    <button class="active" onclick="switchTab('active')">Active Alerts</button>
+                    <button onclick="switchTab('history')">Alert History</button>
+                    <button onclick="switchTab('signals')">Trade Signals</button>
+                </div>
+
+                <!-- Active Alerts -->
+                <div id="tab-active" class="tab-panel active">
+                    <div id="alerts-list">
+                        <div class="empty-state">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- History -->
+                <div id="tab-history" class="tab-panel">
+                    <div id="history-content">
+                        <div class="empty-state">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Trade Signals -->
+                <div id="tab-signals" class="tab-panel">
+                    <h4 style="font-size:13px;margin:0 0 10px;color:var(--text-secondary)">Active Trade Suggestions</h4>
+                    <div id="signals-active"><div class="empty-state">Loading...</div></div>
+                    <h4 style="font-size:13px;margin:24px 0 10px;color:var(--text-secondary)">Past Suggestions</h4>
+                    <div id="signals-history"><div class="empty-state">Loading...</div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Alert Modal -->
+    <div class="modal-overlay" id="create-modal">
+        <div class="modal-box">
+            <h3>Create Alert</h3>
+            <div class="form-group">
+                <label>Metric</label>
+                <select id="alert-metric" onchange="onMetricChange()">
+                    <option value="nifty_spot">Nifty Spot</option>
+                    <option value="india_vix">India VIX</option>
+                    <option value="ce_risk">CE Risk Score</option>
+                    <option value="pe_risk">PE Risk Score</option>
+                    <option value="position_delta">Position Delta</option>
+                    <option value="position_iv">Position IV</option>
+                    <option value="position_premium">Premium Multiplier</option>
+                    <option value="range_breach">Range Breach (pts)</option>
+                </select>
+            </div>
+            <div class="form-group" id="trade-select-group" style="display:none">
+                <label>Position</label>
+                <select id="alert-trade-id">
+                    <option value="">Select position...</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Condition</label>
+                    <select id="alert-condition">
+                        <option value="gt">Greater than</option>
+                        <option value="lt">Less than</option>
+                        <option value="crosses_above">Crosses above</option>
+                        <option value="crosses_below">Crosses below</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Threshold</label>
+                    <input type="number" id="alert-threshold" step="any" placeholder="e.g. 23000">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Cooldown (min)</label>
+                    <input type="number" id="alert-cooldown" value="15" min="1" max="1440">
+                </div>
+                <div class="form-group">
+                    <label>Hint</label>
+                    <div id="alert-hint" style="font-size:11px;color:var(--text-muted);padding-top:8px">
+                        Alert when Nifty Spot exceeds your level.
+                    </div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary btn-sm" onclick="closeCreateModal()">Cancel</button>
+                <button class="btn btn-primary btn-sm" onclick="submitAlert()">Create Alert</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/utils.js"></script>
+    <script src="/js/ws.js"></script>
+    <script>
+        if (!API.requireAuth()) throw new Error('Auth required');
+
+        document.getElementById('sidebar').innerHTML = Utils.buildSidebar('alerts');
+        document.getElementById('header').innerHTML = Utils.buildHeader('Alerts');
+
+        let alertsList = [];
+        let openTrades = [];
+
+        const METRIC_LABELS = {
+            nifty_spot: 'Nifty Spot',
+            india_vix: 'India VIX',
+            ce_risk: 'CE Risk Score',
+            pe_risk: 'PE Risk Score',
+            position_delta: 'Position Delta',
+            position_iv: 'Position IV',
+            position_premium: 'Premium Multiplier',
+            range_breach: 'Range Breach',
+        };
+
+        const CONDITION_LABELS = {
+            gt: '>',
+            lt: '<',
+            crosses_above: 'crosses above',
+            crosses_below: 'crosses below',
+        };
+
+        const METRIC_ICONS = {
+            nifty_spot: '&#9650;',
+            india_vix: '&#9888;',
+            ce_risk: '&#9632;',
+            pe_risk: '&#9632;',
+            position_delta: '&#916;',
+            position_iv: '&#963;',
+            position_premium: '&#8377;',
+            range_breach: '&#8596;',
+        };
+
+        const METRIC_HINTS = {
+            nifty_spot: 'Alert when Nifty Spot crosses your level.',
+            india_vix: 'Alert when VIX crosses your level.',
+            ce_risk: 'Alert when CE risk score exceeds threshold (0-100).',
+            pe_risk: 'Alert when PE risk score exceeds threshold (0-100).',
+            position_delta: 'Alert when absolute delta of a position exceeds threshold.',
+            position_iv: 'Alert when IV of a position crosses threshold.',
+            position_premium: 'Alert when premium reaches X times entry (e.g. 2 = doubled).',
+            range_breach: 'Alert when spot moves X points outside calculated range.',
+        };
+
+        // ── Load data ─────────────────────────────────────────────────
+        (async () => {
+            Utils.initHeader();
+            await Promise.all([loadAlerts(), loadOpenTrades(), loadHistory()]);
+
+            WS.connect();
+            WS.on('alert_triggered', (data) => {
+                Utils.showToast(data.message, 'warning');
+                loadAlerts(); // Refresh list
+                loadHistory();
+            });
+            WS.on('trade_suggestions', () => {
+                if (document.getElementById('tab-signals').classList.contains('active')) {
+                    loadSignals();
+                }
+            });
+        })();
+
+        async function loadAlerts() {
+            const resp = await API.fetch('/api/alerts/');
+            if (resp && resp.alerts) {
+                alertsList = resp.alerts;
+                renderAlerts();
+            }
+        }
+
+        async function loadOpenTrades() {
+            const resp = await API.fetch('/api/trades/?status=OPEN');
+            if (resp && resp.trades) {
+                openTrades = resp.trades.filter(t => !t.parent_trade_id);
+                populateTradeSelect();
+            }
+        }
+
+        async function loadHistory() {
+            const resp = await API.fetch('/api/alerts/history');
+            if (resp && resp.history) {
+                renderHistory(resp.history);
+            }
+        }
+
+        // ── Render alerts ─────────────────────────────────────────────
+        function renderAlerts() {
+            const container = document.getElementById('alerts-list');
+            const armed = alertsList.filter(a => a.status !== 'TRIGGERED');
+
+            document.getElementById('alert-count-label').textContent =
+                `${armed.filter(a => a.status === 'ARMED').length} active, ${alertsList.length} total`;
+
+            if (!alertsList.length) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div style="font-size:32px;margin-bottom:8px">&#9889;</div>
+                        <div>No alerts configured</div>
+                        <div style="font-size:11px;margin-top:4px">Create your first alert to get notified of market events.</div>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = alertsList.map(a => {
+                const isOn = a.status === 'ARMED';
+                const statusClass = a.status.toLowerCase();
+                const icon = METRIC_ICONS[a.metric] || '&#9679;';
+                const tradeInfo = a.trade_info
+                    ? ` (${a.trade_info.trade_type.replace('_',' ')} ${a.trade_info.strike})`
+                    : '';
+                const lastTrigger = a.last_triggered_at
+                    ? `Last triggered: ${new Date(a.last_triggered_at).toLocaleString('en-IN')}`
+                    : 'Never triggered';
+
+                return `
+                    <div class="alert-card">
+                        <div class="alert-icon ${statusClass}">${icon}</div>
+                        <div class="alert-body">
+                            <div class="alert-title">
+                                ${METRIC_LABELS[a.metric] || a.metric}${tradeInfo}
+                                ${CONDITION_LABELS[a.condition] || a.condition} ${a.threshold}
+                            </div>
+                            <div class="alert-detail">
+                                ${lastTrigger} &middot; Cooldown: ${a.cooldown_minutes}min
+                                &middot; Triggers: ${a.recent_triggers}
+                            </div>
+                        </div>
+                        <div class="alert-actions">
+                            <span class="badge ${isOn ? 'badge-safe' : 'badge-neutral'}" style="font-size:10px">${a.status}</span>
+                            <div class="alert-toggle ${isOn ? 'on' : ''}" onclick="toggleAlert(${a.id})"></div>
+                            <button class="btn btn-ghost btn-sm" onclick="deleteAlert(${a.id})" style="color:#DC2626;font-size:11px">Delete</button>
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+
+        // ── Render history ────────────────────────────────────────────
+        function renderHistory(history) {
+            const container = document.getElementById('history-content');
+            if (!history.length) {
+                container.innerHTML = `<div class="empty-state">No alerts triggered yet</div>`;
+                return;
+            }
+
+            container.innerHTML = `
+                <table class="history-table">
+                    <thead><tr>
+                        <th>Time</th><th>Metric</th><th>Condition</th><th>Value</th><th>Message</th>
+                    </tr></thead>
+                    <tbody>
+                        ${history.map(h => `
+                            <tr>
+                                <td>${h.triggered_at ? new Date(h.triggered_at).toLocaleString('en-IN', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '-'}</td>
+                                <td>${METRIC_LABELS[h.metric] || h.metric}</td>
+                                <td>${CONDITION_LABELS[h.condition] || h.condition} ${h.threshold}</td>
+                                <td class="font-mono fw-600">${h.triggered_value}</td>
+                                <td style="font-size:11px">${h.message}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>`;
+        }
+
+        // ── Tab switch ────────────────────────────────────────────────
+        function switchTab(tab) {
+            const order = ['active', 'history', 'signals'];
+            document.querySelectorAll('.alert-tabs button').forEach((b, i) => {
+                b.classList.toggle('active', order[i] === tab);
+            });
+            document.getElementById('tab-active').classList.toggle('active', tab === 'active');
+            document.getElementById('tab-history').classList.toggle('active', tab === 'history');
+            document.getElementById('tab-signals').classList.toggle('active', tab === 'signals');
+            if (tab === 'signals') loadSignals();
+        }
+
+        async function loadSignals() {
+            try {
+                const [act, hist] = await Promise.all([
+                    API.fetch('/api/suggestions/'),
+                    API.fetch('/api/suggestions/history?limit=50'),
+                ]);
+                renderSignals(act && act.suggestions || [], 'signals-active', true);
+                renderSignals(hist && hist.suggestions || [], 'signals-history', false);
+            } catch (e) {
+                document.getElementById('signals-active').innerHTML = '<div class="empty-state">Failed to load.</div>';
+            }
+        }
+
+        function renderSignals(items, containerId, withActions) {
+            const el = document.getElementById(containerId);
+            if (!items.length) {
+                el.innerHTML = '<div class="empty-state">No suggestions.</div>';
+                return;
+            }
+            el.innerHTML = items.map(s => {
+                const dirColor = s.direction === 'BULLISH' ? '#16A34A' : '#DC2626';
+                const cmp = s.current_price != null ? s.current_price.toFixed(2) : '-';
+                const pnlPct = (s.current_price && s.entry_price)
+                    ? (((s.current_price - s.entry_price) / s.entry_price) * 100).toFixed(1) + '%'
+                    : '-';
+                const pnlColor = (s.current_price && s.entry_price && s.current_price >= s.entry_price) ? '#16A34A' : '#DC2626';
+                const statusBadge = `<span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:${dirColor}20;color:${dirColor}">${s.status}</span>`;
+                const actions = withActions ? `
+                    <div style="display:flex;gap:6px;margin-top:8px">
+                        <button class="btn btn-secondary btn-sm" onclick="signalReject(${s.id})">Dismiss</button>
+                        <button class="btn btn-primary btn-sm" onclick="signalExecute(${s.id})">Take Trade</button>
+                    </div>` : '';
+                return `
+                <div class="alert-card" style="flex-direction:column;align-items:stretch">
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                        <div>
+                            <strong>${s.type}</strong> &middot; ${s.strike} ${s.option_type}
+                            <span style="color:${dirColor};font-weight:600;margin-left:8px">${s.direction}</span>
+                        </div>
+                        ${statusBadge}
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:8px;font-size:11px">
+                        <div><div style="color:var(--text-muted)">Entry</div><strong>${s.entry_price?.toFixed(2) ?? '-'}</strong></div>
+                        <div><div style="color:var(--text-muted)">CMP</div><strong>${cmp}</strong></div>
+                        <div><div style="color:var(--text-muted)">SL</div><strong>${s.stop_loss?.toFixed(2) ?? '-'}</strong></div>
+                        <div><div style="color:var(--text-muted)">Target</div><strong>${s.target?.toFixed(2) ?? '-'}</strong></div>
+                        <div><div style="color:var(--text-muted)">P/L</div><strong style="color:${pnlColor}">${pnlPct}</strong></div>
+                    </div>
+                    ${s.rationale ? `<div style="font-size:11px;color:var(--text-muted);margin-top:6px">${s.rationale}</div>` : ''}
+                    <div style="font-size:10px;color:var(--text-muted);margin-top:4px">
+                        Confidence: ${s.confidence ?? '-'}% &middot; Expiry: ${s.expiry_date ?? '-'} &middot; ${s.created_at ? new Date(s.created_at).toLocaleString() : ''}
+                    </div>
+                    ${actions}
+                </div>`;
+            }).join('');
+        }
+
+        async function signalReject(id) {
+            await API.post('/api/suggestions/' + id + '/reject');
+            Utils.showToast('Suggestion dismissed', 'info');
+            loadSignals();
+        }
+
+        async function signalExecute(id) {
+            await API.post('/api/suggestions/' + id + '/execute');
+            Utils.showToast('Trade marked executed', 'success');
+            loadSignals();
+        }
+
+        // ── Create modal ──────────────────────────────────────────────
+        function openCreateModal() {
+            document.getElementById('create-modal').classList.add('open');
+            onMetricChange();
+        }
+
+        function closeCreateModal() {
+            const modal = document.getElementById('create-modal');
+            modal.classList.remove('open');
+            modal.style.display = '';
+        }
+
+        function onMetricChange() {
+            const metric = document.getElementById('alert-metric').value;
+            const tradeGroup = document.getElementById('trade-select-group');
+            tradeGroup.style.display = metric.startsWith('position_') ? 'block' : 'none';
+            document.getElementById('alert-hint').textContent = METRIC_HINTS[metric] || '';
+        }
+
+        function populateTradeSelect() {
+            const sel = document.getElementById('alert-trade-id');
+            sel.innerHTML = '<option value="">Select position...</option>' +
+                openTrades.map(t =>
+                    `<option value="${t.id}">${t.trade_type.replace('_',' ')} ${t.strike} (${t.expiry_date})</option>`
+                ).join('');
+        }
+
+        async function submitAlert() {
+            const metric = document.getElementById('alert-metric').value;
+            const condition = document.getElementById('alert-condition').value;
+            const threshold = parseFloat(document.getElementById('alert-threshold').value);
+            const cooldown = parseInt(document.getElementById('alert-cooldown').value) || 15;
+            const tradeId = document.getElementById('alert-trade-id').value;
+
+            if (isNaN(threshold)) {
+                Utils.showToast('Please enter a valid threshold', 'error');
+                return;
+            }
+
+            const body = { metric, condition, threshold, cooldown_minutes: cooldown };
+            if (metric.startsWith('position_') && tradeId) {
+                body.trade_id = parseInt(tradeId);
+            }
+
+            try {
+                const resp = await API.post('/api/alerts/', body);
+                if (resp && resp.id) {
+                    closeCreateModal();
+
+                    if (resp.alert) {
+                        alertsList = [resp.alert, ...alertsList];
+                        renderAlerts();
+                    } else {
+                        await loadAlerts();
+                    }
+
+                    Utils.showToast('Alert created', 'success');
+                } else {
+                    Utils.showToast(resp?.detail || 'Failed to create alert', 'error');
+                }
+            } catch (err) {
+                console.error('submitAlert failed', err);
+                Utils.showToast('Failed to create alert', 'error');
+            }
+        }
+
+        // ── Toggle / Delete ───────────────────────────────────────────
+        async function toggleAlert(id) {
+            try {
+                const resp = await API.post(`/api/alerts/${id}/toggle`);
+                if (resp && resp.status) {
+                    alertsList = alertsList.map(a =>
+                        a.id === id ? { ...a, status: resp.status } : a
+                    );
+                    renderAlerts();
+                } else {
+                    await loadAlerts();
+                }
+            } catch (err) {
+                console.error('toggleAlert failed', err);
+            }
+        }
+
+        async function deleteAlert(id) {
+            try {
+                const resp = await API.fetch(`/api/alerts/${id}`, { method: 'DELETE' });
+                if (resp && !resp.error) {
+                    alertsList = alertsList.filter(a => a.id !== id);
+                    renderAlerts();
+                    Utils.showToast('Alert deleted', 'success');
+                }
+            } catch (err) {
+                console.error('deleteAlert failed', err);
+            }
+        }
+    </script>
+</body>
+</html>

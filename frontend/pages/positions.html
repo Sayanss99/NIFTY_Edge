@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NiftyEdge — Positions</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <style>
+        .positions-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .positions-filters {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        .expiry-group {
+            margin-bottom: 24px;
+        }
+        .expiry-group-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            cursor: pointer;
+        }
+        .expiry-group-title {
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .position-card {
+            transition: var(--transition);
+        }
+        .position-card:hover {
+            box-shadow: var(--shadow-md);
+        }
+        .hedge-card {
+            margin-left: 24px;
+            border-left: 3px solid var(--blue);
+            opacity: 0.9;
+        }
+        .close-preview {
+            background: var(--bg-primary);
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 12px;
+        }
+        /* SELL card: left red border, subtle warm tint */
+        .position-card.sell-card {
+            border-left: 3px solid #DC2626;
+            background: linear-gradient(to right, rgba(220,38,38,0.04) 0%, transparent 40%);
+        }
+        /* BUY card: left green border, subtle cool tint */
+        .position-card.buy-card {
+            border-left: 3px solid #16A34A;
+            background: linear-gradient(to right, rgba(22,163,74,0.04) 0%, transparent 40%);
+        }
+        [data-theme="dark"] .position-card.sell-card { background: linear-gradient(to right, rgba(220,38,38,0.07) 0%, transparent 40%); }
+        [data-theme="dark"] .position-card.buy-card  { background: linear-gradient(to right, rgba(22,163,74,0.07) 0%, transparent 40%); }
+        .trade-direction-badge {
+            display:inline-flex; align-items:center; gap:3px;
+            font-size:10px; font-weight:700; padding:2px 7px;
+            border-radius:999px; letter-spacing:0.3px;
+        }
+        .trade-direction-badge.sell { background:rgba(220,38,38,0.12); color:#DC2626; }
+        .trade-direction-badge.buy  { background:rgba(22,163,74,0.12);  color:#16A34A; }
+        /* Action toggle for add trade modal */
+        .action-toggle { display:flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; margin-bottom:10px; }
+        .action-toggle button { flex:1; border:none; padding:8px; font-size:13px; font-weight:600; cursor:pointer; background:var(--bg-secondary); color:var(--text-secondary); transition:0.15s; }
+        .action-toggle button.active.sell { background:#DC2626; color:#fff; }
+        .action-toggle button.active.buy  { background:#16A34A; color:#fff; }
+        /* CE / PE selector — color-coded active state */
+        #opt-ce-btn.active { background:#0891B2 !important; border-color:#0891B2 !important; color:#fff !important; }
+        #opt-pe-btn.active { background:#D97706 !important; border-color:#D97706 !important; color:#fff !important; }
+        [data-theme="dark"] #opt-ce-btn.active { background:#0E7490 !important; border-color:#0E7490 !important; }
+        [data-theme="dark"] #opt-pe-btn.active { background:#B45309 !important; border-color:#B45309 !important; }
+        /* Trade summary box */
+        .trade-summary {
+            background:var(--bg-secondary); border:1px solid var(--border);
+            border-radius:8px; padding:10px 13px; margin-top:10px;
+            font-size:12px; display:none;
+        }
+        .trade-summary.visible { display:block; }
+        .ts-row { display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid var(--border); }
+        .ts-row:last-child { border-bottom:none; }
+        .ts-label { color:var(--text-muted); }
+        .ts-val { font-weight:600; font-size:12px; }
+        .ts-val.profit { color:#16A34A; }
+        .ts-val.loss   { color:#DC2626; }
+        .ts-val.neutral{ color:var(--text-secondary); }
+        .ts-val.ce     { color:#0891B2; }
+        .ts-val.pe     { color:#D97706; }
+        [data-theme="dark"] .ts-val.ce { color:#22D3EE; }
+        [data-theme="dark"] .ts-val.pe { color:#FCD34D; }
+
+        /* Roll button — risk-aware highlighting */
+        @keyframes rollGlow {
+            0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+            50%       { box-shadow: 0 0 6px 2px currentColor; opacity: 0.85; }
+        }
+        .btn-roll-attention {
+            background: rgba(217,119,6,0.12) !important;
+            color: #B45309 !important;
+            border-color: #D97706 !important;
+            animation: rollGlow 2s ease-in-out infinite;
+        }
+        .btn-roll-urgent {
+            background: rgba(220,38,38,0.12) !important;
+            color: #DC2626 !important;
+            border-color: #DC2626 !important;
+            animation: rollGlow 1.1s ease-in-out infinite;
+        }
+        [data-theme="dark"] .btn-roll-attention {
+            background: rgba(217,119,6,0.2) !important;
+            color: #FBBF24 !important;
+        }
+        [data-theme="dark"] .btn-roll-urgent {
+            background: rgba(220,38,38,0.2) !important;
+            color: #F87171 !important;
+        }
+        .roll-nudge {
+            margin-top: 6px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 11px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .roll-nudge-attention {
+            background: rgba(217,119,6,0.08);
+            border: 1px solid rgba(217,119,6,0.3);
+            color: #B45309;
+        }
+        .roll-nudge-urgent {
+            background: rgba(220,38,38,0.08);
+            border: 1px solid rgba(220,38,38,0.3);
+            color: #DC2626;
+        }
+        [data-theme="dark"] .roll-nudge-attention { background: rgba(217,119,6,0.15); color: #FBBF24; }
+        [data-theme="dark"] .roll-nudge-urgent    { background: rgba(220,38,38,0.15); color: #F87171; }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar" id="sidebar"></aside>
+        <div class="main-content">
+            <header class="header" id="header"></header>
+            <div class="page-content">
+                <div class="positions-header">
+                    <h2 style="font-size:18px;font-weight:600">Positions</h2>
+                    <div class="positions-filters">
+                        <select id="filter-type" class="form-select" style="width:auto" onchange="loadPositions()">
+                            <option value="">All Types</option>
+                            <option value="CE">CE Only</option>
+                            <option value="PE">PE Only</option>
+                        </select>
+                        <select id="filter-status" class="form-select" style="width:auto" onchange="loadPositions()">
+                            <option value="OPEN">Open</option>
+                            <option value="CLOSED">Closed</option>
+                            <option value="">All</option>
+                        </select>
+                        <button class="btn btn-primary" onclick="openAddModal()">+ Add Trade</button>
+                        <button class="btn btn-secondary" onclick="openMarginModal()" style="margin-left:8px">&#8382; Margin Calc</button>
+                    </div>
+                </div>
+
+                <div id="positions-container">
+                    <div class="text-muted text-center" style="padding:40px">Loading positions...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Trade Modal -->
+    <div class="modal-overlay" id="add-modal">
+        <div class="modal">
+            <div class="modal-title">Add Trade</div>
+            <form id="add-trade-form" onsubmit="submitAddTrade(event)">
+                <div class="form-group">
+                    <label class="form-label">Action</label>
+                    <div class="action-toggle">
+                        <button type="button" id="action-sell-btn" class="active sell" onclick="selectTradeAction('SELL')">SELL — Collect Premium</button>
+                        <button type="button" id="action-buy-btn" class="buy" onclick="selectTradeAction('BUY')">BUY — Pay Premium</button>
+                    </div>
+                    <div style="display:flex;gap:8px">
+                        <button type="button" id="opt-ce-btn" class="btn btn-sm btn-secondary active" onclick="selectOptionType('CE')" style="flex:1">CE (Call)</button>
+                        <button type="button" id="opt-pe-btn" class="btn btn-sm btn-secondary" onclick="selectOptionType('PE')" style="flex:1">PE (Put)</button>
+                    </div>
+                    <input type="hidden" id="add-type" value="CE_SELL">
+                    <div id="trade-type-display" style="margin-top:6px;font-size:11px;color:var(--text-muted)">
+                        Selling a Call option — profit if NIFTY stays below strike
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Expiry</label>
+                    <input type="text" id="add-expiry" class="form-input" placeholder="e.g. 17-Apr-2026" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Strike</label>
+                    <input type="number" id="add-strike" class="form-input" step="50" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Entry Premium</label>
+                    <input type="number" id="add-premium" class="form-input" step="0.05" required>
+                    <span id="ltp-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px;display:block;min-height:16px"></span>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Quantity (lots)</label>
+                    <input type="number" id="add-qty" class="form-input" value="1" min="1" required>
+                </div>
+                <div class="form-group" id="add-parent-group" style="display:none">
+                    <label class="form-label">Hedge for (parent trade)</label>
+                    <select id="add-parent" class="form-select">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <!-- Auto-captured fields -->
+                <input type="hidden" id="add-iv" value="0">
+                <input type="hidden" id="add-delta" value="0">
+
+                <!-- Live trade summary -->
+                <div class="trade-summary" id="trade-summary">
+                    <div class="ts-row">
+                        <span class="ts-label">Break-even</span>
+                        <span class="ts-val neutral" id="ts-breakeven">—</span>
+                    </div>
+                    <div class="ts-row">
+                        <span class="ts-label">Max Profit</span>
+                        <span class="ts-val profit" id="ts-maxprofit">—</span>
+                    </div>
+                    <div class="ts-row">
+                        <span class="ts-label">Max Loss</span>
+                        <span class="ts-val loss" id="ts-maxloss">—</span>
+                    </div>
+                    <div class="ts-row">
+                        <span class="ts-label">Premium Value</span>
+                        <span class="ts-val neutral" id="ts-premval">—</span>
+                    </div>
+                    <div class="ts-row" id="ts-iv-row" style="display:none">
+                        <span class="ts-label">IV at Entry</span>
+                        <span class="ts-val neutral" id="ts-iv">—</span>
+                    </div>
+                    <div class="ts-row" id="ts-delta-row" style="display:none">
+                        <span class="ts-label">Delta</span>
+                        <span class="ts-val neutral" id="ts-delta">—</span>
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeAddModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Trade</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Close Trade Modal -->
+    <div class="modal-overlay" id="close-modal">
+        <div class="modal">
+            <div class="modal-title">Close Position</div>
+            <div id="close-summary" style="margin-bottom:16px;font-size:13px"></div>
+
+            <div class="form-group">
+                <label class="form-label">Close Price</label>
+                <div style="display:flex;gap:12px;margin-bottom:8px">
+                    <label style="display:flex;align-items:center;gap:4px;font-size:13px">
+                        <input type="radio" name="close-price-mode" value="ltp" checked onchange="updateClosePreview()">
+                        Current LTP
+                    </label>
+                    <label style="display:flex;align-items:center;gap:4px;font-size:13px">
+                        <input type="radio" name="close-price-mode" value="manual" onchange="updateClosePreview()">
+                        Manual
+                    </label>
+                </div>
+                <input type="number" id="close-price" class="form-input" step="0.05">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Close Quantity (lots)</label>
+                <div style="display:flex;gap:8px">
+                    <input type="number" id="close-qty" class="form-input" min="1" onchange="updateClosePreview()">
+                    <button type="button" class="btn btn-sm btn-secondary" id="close-all-btn">All</button>
+                </div>
+            </div>
+
+            <div class="close-preview" id="close-preview"></div>
+
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeCloseModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="submitClose()">Close Position</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Margin Calculator Modal -->
+    <div class="modal-overlay" id="margin-modal" style="display:none">
+        <div class="modal" style="max-width:540px">
+            <div class="modal-title">&#8382; Margin Calculator</div>
+            <div class="form-group">
+                <label class="form-label">Strategy Type</label>
+                <select id="margin-strategy-type" class="form-select" onchange="onMarginStrategyChange(this.value)">
+                    <option value="CUSTOM" selected>Custom</option>
+                    <option value="IRON_CONDOR">Iron Condor</option>
+                    <option value="STRANGLE">Short Strangle</option>
+                    <option value="BULL_PUT_SPREAD">Bull Put Spread</option>
+                    <option value="BEAR_CALL_SPREAD">Bear Call Spread</option>
+                </select>
+            </div>
+            <div id="margin-legs-container">
+                <!-- Leg rows added dynamically -->
+            </div>
+            <button class="btn btn-sm btn-secondary" onclick="addMarginLeg()" style="margin-bottom:16px">+ Add Leg</button>
+            <div id="margin-result" style="display:none;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px">
+                <div style="font-weight:600;margin-bottom:10px">Margin Breakdown</div>
+                <div style="display:grid;gap:6px;font-size:13px">
+                    <div style="display:flex;justify-content:space-between"><span>SPAN Margin</span><span id="mr-span">-</span></div>
+                    <div style="display:flex;justify-content:space-between"><span>Exposure Margin</span><span id="mr-exposure">-</span></div>
+                    <hr style="border-color:var(--border);margin:4px 0">
+                    <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px"><span>Total Margin Required</span><span id="mr-total" style="color:#DC2626">-</span></div>
+                    <div style="display:flex;justify-content:space-between;color:var(--text-secondary)"><span>Premium Receivable</span><span id="mr-premium" style="color:#16A34A">-</span></div>
+                    <div style="display:flex;justify-content:space-between;font-weight:600"><span>Effective Cash Required</span><span id="mr-effective" style="color:#D97706">-</span></div>
+                    <hr style="border-color:var(--border);margin:4px 0">
+                    <div style="display:flex;justify-content:space-between;color:var(--text-secondary)"><span>Expiry Day Margin</span><span id="mr-expiry-day">-</span></div>
+                    <div style="display:flex;justify-content:space-between;color:var(--text-secondary)"><span>Margin per Lot</span><span id="mr-per-lot">-</span></div>
+                    <div style="display:flex;justify-content:space-between;color:#16A34A;font-weight:600"><span>ROI on Margin</span><span id="mr-roi">-</span></div>
+                    <div style="margin-top:8px;font-size:11px;color:var(--text-muted)" id="mr-note"></div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeMarginModal()">Close</button>
+                <button class="btn btn-primary" onclick="calculateMargin()">Calculate</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Roll Scenarios Modal -->
+    <div class="modal-overlay" id="roll-modal" style="display:none">
+        <div class="modal" style="max-width:620px">
+            <div class="modal-title">Roll Options</div>
+            <div id="roll-trade-info" style="font-size:13px;padding:10px;background:var(--bg-secondary);border-radius:6px;margin-bottom:16px"></div>
+            <div id="roll-scenarios-container" style="display:grid;gap:12px">
+                <div class="text-muted text-center" style="padding:24px">Loading scenarios...</div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeRollModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/utils.js"></script>
+    <script src="/js/ws.js"></script>
+    <script>
+        if (!API.requireAuth()) throw new Error('Not authenticated');
+
+        document.getElementById('sidebar').innerHTML = Utils.buildSidebar('positions');
+        document.getElementById('header').innerHTML = Utils.buildHeader('Positions');
+
+        let trades = [];
+        let livePositions = {};  // trade_id -> live data from WS
+        let closingTrade = null;
+        const LOT_SIZE = 65;
+
+        // ── LTP Auto-fetch for Add Trade modal ─────────────────────────
+        // Cache keyed by "expiry|strike|optionType" to avoid redundant calls.
+        // Also used as a per-expiry option-chain cache if we loaded the full chain.
+        const ltpCache = {};       // "expiry|strike|CE|PE" → { ltp, iv, delta }
+        const chainCache = {};     // expiry → array of chain rows (populated if full chain was loaded)
+        let ltpFetchTimer = null;
+
+        function scheduleLTPFetch() {
+            clearTimeout(ltpFetchTimer);
+            ltpFetchTimer = setTimeout(autoFetchLTP, 450);
+        }
+
+        async function autoFetchLTP() {
+            const strikeVal = document.getElementById('add-strike').value;
+            const expiry    = document.getElementById('add-expiry').value.trim();
+            const strike    = parseInt(strikeVal);
+            if (!strike || !expiry) return;
+
+            const typeVal    = document.getElementById('add-type').value;
+            const optionType = typeVal.startsWith('CE') ? 'CE' : 'PE';
+            const cacheKey   = `${expiry}|${strike}|${optionType}`;
+            const hint       = document.getElementById('ltp-hint');
+
+            // 1. Try the per-strike cache first
+            if (ltpCache[cacheKey]) {
+                const c = ltpCache[cacheKey];
+                document.getElementById('add-premium').value = c.ltp.toFixed(2);
+                document.getElementById('add-iv').value      = c.iv;
+                document.getElementById('add-delta').value   = c.delta;
+                hint.textContent  = 'Live LTP (cached)';
+                hint.style.color  = 'var(--text-muted)';
+                updateTradeSummary();
+                return;
+            }
+
+            // 2. Try the in-memory full-chain cache for this expiry
+            if (chainCache[expiry] && chainCache[expiry].length) {
+                const ltpKey = optionType === 'CE' ? 'ce_ltp' : 'pe_ltp';
+                const ivKey  = optionType === 'CE' ? 'ce_iv'  : 'pe_iv';
+                const dKey   = optionType === 'CE' ? 'ce_delta': 'pe_delta';
+                const row    = chainCache[expiry].find(r => r.strike === strike);
+                if (row && row[ltpKey] != null) {
+                    const ltp = row[ltpKey];
+                    ltpCache[cacheKey] = { ltp, iv: row[ivKey] || 0, delta: row[dKey] || 0 };
+                    document.getElementById('add-premium').value = ltp.toFixed(2);
+                    document.getElementById('add-iv').value      = row[ivKey] || 0;
+                    document.getElementById('add-delta').value   = row[dKey]  || 0;
+                    hint.textContent = 'Live LTP (chain cache)';
+                    hint.style.color = 'var(--text-muted)';
+                    updateTradeSummary();
+                    return;
+                }
+            }
+
+            // 3. Fetch from the backend strike-lookup endpoint
+            hint.textContent = 'Fetching LTP\u2026';
+            hint.style.color = 'var(--text-muted)';
+
+            try {
+                const data = await API.strikeLookup(strike, optionType, expiry);
+                if (data && data.ltp != null && !data.error) {
+                    ltpCache[cacheKey] = { ltp: data.ltp, iv: data.iv || 0, delta: data.delta || 0 };
+                    document.getElementById('add-premium').value = data.ltp.toFixed(2);
+                    document.getElementById('add-iv').value      = data.iv   || 0;
+                    document.getElementById('add-delta').value   = data.delta || 0;
+                    hint.textContent = 'Live LTP auto-filled \u2713';
+                    hint.style.color = '#16A34A';
+                    updateTradeSummary();
+                } else {
+                    hint.textContent = '\u2014 strike not found for this expiry';
+                    hint.style.color = 'var(--text-muted)';
+                }
+            } catch {
+                hint.textContent = '\u2014 could not fetch LTP';
+                hint.style.color = 'var(--text-muted)';
+            }
+        }
+
+        // Attach listeners once — the form is always in the DOM, modal is just hidden.
+        document.getElementById('add-strike').addEventListener('input',  scheduleLTPFetch);
+        document.getElementById('add-strike').addEventListener('change', scheduleLTPFetch);
+        document.getElementById('add-expiry').addEventListener('input',  scheduleLTPFetch);
+        document.getElementById('add-expiry').addEventListener('change', scheduleLTPFetch);
+        document.getElementById('add-premium').addEventListener('input',  updateTradeSummary);
+        document.getElementById('add-premium').addEventListener('change', updateTradeSummary);
+        document.getElementById('add-qty').addEventListener('input',  updateTradeSummary);
+        document.getElementById('add-qty').addEventListener('change', updateTradeSummary);
+        // LTP auto-fetch is now triggered via _syncTradeType → selectTradeAction / selectOptionType
+
+        // ── Check for pre-filled params from option chain ──────────────
+
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('action') === 'add') {
+            setTimeout(() => {
+                const rawType = params.get('type') || 'CE_SELL';
+                // Sync the new toggle UI from the type param
+                const parts = rawType.split('_');
+                const pOptType = parts[0] || 'CE';
+                const pAction  = parts[1] || 'SELL';
+                _tradeOptType = pOptType;
+                _tradeAction  = pAction;
+                selectTradeAction(pAction);
+                selectOptionType(pOptType);
+
+                document.getElementById('add-strike').value  = params.get('strike')  || '';
+                document.getElementById('add-expiry').value  = params.get('expiry')  || '';
+                document.getElementById('add-iv').value      = params.get('iv')      || '0';
+                document.getElementById('add-delta').value   = params.get('delta')   || '0';
+                const prefilledPremium = params.get('premium') || '';
+                document.getElementById('add-premium').value = prefilledPremium;
+                if (prefilledPremium) {
+                    const hint = document.getElementById('ltp-hint');
+                    hint.textContent = 'LTP from option chain \u2713';
+                    hint.style.color = '#16A34A';
+                } else if (params.get('strike') && params.get('expiry')) {
+                    autoFetchLTP();
+                }
+                openAddModal();
+            }, 300);
+        }
+
+        // ── Load positions ─────────────────────────────────────────────
+
+        async function loadPositions() {
+            const status = document.getElementById('filter-status').value;
+            const resp = await API.getTrades(status || undefined);
+            if (resp && resp.trades) {
+                trades = resp.trades;
+                renderPositions();
+            }
+        }
+
+        // Initial load
+        (async () => {
+            await Utils.initHeader();
+            await loadPositions();
+            WS.connect();
+        })();
+
+        // ── WebSocket: live position updates ───────────────────────────
+
+        WS.on('positions_update', (data) => {
+            if (data && data.positions) {
+                for (const pos of data.positions) {
+                    livePositions[pos.trade_id] = pos;
+                }
+                renderPositions();
+            }
+        });
+
+        // ── Render positions ───────────────────────────────────────────
+
+        function renderPositions() {
+            const container = document.getElementById('positions-container');
+            const filterType = document.getElementById('filter-type').value;
+
+            let filtered = trades;
+            if (filterType) {
+                filtered = trades.filter(t => t.trade_type.includes(filterType));
+            }
+
+            // Only show parent trades (not hedges as top-level)
+            const parents = filtered.filter(t => !t.parent_trade_id);
+
+            if (!parents.length) {
+                container.innerHTML = '<div class="text-muted text-center" style="padding:40px">No positions found</div>';
+                return;
+            }
+
+            // Group by expiry
+            const groups = {};
+            for (const t of parents) {
+                const exp = t.expiry_date || 'Unknown';
+                if (!groups[exp]) groups[exp] = [];
+                groups[exp].push(t);
+            }
+
+            let html = '';
+            for (const [expiry, trades] of Object.entries(groups)) {
+                html += `<div class="expiry-group">
+                    <div class="expiry-group-header">
+                        <span class="expiry-group-title">${expiry}</span>
+                        <span class="badge badge-neutral">${trades.length} position${trades.length > 1 ? 's' : ''}</span>
+                    </div>`;
+
+                for (const t of trades) {
+                    html += renderPositionCard(t);
+                    // Render hedges
+                    if (t.hedges && t.hedges.length) {
+                        for (const h of t.hedges) {
+                            html += renderPositionCard(h, true);
+                        }
+                    }
+                }
+                html += '</div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        function renderPositionCard(trade, isHedge = false) {
+            const live = livePositions[trade.id] || {};
+            const currentLtp = live.current_ltp ?? trade.exit_price ?? '-';
+            const currentIv = live.current_iv ?? trade.entry_iv;
+            const currentDelta = live.current_delta ?? trade.entry_delta;
+            const ivChangePct = live.iv_change_pct ?? 0;
+            const unrealizedPnl = live.unrealized_pnl ?? trade.realized_pnl;
+            const risk = live.risk || null;
+            const hedge = live.hedge || null;
+            const isClosed = trade.status === 'CLOSED';
+
+            const pnlLabel = isClosed ? 'Realized P&L' : 'Unrealized P&L';
+            const isSell = trade.trade_type.includes('SELL');
+            const isBuy = !isSell;
+            const dirBadge = isSell
+                ? `<span class="trade-direction-badge sell">θ+ SELL</span>`
+                : `<span class="trade-direction-badge buy">Δ+ BUY</span>`;
+            const profitHint = isSell ? 'Profit if LTP ↓' : 'Profit if LTP ↑';
+            const cardClass = isHedge ? 'hedge-card' : (isSell ? 'sell-card' : 'buy-card');
+
+            return `
+                <div class="position-card ${cardClass}" data-trade-id="${trade.id}">
+                    <div class="position-header">
+                        <div style="display:flex;align-items:center;gap:10px">
+                            <span class="badge ${Utils.tradeTypeClass(trade.trade_type)}">${trade.trade_type.replace('_', ' ')}</span>
+                            ${dirBadge}
+                            <span class="fw-700 font-mono" style="font-size:16px">${trade.strike}</span>
+                            ${isHedge ? '<span class="badge badge-neutral" style="font-size:10px">HEDGE</span>' : ''}
+                            <span class="text-muted" style="font-size:11px">${trade.quantity} lot${trade.quantity > 1 ? 's' : ''}</span>
+                            <span class="text-muted" style="font-size:10px;opacity:0.7">${profitHint}</span>
+                            ${isClosed ? '<span class="badge badge-neutral">CLOSED</span>' : ''}
+                        </div>
+                        ${!isClosed ? `
+                            <div style="display:flex;gap:6px;flex-wrap:wrap">
+                                ${!isHedge ? `<button class="btn btn-sm btn-secondary" onclick="openAddHedge(${trade.id}, '${trade.trade_type}', '${trade.expiry_date}')">Add Hedge</button>` : ''}
+                                <button class="btn btn-sm btn-secondary ${risk && risk.score >= 65 ? 'btn-roll-urgent' : risk && risk.score >= 50 ? 'btn-roll-attention' : ''}" onclick="openRollModal(${trade.id})" title="${risk && risk.score >= 65 ? 'Urgent: Consider rolling this position' : risk && risk.score >= 50 ? 'Risk rising — consider rolling' : 'Roll / Hedge options'}">&#8635; Roll</button>
+                                <button class="btn btn-sm btn-danger" onclick="openCloseModal(${trade.id})">Close</button>
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    <div class="position-metrics">
+                        <div class="position-metric">
+                            <div class="label">Entry IV</div>
+                            <div class="value">${trade.entry_iv ? trade.entry_iv.toFixed(1) + '%' : '-'}</div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="label">Current IV</div>
+                            <div class="value">${currentIv != null ? Number(currentIv).toFixed(1) + '%' : '-'}
+                                ${ivChangePct ? `<span class="${Utils.changeClass(ivChangePct)}" style="font-size:10px">${Utils.formatPct(ivChangePct)}</span>` : ''}
+                            </div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="label">Entry Delta</div>
+                            <div class="value">${trade.entry_delta ? Math.abs(trade.entry_delta).toFixed(3) : '-'}</div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="label">Current Delta</div>
+                            <div class="value">${currentDelta != null ? Math.abs(Number(currentDelta)).toFixed(3) : '-'}</div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="label">Entry Prem</div>
+                            <div class="value">${trade.entry_premium.toFixed(2)}</div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="label">Current LTP</div>
+                            <div class="value">${typeof currentLtp === 'number' ? currentLtp.toFixed(2) : currentLtp}</div>
+                        </div>
+                    </div>
+
+                    <div style="display:flex;align-items:center;justify-content:space-between">
+                        <span style="font-size:11px;color:var(--text-muted)">${pnlLabel}</span>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            ${risk ? `<span class="badge ${risk.label === 'OK' ? 'badge-safe' : risk.label === 'WARNING' ? 'badge-warning' : 'badge-danger'}" style="font-size:10px">Risk: ${risk.score}</span>` : ''}
+                            ${risk && risk.hedge_required ? `<span class="badge badge-danger" style="font-size:10px;animation:pulse 1.5s infinite">${risk.hard_triggered ? 'HARD TRIGGER' : 'HEDGE REQ'}</span>` : ''}
+                            ${Utils.pnlHtml(unrealizedPnl)}
+                        </div>
+                    </div>
+                    ${unrealizedPnl != null ? `<div class="pnl-bar ${unrealizedPnl >= 0 ? 'profit' : 'loss'}" style="width:${Math.min(Math.abs(unrealizedPnl) / 100, 100)}%"></div>` : ''}
+                    ${!isClosed && risk && risk.score >= 65 && !isHedge ? `<div class="roll-nudge roll-nudge-urgent">&#8635; Risk is elevated — rolling this position is recommended</div>` : ''}
+                    ${!isClosed && risk && risk.score >= 50 && risk.score < 65 && !isHedge ? `<div class="roll-nudge roll-nudge-attention">&#8635; Risk increasing — consider rolling before it escalates</div>` : ''}
+                    ${hedge ? renderHedgeSuggestion(hedge) : ''}
+                </div>
+            `;
+        }
+
+        function renderHedgeSuggestion(hedge) {
+            if (!hedge) return '';
+            const confColor = hedge.confidence >= 60 ? '#16A34A' : hedge.confidence >= 40 ? '#D97706' : '#DC2626';
+            return `
+                <div style="margin-top:10px;background:var(--bg-secondary, #F9FAFB);border:1px solid var(--border);border-radius:6px;padding:10px 14px">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                        <span style="font-size:11px;font-weight:700;color:#DC2626">HEDGE SUGGESTION</span>
+                        <span style="font-size:10px;color:${confColor};font-weight:600">Confidence: ${hedge.confidence}%</span>
+                    </div>
+                    <div style="font-size:12px;font-family:var(--font-mono);margin-bottom:4px">
+                        BUY <strong>${hedge.strike}</strong> @ ${hedge.ltp.toFixed(1)} x ${hedge.qty_lots} lot${hedge.qty_lots > 1 ? 's' : ''}
+                    </div>
+                    <div style="display:flex;gap:16px;font-size:11px;color:var(--text-secondary)">
+                        <span>Cost: ${Utils.formatINR(hedge.cost)}</span>
+                        <span>Worst P&L: ${Utils.formatINR(hedge.worst_pnl)}</span>
+                        <span>Best P&L: ${Utils.formatINR(hedge.best_pnl)}</span>
+                    </div>
+                    <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${hedge.rationale}</div>
+                </div>
+            `;
+        }
+
+        // ── Add Trade Modal — action/type state ───────────────────────
+
+        let _tradeAction = 'SELL';
+        let _tradeOptType = 'CE';
+
+        const TRADE_DESCRIPTIONS = {
+            'CE_SELL': 'Selling a Call — profit if NIFTY stays below strike (theta+)',
+            'CE_BUY':  'Buying a Call — profit if NIFTY rises above strike (delta+)',
+            'PE_SELL': 'Selling a Put — profit if NIFTY stays above strike (theta+)',
+            'PE_BUY':  'Buying a Put — profit if NIFTY falls below strike (delta+)',
+        };
+
+        function _syncTradeType() {
+            const combined = `${_tradeOptType}_${_tradeAction}`;
+            document.getElementById('add-type').value = combined;
+            document.getElementById('trade-type-display').textContent = TRADE_DESCRIPTIONS[combined] || '';
+            const isBuy = _tradeAction === 'BUY';
+            document.getElementById('add-parent-group').style.display = isBuy ? 'block' : 'none';
+            if (isBuy) populateParentSelect();
+            scheduleLTPFetch();
+            updateTradeSummary();
+        }
+
+        function updateTradeSummary() {
+            const strike  = parseFloat(document.getElementById('add-strike').value)  || 0;
+            const premium = parseFloat(document.getElementById('add-premium').value) || 0;
+            const qty     = parseInt(document.getElementById('add-qty').value)       || 1;
+            const iv      = parseFloat(document.getElementById('add-iv').value)      || 0;
+            const delta   = parseFloat(document.getElementById('add-delta').value)   || 0;
+            const box     = document.getElementById('trade-summary');
+
+            if (!strike || !premium) { box.classList.remove('visible'); return; }
+
+            const pv = premium * qty * LOT_SIZE;
+            const fmt = v => '₹' + v.toLocaleString('en-IN', {maximumFractionDigits: 0});
+
+            let breakEven, maxProfit, maxLoss;
+            if (_tradeAction === 'SELL' && _tradeOptType === 'CE') {
+                breakEven = strike + premium;
+                maxProfit = fmt(pv);
+                maxLoss   = 'Unlimited ↑';
+            } else if (_tradeAction === 'SELL' && _tradeOptType === 'PE') {
+                breakEven = strike - premium;
+                maxProfit = fmt(pv);
+                maxLoss   = fmt(Math.max(strike - premium, 0) * qty * LOT_SIZE);
+            } else if (_tradeAction === 'BUY' && _tradeOptType === 'CE') {
+                breakEven = strike + premium;
+                maxProfit = 'Unlimited ↑';
+                maxLoss   = fmt(pv);
+            } else {
+                breakEven = strike - premium;
+                maxProfit = fmt(Math.max(strike - premium, 0) * qty * LOT_SIZE);
+                maxLoss   = fmt(pv);
+            }
+
+            document.getElementById('ts-breakeven').textContent = '₹' + breakEven.toLocaleString('en-IN');
+            document.getElementById('ts-maxprofit').textContent = maxProfit;
+            document.getElementById('ts-maxloss').textContent   = maxLoss;
+            document.getElementById('ts-premval').textContent   = fmt(pv) + ` (${premium} × ${qty}L × ${LOT_SIZE})`;
+
+            // IV + Delta rows — only show when LTP fetch populated them
+            const ivRow    = document.getElementById('ts-iv-row');
+            const deltaRow = document.getElementById('ts-delta-row');
+            if (iv > 0) {
+                ivRow.style.display = '';
+                document.getElementById('ts-iv').textContent = iv.toFixed(2) + '%';
+            } else { ivRow.style.display = 'none'; }
+            if (delta !== 0) {
+                deltaRow.style.display = '';
+                const dEl = document.getElementById('ts-delta');
+                dEl.textContent = (delta > 0 ? '+' : '') + delta.toFixed(3);
+                dEl.className = 'ts-val ' + (_tradeOptType === 'CE' ? 'ce' : 'pe');
+            } else { deltaRow.style.display = 'none'; }
+
+            box.classList.add('visible');
+        }
+
+        function selectTradeAction(action) {
+            _tradeAction = action;
+            document.getElementById('action-sell-btn').classList.toggle('active', action === 'SELL');
+            document.getElementById('action-buy-btn').classList.toggle('active', action === 'BUY');
+            _syncTradeType();
+        }
+
+        function selectOptionType(type) {
+            _tradeOptType = type;
+            document.getElementById('opt-ce-btn').classList.toggle('active', type === 'CE');
+            document.getElementById('opt-pe-btn').classList.toggle('active', type === 'PE');
+            _syncTradeType();
+        }
+
+        function openAddModal() {
+            document.getElementById('add-modal').classList.add('active');
+        }
+
+        function closeAddModal() {
+            document.getElementById('add-modal').classList.remove('active');
+            document.getElementById('ltp-hint').textContent = '';
+            document.getElementById('trade-summary').classList.remove('visible');
+        }
+
+        function populateParentSelect() {
+            const sel = document.getElementById('add-parent');
+            const openSells = trades.filter(t => t.status === 'OPEN' && t.trade_type.includes('SELL'));
+            sel.innerHTML = '<option value="">None</option>' +
+                openSells.map(t => `<option value="${t.id}">${t.trade_type.replace('_', ' ')} ${t.strike} (${t.expiry_date})</option>`).join('');
+        }
+
+        async function submitAddTrade(e) {
+            e.preventDefault();
+            const trade = {
+                trade_type: document.getElementById('add-type').value,
+                strike: parseInt(document.getElementById('add-strike').value),
+                expiry_date: document.getElementById('add-expiry').value,
+                entry_premium: parseFloat(document.getElementById('add-premium').value),
+                quantity: parseInt(document.getElementById('add-qty').value),
+                entry_iv: parseFloat(document.getElementById('add-iv').value) || 0,
+                entry_delta: parseFloat(document.getElementById('add-delta').value) || 0,
+            };
+
+            const parentId = document.getElementById('add-parent').value;
+            if (parentId) trade.parent_trade_id = parseInt(parentId);
+
+            const resp = await API.addTrade(trade);
+            if (resp && resp.id) {
+                Utils.toast('Trade added successfully', 'success');
+                closeAddModal();
+                document.getElementById('add-trade-form').reset();
+                // Clear URL params
+                window.history.replaceState({}, '', '/positions');
+                await loadPositions();
+            } else {
+                Utils.toast(resp?.detail || 'Failed to add trade', 'error');
+            }
+        }
+
+        function openAddHedge(parentId, parentType, expiry) {
+            const optType = parentType.includes('CE') ? 'CE' : 'PE';
+            selectTradeAction('BUY');
+            selectOptionType(optType);
+            document.getElementById('add-expiry').value = expiry;
+            document.getElementById('add-parent').value = parentId;
+            openAddModal();
+        }
+
+        // ── Close Trade Modal ──────────────────────────────────────────
+
+        function openCloseModal(tradeId) {
+            const trade = findTrade(tradeId);
+            if (!trade) return;
+            closingTrade = trade;
+
+            document.getElementById('close-modal').classList.add('active');
+
+            // Summary
+            document.getElementById('close-summary').innerHTML = `
+                <span class="badge ${Utils.tradeTypeClass(trade.trade_type)}">${trade.trade_type.replace('_', ' ')}</span>
+                <strong class="font-mono" style="margin-left:8px">${trade.strike}</strong>
+                <span class="text-muted" style="margin-left:8px">${trade.expiry_date} | ${trade.quantity} lot(s)</span>
+            `;
+
+            // Set defaults
+            const live = livePositions[tradeId] || {};
+            const currentLtp = live.current_ltp || trade.entry_premium;
+            document.getElementById('close-price').value = currentLtp.toFixed(2);
+            document.getElementById('close-qty').value = trade.quantity;
+
+            document.getElementById('close-all-btn').onclick = () => {
+                document.getElementById('close-qty').value = trade.quantity;
+                updateClosePreview();
+            };
+
+            updateClosePreview();
+        }
+
+        function closeCloseModal() {
+            document.getElementById('close-modal').classList.remove('active');
+            closingTrade = null;
+        }
+
+        function updateClosePreview() {
+            if (!closingTrade) return;
+            const mode = document.querySelector('input[name="close-price-mode"]:checked').value;
+            const priceInput = document.getElementById('close-price');
+
+            if (mode === 'ltp') {
+                const live = livePositions[closingTrade.id] || {};
+                priceInput.value = (live.current_ltp || closingTrade.entry_premium).toFixed(2);
+                priceInput.disabled = true;
+            } else {
+                priceInput.disabled = false;
+            }
+
+            const exitPrice = parseFloat(priceInput.value) || 0;
+            const qty = parseInt(document.getElementById('close-qty').value) || 1;
+
+            let pnl;
+            if (closingTrade.trade_type.includes('SELL')) {
+                pnl = (closingTrade.entry_premium - exitPrice) * LOT_SIZE * qty;
+            } else {
+                pnl = (exitPrice - closingTrade.entry_premium) * LOT_SIZE * qty;
+            }
+            pnl = Math.round(pnl * 100) / 100;
+
+            const formula = closingTrade.trade_type.includes('SELL')
+                ? `(${closingTrade.entry_premium.toFixed(2)} - ${exitPrice.toFixed(2)}) x ${LOT_SIZE} x ${qty}`
+                : `(${exitPrice.toFixed(2)} - ${closingTrade.entry_premium.toFixed(2)}) x ${LOT_SIZE} x ${qty}`;
+
+            document.getElementById('close-preview').innerHTML = `
+                <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">P&L Preview</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;font-family:var(--font-mono)">${formula}</div>
+                ${Utils.pnlHtml(pnl)}
+            `;
+        }
+
+        async function submitClose() {
+            if (!closingTrade) return;
+            const exitPrice = parseFloat(document.getElementById('close-price').value);
+            const qty = parseInt(document.getElementById('close-qty').value);
+
+            if (!exitPrice || exitPrice < 0) {
+                Utils.toast('Enter a valid exit price', 'error');
+                return;
+            }
+
+            const resp = await API.closeTrade(closingTrade.id, exitPrice, qty);
+            if (resp && resp.message) {
+                Utils.toast(`Closed! P&L: ${Utils.formatINR(resp.realized_pnl)}`, resp.realized_pnl >= 0 ? 'success' : 'error');
+                closeCloseModal();
+                await loadPositions();
+            } else {
+                Utils.toast(resp?.detail || 'Close failed', 'error');
+            }
+        }
+
+        function findTrade(id) {
+            for (const t of trades) {
+                if (t.id === id) return t;
+                if (t.hedges) {
+                    for (const h of t.hedges) {
+                        if (h.id === id) return h;
+                    }
+                }
+            }
+            return null;
+        }
+
+        // ── Margin Calculator ──────────────────────────────────────────────────
+        let marginLegs = [];
+
+        const MARGIN_PRESETS = {
+            IRON_CONDOR:     [['CE','SELL'],['CE','BUY'],['PE','SELL'],['PE','BUY']],
+            STRANGLE:        [['CE','SELL'],['PE','SELL']],
+            BULL_PUT_SPREAD: [['PE','SELL'],['PE','BUY']],
+            BEAR_CALL_SPREAD:[['CE','SELL'],['CE','BUY']],
+        };
+
+        function openMarginModal() {
+            marginLegs = [];
+            document.getElementById('margin-legs-container').innerHTML = '';
+            document.getElementById('margin-result').style.display = 'none';
+            document.getElementById('margin-strategy-type').value = 'CUSTOM';
+            // Default: empty — user adds legs or picks a strategy preset
+            document.getElementById('margin-modal').style.display = 'flex';
+        }
+
+        function onMarginStrategyChange(val) {
+            const preset = MARGIN_PRESETS[val];
+            if (!preset) return; // CUSTOM — leave existing legs as-is
+            marginLegs = [];
+            document.getElementById('margin-legs-container').innerHTML = '';
+            document.getElementById('margin-result').style.display = 'none';
+            preset.forEach(([type, action]) => addMarginLeg(type, action));
+        }
+
+        function closeMarginModal() {
+            document.getElementById('margin-modal').style.display = 'none';
+        }
+
+        function addMarginLeg(optType = 'CE', action = 'SELL') {
+            const idx = marginLegs.length;
+            marginLegs.push({ optType, action, strike: 0, lots: 1 });
+            const c = document.getElementById('margin-legs-container');
+            const row = document.createElement('div');
+            row.id = `margin-leg-${idx}`;
+            row.style.cssText = 'display:grid;grid-template-columns:70px 70px 1fr 64px 28px;gap:6px;align-items:center;margin-bottom:7px;font-size:13px';
+            row.innerHTML = `
+                <select class="form-select" style="padding:4px 6px" onchange="marginLegs[${idx}].optType=this.value">
+                    <option value="CE" ${optType==='CE'?'selected':''}>CE</option>
+                    <option value="PE" ${optType==='PE'?'selected':''}>PE</option>
+                </select>
+                <select class="form-select" style="padding:4px 6px" onchange="marginLegs[${idx}].action=this.value">
+                    <option value="SELL" ${action==='SELL'?'selected':''}>SELL</option>
+                    <option value="BUY" ${action==='BUY'?'selected':''}>BUY</option>
+                </select>
+                <input type="number" class="form-input" placeholder="Strike" style="padding:4px 6px"
+                    onchange="marginLegs[${idx}].strike=parseInt(this.value)||0">
+                <input type="number" class="form-input" placeholder="Lots" value="1" min="1" style="padding:4px 6px;text-align:center"
+                    onchange="marginLegs[${idx}].lots=parseInt(this.value)||1">
+                <button class="btn btn-sm btn-danger" onclick="removeMarginLeg(${idx})"
+                    style="padding:0;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;line-height:1">&#10005;</button>
+            `;
+            c.appendChild(row);
+        }
+
+        function removeMarginLeg(idx) {
+            const row = document.getElementById(`margin-leg-${idx}`);
+            if (row) row.remove();
+            marginLegs[idx] = null;
+        }
+
+        async function calculateMargin() {
+            const stratType = document.getElementById('margin-strategy-type').value;
+            const activeLeg = marginLegs.filter(Boolean).filter(l => l.strike > 0);
+            if (!activeLeg.length) { Utils.toast('Enter at least one leg with a strike', 'warning'); return; }
+            const expiry = document.getElementById('expiry-selector')?.value || '';
+            const body = {
+                strategy_type: stratType,
+                expiry,
+                legs: activeLeg.map(l => ({ strike: l.strike, option_type: l.optType, action: l.action, lots: l.lots })),
+            };
+            try {
+                const res = await API.post('/api/market/margin', body);
+                if (res.error) { Utils.toast(res.error, 'error'); return; }
+                document.getElementById('mr-span').textContent = Utils.formatINR(res.span);
+                document.getElementById('mr-exposure').textContent = Utils.formatINR(res.exposure);
+                document.getElementById('mr-total').textContent = Utils.formatINR(res.total_margin);
+                document.getElementById('mr-premium').textContent = Utils.formatINR(res.net_premium_credit);
+                document.getElementById('mr-effective').textContent = Utils.formatINR(res.effective_cost);
+                document.getElementById('mr-expiry-day').textContent = Utils.formatINR(res.expiry_day_margin);
+                document.getElementById('mr-per-lot').textContent = Utils.formatINR(res.margin_per_lot);
+                document.getElementById('mr-roi').textContent = (res.roi_on_margin ?? 0).toFixed(2) + '%';
+                document.getElementById('mr-note').textContent = res.span_note || '';
+                document.getElementById('margin-result').style.display = 'block';
+            } catch (e) { Utils.toast('Calculation failed', 'error'); }
+        }
+
+        // ── Roll Scenarios ─────────────────────────────────────────────────────
+        let rollTradeId = null;
+
+        async function openRollModal(tradeId) {
+            rollTradeId = tradeId;
+            const modal = document.getElementById('roll-modal');
+            modal.style.display = 'flex';
+            document.getElementById('roll-scenarios-container').innerHTML =
+                '<div class="text-muted text-center" style="padding:24px">Loading scenarios...</div>';
+
+            // Show trade info
+            const trade = findTrade(tradeId);
+            if (trade) {
+                document.getElementById('roll-trade-info').innerHTML =
+                    `<strong>${trade.trade_type}</strong> | Strike: <strong>${trade.strike}</strong> | Expiry: ${trade.expiry_date} | Entry: ₹${trade.entry_premium} | Lots: ${trade.quantity}`;
+            }
+
+            try {
+                const data = await API.fetch(`/api/trades/${tradeId}/roll-scenarios`);
+                renderRollScenarios(data.scenarios || []);
+            } catch (e) {
+                document.getElementById('roll-scenarios-container').innerHTML =
+                    '<div class="text-muted text-center" style="padding:24px">Failed to load roll scenarios.</div>';
+            }
+        }
+
+        function closeRollModal() {
+            document.getElementById('roll-modal').style.display = 'none';
+            rollTradeId = null;
+        }
+
+        function renderRollScenarios(scenarios) {
+            const c = document.getElementById('roll-scenarios-container');
+            if (!scenarios.length) {
+                c.innerHTML = '<div class="text-muted text-center" style="padding:24px">No roll scenarios available.</div>';
+                return;
+            }
+            c.innerHTML = scenarios.map((s, i) => {
+                const isTop = i === 0;
+                const isFutures = s.scenario_id === 'futures_hedge';
+                const scoreColor = s.recommendation_score >= 70 ? '#16A34A' : s.recommendation_score >= 45 ? '#D97706' : '#9CA3AF';
+                const detailsHtml = isFutures
+                    ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
+                        <div><div style="color:var(--text-muted)">Action</div><div style="font-weight:600">${s.futures_action || '-'} ${s.futures_lots || 0} futures lot(s)</div></div>
+                        <div><div style="color:var(--text-muted)">Hedge Margin Est.</div><div style="font-weight:600">₹${Utils.formatNum(s.hedge_margin)}</div></div>
+                        <div><div style="color:var(--text-muted)">Net Delta After</div><div style="font-weight:600;color:#16A34A">≈ 0</div></div>
+                        <div><div style="color:var(--text-muted)">Position</div><div style="font-weight:600">Unchanged</div></div>
+                       </div>`
+                    : `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px">
+                        <div><div style="color:var(--text-muted)">New Strike</div><div style="font-weight:600">${s.new_strike || '-'}</div></div>
+                        <div><div style="color:var(--text-muted)">New Expiry</div><div style="font-weight:600">${s.new_expiry || '-'}</div></div>
+                        <div><div style="color:var(--text-muted)">Debit/Credit</div><div style="font-weight:600;color:${s.roll_debit_credit >= 0 ? '#16A34A' : '#DC2626'}">${s.roll_debit_credit >= 0 ? '+' : ''}₹${Utils.formatNum(s.roll_debit_credit, 2)}</div></div>
+                        <div><div style="color:var(--text-muted)">New Delta</div><div style="font-weight:600">${s.new_delta != null ? s.new_delta.toFixed(3) : '-'}</div></div>
+                        <div><div style="color:var(--text-muted)">DTE</div><div style="font-weight:600">${s.new_dte != null ? s.new_dte + 'd' : '-'}</div></div>
+                        ${s.new_theta != null ? `<div><div style="color:var(--text-muted)">Daily Theta</div><div style="font-weight:600;color:#16A34A">₹${Utils.formatNum(s.new_theta, 2)}</div></div>` : ''}
+                       </div>`;
+                const execBtn = isFutures
+                    ? `<button class="btn btn-sm btn-secondary" onclick="executeRoll('${s.scenario_id}', ${JSON.stringify(s).replace(/"/g,'&quot;')})">Execute Hedge</button>`
+                    : `<button class="btn btn-sm btn-primary" onclick="executeRoll('${s.scenario_id}', ${JSON.stringify(s).replace(/"/g,'&quot;')})">Execute Roll</button>`;
+                return `
+                    <div style="border:1px solid ${isTop ? '#2563EB' : 'var(--border)'};border-radius:8px;padding:14px;position:relative">
+                        ${isTop ? '<span style="position:absolute;top:-10px;left:12px;background:#2563EB;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px">★ RECOMMENDED</span>' : ''}
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                            <strong>${s.label}</strong>
+                            <span style="font-size:11px;color:${scoreColor};font-weight:700">Score: ${s.recommendation_score}</span>
+                        </div>
+                        ${detailsHtml}
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:8px">${s.rationale || ''}</div>
+                        <div style="text-align:right;margin-top:10px">${execBtn}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function executeRoll(scenarioId, scenarioData) {
+            if (!rollTradeId) return;
+            const label = scenarioId === 'futures_hedge' ? 'Execute futures hedge?' : `Execute roll to ${scenarioData.new_strike || ''} @ ${scenarioData.new_expiry || ''}?`;
+            if (!confirm(label)) return;
+            try {
+                const body = {
+                    scenario_id: scenarioId,
+                    new_strike: scenarioData.new_strike || 0,
+                    new_expiry: scenarioData.new_expiry || '',
+                    new_ltp: scenarioData.new_ltp || 0,
+                    futures_lots: scenarioData.futures_lots || 0,
+                    futures_action: scenarioData.futures_action || '',
+                };
+                await API.post(`/api/trades/${rollTradeId}/roll`, body);
+                Utils.toast(scenarioId === 'futures_hedge' ? 'Futures hedge placed' : 'Roll executed successfully', 'success');
+                closeRollModal();
+                loadPositions();
+            } catch (e) { Utils.toast('Roll execution failed', 'error'); }
+        }
+    </script>
+</body>
+</html>

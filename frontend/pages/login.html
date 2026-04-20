@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NiftyEdge — Options Intelligence Platform</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --blue:    #3B82F6;
+            --blue-d:  #1D4ED8;
+            --green:   #10B981;
+            --red:     #EF4444;
+            --amber:   #F59E0B;
+            --bg:      #070D1A;
+            --bg2:     #0D1526;
+            --border:  rgba(255,255,255,0.07);
+            --text:    #E2E8F0;
+            --muted:   #64748B;
+            --card-bg: rgba(13, 21, 38, 0.92);
+        }
+
+        html, body {
+            height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            overflow: hidden;
+        }
+
+        /* ── Ticker strip ─────────────────────────────────────────────── */
+        .ticker-strip {
+            height: 30px;
+            background: rgba(255,255,255,0.03);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            overflow: hidden;
+            position: relative;
+            z-index: 10;
+        }
+        .ticker-track {
+            display: flex;
+            gap: 0;
+            animation: ticker-scroll 60s linear infinite;
+            white-space: nowrap;
+        }
+        .ticker-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 0 24px;
+            font-size: 11px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            border-right: 1px solid var(--border);
+        }
+        .ticker-item .t-label { color: var(--muted); }
+        .ticker-item .t-val   { font-weight: 600; }
+        .ticker-item .t-chg   { font-size: 10px; }
+        .t-up   { color: var(--green); }
+        .t-down { color: var(--red); }
+        .t-neu  { color: var(--amber); }
+        @keyframes ticker-scroll {
+            0%   { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
+        /* slowed: was 28s → 60s */
+
+        /* ── Main split ───────────────────────────────────────────────── */
+        .landing-split {
+            display: flex;
+            height: calc(100vh - 30px);
+        }
+
+        /* ── Hero panel (left) ────────────────────────────────────────── */
+        .hero-panel {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #price-canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Radial overlay to keep left edge readable */
+        .hero-panel::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(
+                to right,
+                rgba(7,13,26,0.10) 0%,
+                rgba(7,13,26,0.05) 60%,
+                rgba(7,13,26,0.55) 100%
+            );
+            pointer-events: none;
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 2;
+            padding: 44px 52px;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        /* Brand */
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: auto;
+        }
+        .brand-gem {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--blue) 0%, #818CF8 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            box-shadow: 0 0 20px rgba(59,130,246,0.4);
+        }
+        .brand-name {
+            font-size: 17px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+        }
+        .brand-beta {
+            font-size: 9px;
+            font-weight: 700;
+            background: rgba(59,130,246,0.15);
+            color: var(--blue);
+            border: 1px solid rgba(59,130,246,0.3);
+            border-radius: 4px;
+            padding: 1px 5px;
+            letter-spacing: 0.5px;
+        }
+
+        /* Main headline */
+        .hero-headline {
+            margin-top: auto;
+            margin-bottom: 16px;
+        }
+        .hero-headline h1 {
+            font-size: clamp(28px, 3.2vw, 44px);
+            font-weight: 800;
+            line-height: 1.15;
+            letter-spacing: -0.8px;
+            color: #fff;
+        }
+        .hero-headline h1 .hl-accent {
+            background: linear-gradient(90deg, var(--blue) 0%, #818CF8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .hero-sub {
+            margin-top: 12px;
+            font-size: 14px;
+            color: var(--muted);
+            line-height: 1.6;
+            max-width: 460px;
+        }
+
+        /* Feature bullets */
+        .feature-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 28px;
+            margin-bottom: 36px;
+        }
+        .feature-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 12.5px;
+            color: #94A3B8;
+        }
+        .feature-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .fd-blue  { background: var(--blue); box-shadow: 0 0 6px var(--blue); }
+        .fd-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+        .fd-amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+
+        /* Floating metric badges */
+        .floating-metrics {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .fm-badge {
+            position: absolute;
+            background: rgba(13,21,38,0.82);
+            border: 1px solid rgba(255,255,255,0.10);
+            border-radius: 8px;
+            padding: 7px 11px;
+            backdrop-filter: blur(8px);
+            animation: float-bob linear infinite;
+        }
+        .fm-badge .fm-label {
+            font-size: 8.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--muted);
+            margin-bottom: 2px;
+        }
+        .fm-badge .fm-val {
+            font-size: 14px;
+            font-weight: 700;
+            font-family: 'SF Mono', monospace;
+        }
+        .fm-badge .fm-sub {
+            font-size: 8px;
+            color: var(--muted);
+            margin-top: 1px;
+        }
+        @keyframes float-bob {
+            0%, 100% { transform: translateY(0px); }
+            50%       { transform: translateY(-8px); }
+        }
+
+        /* ── Form panel (right) ───────────────────────────────────────── */
+        .form-panel {
+            width: 420px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg2);
+            border-left: 1px solid var(--border);
+            padding: 40px 36px;
+            position: relative;
+        }
+
+        /* Subtle top glow on form panel */
+        .form-panel::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(59,130,246,0.4), transparent);
+        }
+
+        .form-card {
+            width: 100%;
+        }
+
+        .form-card-header {
+            margin-bottom: 28px;
+        }
+        .form-card-header h2 {
+            font-size: 20px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+        .form-card-header p {
+            font-size: 12.5px;
+            color: var(--muted);
+        }
+
+        /* Form tab switcher */
+        .form-tabs {
+            display: flex;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 3px;
+            margin-bottom: 24px;
+            gap: 2px;
+        }
+        .form-tab {
+            flex: 1;
+            padding: 7px;
+            border: none;
+            background: none;
+            color: var(--muted);
+            font-size: 12.5px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .form-tab.active {
+            background: rgba(59,130,246,0.15);
+            color: var(--blue);
+            font-weight: 600;
+        }
+
+        /* Form fields */
+        .f-group {
+            margin-bottom: 14px;
+        }
+        .f-label {
+            display: block;
+            font-size: 11.5px;
+            font-weight: 500;
+            color: #94A3B8;
+            margin-bottom: 5px;
+            letter-spacing: 0.1px;
+        }
+        .f-input {
+            width: 100%;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.10);
+            border-radius: 8px;
+            padding: 9px 12px;
+            font-size: 13px;
+            color: var(--text);
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .f-input::placeholder { color: #334155; }
+        .f-input:focus {
+            border-color: rgba(59,130,246,0.5);
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.10);
+        }
+
+        .f-submit {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+            color: #fff;
+            font-size: 13.5px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 6px;
+            font-family: inherit;
+            letter-spacing: 0.1px;
+            transition: opacity 0.15s, transform 0.1s;
+            box-shadow: 0 4px 15px rgba(37,99,235,0.3);
+        }
+        .f-submit:hover   { opacity: 0.92; }
+        .f-submit:active  { transform: scale(0.99); }
+        .f-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .f-error {
+            color: #F87171;
+            font-size: 11.5px;
+            text-align: center;
+            min-height: 16px;
+            margin-bottom: 10px;
+        }
+
+        /* Bottom tagline */
+        .form-footer {
+            position: absolute;
+            bottom: 24px;
+            left: 0; right: 0;
+            text-align: center;
+            font-size: 10.5px;
+            color: #334155;
+        }
+
+        /* Slide transition between forms */
+        .form-body {
+            overflow: hidden;
+        }
+        .form-slide {
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+        .form-slide.hidden-form {
+            display: none;
+        }
+
+        /* Security note */
+        .security-note {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            margin-top: 18px;
+            font-size: 10.5px;
+            color: #334155;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ── Ticker strip ───────────────────────────────────────────────── -->
+    <div class="ticker-strip">
+        <div class="ticker-track" id="ticker-track">
+            <!-- Populated by JS, duplicated for infinite scroll -->
+        </div>
+    </div>
+
+    <!-- ── Main split ─────────────────────────────────────────────────── -->
+    <div class="landing-split">
+
+        <!-- Left: Hero panel -->
+        <div class="hero-panel">
+            <canvas id="price-canvas"></canvas>
+
+            <!-- Floating live-look metric badges -->
+            <div class="floating-metrics" id="floating-metrics"></div>
+
+            <div class="hero-content">
+                <!-- Brand -->
+                <div class="brand">
+                    <div class="brand-gem">◆</div>
+                    <span class="brand-name">NiftyEdge</span>
+                    <span class="brand-beta">BETA</span>
+                </div>
+
+                <!-- Headline + sub -->
+                <div class="hero-headline">
+                    <h1>Options intelligence,<br><span class="hl-accent">edge-forward.</span></h1>
+                    <p class="hero-sub">
+                        Real-time IV analytics, GEX regime detection, directional signals,
+                        and AI-scored strategy recommendations — all in one terminal built for NIFTY.
+                    </p>
+                    <div class="feature-list">
+                        <div class="feature-item">
+                            <div class="feature-dot fd-blue"></div>
+                            18-factor market analytics — IV rank, skew, butterfly, term structure &amp; more
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-dot fd-green"></div>
+                            Gamma exposure (GEX) regime — know if the market is pinned or trending
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-dot fd-amber"></div>
+                            Strategy builder scores and ranks setups against current market conditions
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Form panel -->
+        <div class="form-panel">
+            <div class="form-card">
+                <div class="form-card-header">
+                    <h2 id="form-heading">Welcome back</h2>
+                    <p id="form-subheading">Sign in to your NiftyEdge account</p>
+                </div>
+
+                <!-- Tab switcher -->
+                <div class="form-tabs">
+                    <button class="form-tab active" id="tab-login" onclick="switchTab('login')">Sign in</button>
+                    <button class="form-tab"        id="tab-signup" onclick="switchTab('signup')">Create account</button>
+                </div>
+
+                <div class="f-error" id="f-error"></div>
+
+                <!-- Login form -->
+                <div class="form-body">
+                    <form id="login-form" class="form-slide" onsubmit="handleLogin(event)">
+                        <div class="f-group">
+                            <label class="f-label">Email</label>
+                            <input type="email" id="login-email" class="f-input" placeholder="you@example.com" required autocomplete="email">
+                        </div>
+                        <div class="f-group">
+                            <label class="f-label">Password</label>
+                            <input type="password" id="login-password" class="f-input" placeholder="Enter password" required>
+                        </div>
+                        <button type="submit" class="f-submit" id="login-btn">Sign In</button>
+                    </form>
+
+                    <!-- Signup form -->
+                    <form id="signup-form" class="form-slide hidden-form" onsubmit="handleSignup(event)">
+                        <div class="f-group">
+                            <label class="f-label">Name</label>
+                            <input type="text" id="signup-name" class="f-input" placeholder="Your name" required autocomplete="name">
+                        </div>
+                        <div class="f-group">
+                            <label class="f-label">Email</label>
+                            <input type="email" id="signup-email" class="f-input" placeholder="you@example.com" required autocomplete="email">
+                        </div>
+                        <div class="f-group">
+                            <label class="f-label">Password</label>
+                            <input type="password" id="signup-password" class="f-input" placeholder="Min 6 characters" required minlength="6"
+                                   oninput="checkPasswordMatch()">
+                        </div>
+                        <div class="f-group">
+                            <label class="f-label">Confirm Password</label>
+                            <div style="position:relative">
+                                <input type="password" id="signup-confirm" class="f-input" placeholder="Re-enter password" required
+                                       oninput="checkPasswordMatch()" style="padding-right:32px">
+                                <span id="confirm-icon" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:13px;pointer-events:none"></span>
+                            </div>
+                        </div>
+                        <button type="submit" class="f-submit" id="signup-btn">Create Account</button>
+                    </form>
+                </div>
+
+                <div class="security-note">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    Secure connection · Data stays private
+                </div>
+            </div>
+
+            <div class="form-footer">NiftyEdge · For educational and personal use · Not SEBI registered</div>
+        </div>
+
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script>
+        // ── Auth guard ────────────────────────────────────────────────────
+        if (API.getToken()) window.location.href = '/dashboard';
+
+        // ── Tab switch ────────────────────────────────────────────────────
+        function switchTab(tab) {
+            const isLogin = tab === 'login';
+            document.getElementById('tab-login').classList.toggle('active', isLogin);
+            document.getElementById('tab-signup').classList.toggle('active', !isLogin);
+            document.getElementById('login-form').classList.toggle('hidden-form', !isLogin);
+            document.getElementById('signup-form').classList.toggle('hidden-form', isLogin);
+            document.getElementById('form-heading').textContent    = isLogin ? 'Welcome back'  : 'Get started';
+            document.getElementById('form-subheading').textContent = isLogin
+                ? 'Sign in to your NiftyEdge account'
+                : 'Create your free NiftyEdge account';
+            document.getElementById('f-error').textContent = '';
+        }
+
+        // ── Login ─────────────────────────────────────────────────────────
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('login-btn');
+            btn.disabled = true; btn.textContent = 'Signing in…';
+            document.getElementById('f-error').textContent = '';
+            try {
+                const resp = await API.login(
+                    document.getElementById('login-email').value,
+                    document.getElementById('login-password').value
+                );
+                if (resp.access_token) {
+                    API.saveAuth(resp);
+                    window.location.href = '/dashboard';
+                } else {
+                    document.getElementById('f-error').textContent = resp.detail || 'Login failed';
+                }
+            } catch { document.getElementById('f-error').textContent = 'Connection error'; }
+            btn.disabled = false; btn.textContent = 'Sign In';
+        }
+
+        // ── Password match check ──────────────────────────────────────────
+        function checkPasswordMatch() {
+            const pwd  = document.getElementById('signup-password').value;
+            const conf = document.getElementById('signup-confirm').value;
+            const icon = document.getElementById('confirm-icon');
+            if (!conf) { icon.textContent = ''; return; }
+            if (pwd === conf) {
+                icon.textContent = '✓';
+                icon.style.color = '#10B981';
+            } else {
+                icon.textContent = '✗';
+                icon.style.color = '#EF4444';
+            }
+        }
+
+        // ── Signup ────────────────────────────────────────────────────────
+        async function handleSignup(e) {
+            e.preventDefault();
+            const btn  = document.getElementById('signup-btn');
+            const pwd  = document.getElementById('signup-password').value;
+            const conf = document.getElementById('signup-confirm').value;
+
+            if (pwd !== conf) {
+                document.getElementById('f-error').textContent = 'Passwords do not match';
+                return;
+            }
+            if (pwd.length < 6) {
+                document.getElementById('f-error').textContent = 'Password must be at least 6 characters';
+                return;
+            }
+
+            btn.disabled = true; btn.textContent = 'Creating account…';
+            document.getElementById('f-error').textContent = '';
+            try {
+                const resp = await API.signup(
+                    document.getElementById('signup-email').value,
+                    document.getElementById('signup-name').value,
+                    pwd
+                );
+                if (resp.access_token) {
+                    API.saveAuth(resp);
+                    window.location.href = '/dashboard';
+                } else {
+                    document.getElementById('f-error').textContent = resp.detail || 'Signup failed';
+                }
+            } catch { document.getElementById('f-error').textContent = 'Connection error'; }
+            btn.disabled = false; btn.textContent = 'Create Account';
+        }
+
+        // ── Ticker strip ──────────────────────────────────────────────────
+        const tickerData = [
+            { label: 'NIFTY', val: '24,312.50', chg: '+0.38%', cls: 't-up' },
+            { label: 'IV Rank', val: '49.2%', chg: 'Mid-range', cls: 't-neu' },
+            { label: 'PCR (OI)', val: '1.16', chg: 'Neutral', cls: 't-neu' },
+            { label: 'ATM IV', val: '16.58%', chg: 'Normal', cls: 't-neu' },
+            { label: 'VIX', val: '17.21', chg: '−0.4%', cls: 't-up' },
+            { label: 'GEX', val: '+0.58M', chg: 'Mean-rev', cls: 't-up' },
+            { label: 'Max Pain', val: '24,050', chg: '+304 dist', cls: 't-neu' },
+            { label: 'IV Skew', val: '+3.55%', chg: 'Put demand', cls: 't-down' },
+            { label: 'Straddle', val: '₹562', chg: '±2.31%', cls: 't-neu' },
+            { label: 'OI Supp.', val: '21,000', chg: 'PE wall', cls: 't-up' },
+            { label: 'OI Resist', val: '26,000', chg: 'CE wall', cls: 't-down' },
+            { label: 'Term Str.', val: 'Backwd.', chg: 'Near stress', cls: 't-down' },
+        ];
+
+        function buildTicker() {
+            const items = [...tickerData, ...tickerData]; // duplicate for seamless loop
+            return items.map(d => `
+                <div class="ticker-item">
+                    <span class="t-label">${d.label}</span>
+                    <span class="t-val ${d.cls}">${d.val}</span>
+                    <span class="t-chg ${d.cls}">${d.chg}</span>
+                </div>`).join('');
+        }
+        document.getElementById('ticker-track').innerHTML = buildTicker();
+
+        // Occasionally "tick" a random value for live feel
+        setInterval(() => {
+            const items = document.querySelectorAll('.ticker-item');
+            const target = items[Math.floor(Math.random() * (items.length / 2))];
+            if (!target) return;
+            const valEl = target.querySelector('.t-val');
+            if (!valEl) return;
+            valEl.style.transition = 'color 0.1s';
+            valEl.style.color = '#fff';
+            setTimeout(() => { valEl.style.color = ''; valEl.style.transition = ''; }, 300);
+        }, 1800);
+
+        // ── Price chart canvas ────────────────────────────────────────────
+        (function initPriceCanvas() {
+            const canvas = document.getElementById('price-canvas');
+            const ctx    = canvas.getContext('2d');
+
+            // Generate a realistic-looking noisy price series
+            let prices = [];
+            let base   = 24200;
+            for (let i = 0; i < 300; i++) {
+                base += (Math.random() - 0.485) * 14;
+                prices.push(base);
+            }
+
+            // MA smoothing helper
+            function ma(arr, n) {
+                return arr.map((_, i) => {
+                    const s = arr.slice(Math.max(0, i - n + 1), i + 1);
+                    return s.reduce((a, b) => a + b, 0) / s.length;
+                });
+            }
+
+            let hoverX = null;
+            canvas.addEventListener('mousemove', e => {
+                const r = canvas.getBoundingClientRect();
+                hoverX = (e.clientX - r.left) * (canvas.width / r.width);
+            });
+            canvas.addEventListener('mouseleave', () => { hoverX = null; });
+
+            let pulse = 0;
+
+            function draw() {
+                const W = canvas.offsetWidth;
+                const H = canvas.offsetHeight;
+                if (canvas.width !== W * devicePixelRatio) {
+                    canvas.width  = W * devicePixelRatio;
+                    canvas.height = H * devicePixelRatio;
+                }
+                const dpr = devicePixelRatio;
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+                ctx.clearRect(0, 0, W, H);
+
+                // Use last 120 prices as visible window
+                const visible  = prices.slice(-120);
+                const smooth   = ma(visible, 14);
+                const pMin     = Math.min(...visible) - 50;
+                const pMax     = Math.max(...visible) + 50;
+                const pRange   = pMax - pMin;
+                const PAD      = { t: 30, b: 60, l: 0, r: 0 };
+                const cW = W - PAD.l - PAD.r;
+                const cH = H - PAD.t - PAD.b;
+
+                const toX = i  => PAD.l + (i / (visible.length - 1)) * cW;
+                const toY = p  => PAD.t + cH - ((p - pMin) / pRange) * cH;
+
+                // Dim grid lines
+                ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+                ctx.lineWidth   = 1;
+                for (let g = 0; g <= 4; g++) {
+                    const y = PAD.t + (g / 4) * cH;
+                    ctx.beginPath();
+                    ctx.moveTo(PAD.l, y); ctx.lineTo(W, y);
+                    ctx.stroke();
+                }
+
+                // Volume bars (simulated, very subtle)
+                for (let i = 0; i < visible.length; i++) {
+                    const x    = toX(i);
+                    const h    = 10 + Math.random() * 18;
+                    const up   = i === 0 || visible[i] >= visible[i - 1];
+                    ctx.fillStyle = up ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.10)';
+                    ctx.fillRect(x - 2, H - PAD.b - h, 4, h);
+                }
+
+                // Price line gradient fill
+                const grad = ctx.createLinearGradient(0, PAD.t, 0, PAD.t + cH);
+                grad.addColorStop(0,   'rgba(59,130,246,0.22)');
+                grad.addColorStop(0.6, 'rgba(59,130,246,0.04)');
+                grad.addColorStop(1,   'rgba(59,130,246,0)');
+
+                ctx.beginPath();
+                visible.forEach((p, i) => {
+                    i === 0 ? ctx.moveTo(toX(i), toY(p)) : ctx.lineTo(toX(i), toY(p));
+                });
+                ctx.lineTo(toX(visible.length - 1), PAD.t + cH);
+                ctx.lineTo(PAD.l, PAD.t + cH);
+                ctx.closePath();
+                ctx.fillStyle = grad;
+                ctx.fill();
+
+                // Price line
+                ctx.beginPath();
+                visible.forEach((p, i) => {
+                    i === 0 ? ctx.moveTo(toX(i), toY(p)) : ctx.lineTo(toX(i), toY(p));
+                });
+                ctx.strokeStyle = '#3B82F6';
+                ctx.lineWidth   = 1.8;
+                ctx.lineJoin    = 'round';
+                ctx.stroke();
+
+                // Moving average line
+                ctx.beginPath();
+                smooth.forEach((p, i) => {
+                    i === 0 ? ctx.moveTo(toX(i), toY(p)) : ctx.lineTo(toX(i), toY(p));
+                });
+                ctx.strokeStyle = 'rgba(251,191,36,0.45)';
+                ctx.lineWidth   = 1.2;
+                ctx.stroke();
+
+                // Live dot at end with pulse
+                pulse += 0.08;
+                const lp  = visible[visible.length - 1];
+                const lx  = toX(visible.length - 1);
+                const ly  = toY(lp);
+                const r   = 4 + Math.sin(pulse) * 1.5;
+
+                ctx.beginPath();
+                ctx.arc(lx, ly, r + 4, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(59,130,246,0.15)';
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(lx, ly, 4, 0, Math.PI * 2);
+                ctx.fillStyle = '#60A5FA';
+                ctx.shadowBlur  = 10;
+                ctx.shadowColor = '#3B82F6';
+                ctx.fill();
+                ctx.shadowBlur  = 0;
+
+                // Hover crosshair + price label
+                if (hoverX !== null) {
+                    const idx  = Math.round((hoverX / W) * (visible.length - 1));
+                    const clampIdx = Math.max(0, Math.min(visible.length - 1, idx));
+                    const hx   = toX(clampIdx);
+                    const hy   = toY(visible[clampIdx]);
+
+                    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+                    ctx.lineWidth   = 1;
+                    ctx.setLineDash([3, 3]);
+                    ctx.beginPath();
+                    ctx.moveTo(hx, PAD.t); ctx.lineTo(hx, PAD.t + cH);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(PAD.l, hy); ctx.lineTo(W, hy);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // Price tooltip
+                    const price   = visible[clampIdx].toFixed(0);
+                    const label   = `NIFTY  ${Number(price).toLocaleString('en-IN')}`;
+                    ctx.font      = '11px "SF Mono", monospace';
+                    const tw      = ctx.measureText(label).width;
+                    const tx      = Math.min(hx + 8, W - tw - 12);
+                    const ty      = Math.max(hy - 8, PAD.t + 14);
+
+                    ctx.fillStyle = 'rgba(13,21,38,0.85)';
+                    ctx.beginPath();
+                    ctx.roundRect(tx - 4, ty - 13, tw + 8, 18, 4);
+                    ctx.fill();
+                    ctx.fillStyle = '#E2E8F0';
+                    ctx.fillText(label, tx, ty);
+                }
+
+                // Advance prices slowly — only add a new point every 8 frames
+                if (!draw._frameCount) draw._frameCount = 0;
+                draw._frameCount++;
+                if (draw._frameCount % 8 === 0) {
+                    prices.push(prices[prices.length - 1] + (Math.random() - 0.485) * 4);
+                    if (prices.length > 500) prices.shift();
+                }
+
+                requestAnimationFrame(draw);
+            }
+
+            draw();
+        })();
+
+        // ── Floating metric badges ────────────────────────────────────────
+        (function initFloatingMetrics() {
+            const metrics = [
+                { label: 'IV Rank', val: '49.2%', sub: '252d history', color: '#F59E0B', x: 14, y: 28, dur: 14 },
+                { label: 'GEX',     val: '+0.58M', sub: 'Mean-reverting', color: '#10B981', x: 52, y: 18, dur: 18 },
+                { label: 'PCR (OI)', val: '1.16', sub: 'Neutral lean', color: '#94A3B8', x: 72, y: 55, dur: 12 },
+                { label: 'VIX',     val: '17.21', sub: 'Elevated', color: '#F59E0B', x: 22, y: 68, dur: 16 },
+                { label: 'IV Skew', val: '+3.55%', sub: 'Put demand', color: '#EF4444', x: 62, y: 75, dur: 15 },
+                { label: 'Straddle', val: '₹562', sub: '±2.31%', color: '#3B82F6', x: 38, y: 48, dur: 17 },
+            ];
+
+            const container = document.getElementById('floating-metrics');
+            metrics.forEach(m => {
+                const el = document.createElement('div');
+                el.className = 'fm-badge';
+                el.style.cssText = `
+                    left: ${m.x}%;
+                    top:  ${m.y}%;
+                    animation-duration: ${m.dur}s;
+                    animation-delay: ${(Math.random() * -m.dur).toFixed(1)}s;
+                    opacity: 0.72;
+                `;
+                el.innerHTML = `
+                    <div class="fm-label">${m.label}</div>
+                    <div class="fm-val" style="color:${m.color}">${m.val}</div>
+                    <div class="fm-sub">${m.sub}</div>
+                `;
+                container.appendChild(el);
+
+                // Occasional "tick" update for live feel
+                setInterval(() => {
+                    const v = el.querySelector('.fm-val');
+                    v.style.transition = 'opacity 0.1s';
+                    v.style.opacity    = '0.3';
+                    setTimeout(() => { v.style.opacity = '1'; }, 120);
+                }, 3000 + Math.random() * 5000);
+            });
+        })();
+    </script>
+</body>
+</html>

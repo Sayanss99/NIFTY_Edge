@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NiftyEdge — News Desk</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <style>
+        .news-filters {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+            align-items: center;
+        }
+        .news-filters select {
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        /* 3-column tile grid */
+        .news-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+        @media (max-width: 1100px) {
+            .news-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 680px) {
+            .news-grid { grid-template-columns: 1fr; }
+        }
+
+        .news-tile {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            cursor: pointer;
+            transition: border-color 0.15s, box-shadow 0.15s;
+            display: flex;
+            flex-direction: column;
+            min-height: 140px;
+        }
+        .news-tile:hover {
+            border-color: var(--primary, #2563EB);
+            box-shadow: 0 2px 10px rgba(37,99,235,0.10);
+        }
+        .news-tile-badges {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }
+        .news-tile-headline {
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.5;
+            flex: 1;
+            margin-bottom: 8px;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .news-tile-summary {
+            font-size: 11px;
+            color: var(--text-secondary);
+            line-height: 1.45;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+        .news-tile-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: auto;
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+        .news-tile-footer-left {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+            overflow: hidden;
+        }
+        .news-tile-source {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100px;
+        }
+
+        /* Expanded detail panel — slides in below the tile in a full-width row */
+        .news-detail-panel {
+            display: none;
+            grid-column: 1 / -1;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px 16px;
+            font-size: 11px;
+        }
+        .news-detail-panel.open { display: block; }
+
+        .news-kw-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin: 6px 0 10px;
+        }
+        .news-kw-chip {
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            font-size: 10px;
+            color: var(--text-secondary);
+        }
+
+        .cat-chip {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--bg-secondary);
+            color: var(--text-muted);
+        }
+        .tier-CRITICAL { color: #DC2626; }
+        .tier-HIGH     { color: #D97706; }
+        .tier-MEDIUM   { color: #2563EB; }
+        .tier-LOW      { color: #6B7280; }
+        .dir-BULLISH { color: #16A34A; }
+        .dir-BEARISH { color: #DC2626; }
+        .dir-NEUTRAL { color: #6B7280; }
+        .tone-badge {
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .page-info {
+            font-size: 12px;
+            color: var(--text-muted);
+            align-self: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar" id="sidebar"></aside>
+        <div class="main-content">
+            <header class="header" id="header"></header>
+            <div class="page-content">
+
+                <!-- Summary strip -->
+                <div class="metrics-strip" id="news-summary-strip">
+                    <div class="metric-card">
+                        <div class="metric-label">CRITICAL (24h)</div>
+                        <div class="metric-value tier-CRITICAL" id="stat-critical">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">HIGH (24h)</div>
+                        <div class="metric-value tier-HIGH" id="stat-high">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">MEDIUM (24h)</div>
+                        <div class="metric-value tier-MEDIUM" id="stat-medium">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Market Tone (4h)</div>
+                        <div id="stat-tone" style="margin-top:6px">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Total (24h)</div>
+                        <div class="metric-value" id="stat-total">-</div>
+                    </div>
+                </div>
+
+                <!-- Filters + Feed -->
+                <div class="card" style="margin-top:12px">
+                    <div class="news-filters">
+                        <select id="f-tier" onchange="applyFilters()">
+                            <option value="">All Tiers</option>
+                            <option value="CRITICAL">CRITICAL</option>
+                            <option value="HIGH">HIGH</option>
+                            <option value="MEDIUM">MEDIUM</option>
+                            <option value="LOW">LOW</option>
+                        </select>
+                        <select id="f-direction" onchange="applyFilters()">
+                            <option value="">All Directions</option>
+                            <option value="BULLISH">BULLISH</option>
+                            <option value="BEARISH">BEARISH</option>
+                            <option value="NEUTRAL">NEUTRAL</option>
+                        </select>
+                        <select id="f-category" onchange="applyFilters()">
+                            <option value="">All Categories</option>
+                            <option value="RBI_POLICY">RBI Policy</option>
+                            <option value="NIFTY_INDEX">Nifty / Index</option>
+                            <option value="DERIVATIVES">Derivatives</option>
+                            <option value="MACRO_GLOBAL">Macro / Global</option>
+                            <option value="BUDGET_FISCAL">Budget / Fiscal</option>
+                            <option value="MACRO_DATA">Macro Data</option>
+                            <option value="CORPORATE">Corporate</option>
+                            <option value="GEOPOLITICAL">Geopolitical</option>
+                            <option value="REGULATORY">Regulatory</option>
+                            <option value="GENERAL">General</option>
+                        </select>
+                        <select id="f-hours" onchange="applyFilters()">
+                            <option value="4">Last 4h</option>
+                            <option value="24" selected>Last 24h</option>
+                            <option value="48">Last 48h</option>
+                            <option value="168">Last 7d</option>
+                        </select>
+                        <button class="btn btn-ghost btn-sm" onclick="applyFilters()">Refresh</button>
+                    </div>
+
+                    <!-- 3-column tile grid -->
+                    <div id="news-feed">
+                        <div class="text-muted text-center" style="padding:24px">Loading…</div>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div class="pagination" id="news-pagination" style="display:none">
+                        <button class="btn btn-ghost btn-sm" id="btn-prev" onclick="changePage(-1)">← Prev</button>
+                        <span class="page-info" id="page-info"></span>
+                        <button class="btn btn-ghost btn-sm" id="btn-next" onclick="changePage(1)">Next →</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/utils.js"></script>
+    <script src="/js/ws.js"></script>
+    <script>
+        if (!API.requireAuth()) throw new Error('Not authenticated');
+        document.getElementById('sidebar').innerHTML = Utils.buildSidebar('news-desk');
+        document.getElementById('header').innerHTML = Utils.buildHeader('News Desk');
+        // News Desk has no concept of expiry or live market-data refresh;
+        // strip the expiry selector and the "Connecting…" status from the header.
+        document.getElementById('expiry-selector')?.remove();
+        document.getElementById('refresh-info')?.remove();
+
+        let currentPage = 1;
+        let expandedId = null; // currently expanded tile id
+
+        const TIER_LABEL = { CRITICAL: '● CRITICAL', HIGH: '● HIGH', MEDIUM: '● MEDIUM', LOW: '● LOW' };
+        const DIR_ARROW  = { BULLISH: '▲', BEARISH: '▼', NEUTRAL: '—' };
+
+        function _ago(iso) {
+            if (!iso) return '';
+            const d = Math.floor((Date.now() - new Date(
+                (iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z')
+            ).getTime()) / 60000);
+            return d < 60 ? d + 'm ago' : Math.floor(d / 60) + 'h ago';
+        }
+
+        async function loadStats() {
+            try {
+                const s = await API.fetch('/api/news/stats');
+                document.getElementById('stat-critical').textContent = s.by_tier.CRITICAL ?? 0;
+                document.getElementById('stat-high').textContent = s.by_tier.HIGH ?? 0;
+                document.getElementById('stat-medium').textContent = s.by_tier.MEDIUM ?? 0;
+                document.getElementById('stat-total').textContent = s.total_24h ?? 0;
+                const toneEl = document.getElementById('stat-tone');
+                const tone = s.market_tone || 'NEUTRAL';
+                const toneColor = tone === 'BULLISH' ? '#16A34A' : tone === 'BEARISH' ? '#DC2626' : '#6B7280';
+                toneEl.innerHTML = `<span class="tone-badge" style="background:${toneColor}20;color:${toneColor}">${DIR_ARROW[tone]} ${tone}</span>`;
+            } catch (e) {}
+        }
+
+        async function loadFeed(page) {
+            page = page || 1;
+            currentPage = page;
+            expandedId = null;
+
+            const tier = document.getElementById('f-tier').value;
+            const dir  = document.getElementById('f-direction').value;
+            const cat  = document.getElementById('f-category').value;
+            const hrs  = document.getElementById('f-hours').value;
+
+            let url = `/api/news/feed?hours=${hrs}&page=${page}&per_page=30`;
+            if (tier) url += `&tier=${tier}`;
+            if (dir)  url += `&direction=${dir}`;
+            if (cat)  url += `&category=${cat}`;
+
+            const feed = document.getElementById('news-feed');
+            feed.innerHTML = '<div class="text-muted text-center" style="padding:24px">Loading…</div>';
+
+            try {
+                const resp = await API.fetch(url);
+                renderFeed(resp);
+            } catch (e) {
+                feed.innerHTML = '<div class="text-muted text-center" style="padding:24px">Failed to load news</div>';
+            }
+        }
+
+        // Store items for detail panel
+        let _currentItems = [];
+
+        function renderFeed(resp) {
+            const feed = document.getElementById('news-feed');
+            _currentItems = resp.items || [];
+
+            if (!_currentItems.length) {
+                feed.innerHTML = '<div class="text-muted text-center" style="padding:24px">No news items match the current filters</div>';
+                document.getElementById('news-pagination').style.display = 'none';
+                return;
+            }
+
+            const tiles = _currentItems.map(item => {
+                const tierCls  = `tier-${item.impact_tier}`;
+                const dirCls   = `dir-${item.direction}`;
+                const tierLbl  = TIER_LABEL[item.impact_tier] || item.impact_tier;
+                const dirArrow = DIR_ARROW[item.direction] || '—';
+                const cat      = (item.category || 'GENERAL').replace(/_/g, ' ');
+                const age      = _ago(item.fetched_at);
+
+                return `
+                <div class="news-tile" id="nt-${item.id}" onclick="toggleTile(${item.id})">
+                    <div class="news-tile-badges">
+                        <span class="${tierCls}" style="font-size:10px;font-weight:700">${tierLbl}</span>
+                        <span class="${dirCls}" style="font-size:11px;font-weight:600">${dirArrow} ${item.direction}</span>
+                        <span class="cat-chip">${cat}</span>
+                    </div>
+                    <div class="news-tile-headline">${Utils.escapeHtml(item.headline)}</div>
+                    ${item.summary ? `<div class="news-tile-summary">${Utils.escapeHtml(item.summary)}</div>` : ''}
+                    <div class="news-tile-footer">
+                        <div class="news-tile-footer-left">
+                            <span class="news-tile-source">${Utils.escapeHtml(item.source)}</span>
+                            <span>·</span>
+                            <span>${age}</span>
+                        </div>
+                        <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 7px;margin-left:8px"
+                            onclick="event.stopPropagation();dismissItem(${item.id})">✕</button>
+                    </div>
+                </div>`;
+            }).join('');
+
+            feed.innerHTML = `<div class="news-grid" id="news-grid">${tiles}</div>`;
+
+            // Pagination
+            const pages = resp.pages || 1;
+            const total = resp.total || 0;
+            const pagEl = document.getElementById('news-pagination');
+            if (pages > 1) {
+                pagEl.style.display = 'flex';
+                document.getElementById('page-info').textContent = `Page ${currentPage} of ${pages} (${total} items)`;
+                document.getElementById('btn-prev').disabled = currentPage <= 1;
+                document.getElementById('btn-next').disabled = currentPage >= pages;
+            } else {
+                pagEl.style.display = 'none';
+            }
+        }
+
+        function toggleTile(id) {
+            const grid = document.getElementById('news-grid');
+            if (!grid) return;
+
+            // Remove any existing detail panel
+            const existing = grid.querySelector('.news-detail-panel');
+            if (existing) existing.remove();
+
+            // Deselect border on all tiles
+            grid.querySelectorAll('.news-tile').forEach(t => t.style.borderColor = '');
+
+            if (expandedId === id) {
+                expandedId = null;
+                return;
+            }
+            expandedId = id;
+
+            const item = _currentItems.find(i => i.id === id);
+            if (!item) return;
+
+            // Highlight selected tile
+            const tile = document.getElementById('nt-' + id);
+            if (tile) tile.style.borderColor = 'var(--primary, #2563EB)';
+
+            // Build detail panel
+            const kws = item.matched_keywords || {};
+            const kwFlat = Object.entries(kws).flatMap(([c, words]) => words.map(w => `${w} (${c.replace(/_/g,' ')})`));
+            const dc = item.direction_word_counts || {};
+            const articleLink = item.url && !item.url.startsWith('no-url')
+                ? `<a href="${Utils.escapeHtml(item.url)}" target="_blank" rel="noopener" style="color:var(--primary)">Open article →</a>`
+                : '';
+
+            const panel = document.createElement('div');
+            panel.className = 'news-detail-panel open';
+            panel.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+                    <strong style="font-size:12px">${Utils.escapeHtml(item.headline)}</strong>
+                    <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px;margin-left:12px;flex-shrink:0"
+                        onclick="toggleTile(${id})">Close ✕</button>
+                </div>
+                ${kwFlat.length ? `
+                    <div style="font-weight:600;margin-bottom:4px">Matched Keywords</div>
+                    <div class="news-kw-row">${kwFlat.map(k => `<span class="news-kw-chip">${Utils.escapeHtml(k)}</span>`).join('')}</div>
+                ` : ''}
+                <div style="margin-bottom:4px">Bullish signals: <strong>${dc.bullish ?? 0}</strong> &nbsp;·&nbsp; Bearish signals: <strong>${dc.bearish ?? 0}</strong> &nbsp;·&nbsp; Score: <strong>${item.raw_impact_score}</strong></div>
+                <div style="color:var(--text-muted);margin-bottom:6px">Scorer: ${item.scorer_version} &nbsp;·&nbsp; ${item.source} &nbsp;·&nbsp; ${_ago(item.fetched_at)}</div>
+                ${articleLink}`;
+
+            // Insert panel after the row containing the selected tile
+            // Find the tile's position in the grid and insert after its row
+            const tiles = [...grid.querySelectorAll('.news-tile')];
+            const tileIdx = tiles.indexOf(tile);
+            const cols = getComputedColumns();
+            const rowEnd = Math.min(tiles.length - 1, tileIdx + cols - (tileIdx % cols) - 1);
+            const afterTile = tiles[rowEnd];
+            if (afterTile && afterTile.nextSibling) {
+                grid.insertBefore(panel, afterTile.nextSibling);
+            } else {
+                grid.appendChild(panel);
+            }
+
+            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        function getComputedColumns() {
+            const w = window.innerWidth;
+            if (w <= 680) return 1;
+            if (w <= 1100) return 2;
+            return 3;
+        }
+
+        async function dismissItem(id) {
+            try {
+                await API.post(`/api/news/${id}/dismiss`);
+                const tile = document.getElementById('nt-' + id);
+                if (tile) tile.remove();
+                // Also close detail panel if it was for this item
+                if (expandedId === id) {
+                    const panel = document.querySelector('.news-detail-panel');
+                    if (panel) panel.remove();
+                    expandedId = null;
+                }
+                _currentItems = _currentItems.filter(i => i.id !== id);
+                Utils.toast('Dismissed', 'success');
+            } catch (e) {
+                Utils.toast('Failed to dismiss', 'error');
+            }
+        }
+
+        function applyFilters() { loadFeed(1); }
+        function changePage(delta) { loadFeed(currentPage + delta); }
+
+        WS.on('news_alert', () => {
+            loadStats();
+            if (currentPage === 1) loadFeed(1);
+        });
+
+        loadStats();
+        loadFeed(1);
+        WS.connect();
+    </script>
+</body>
+</html>

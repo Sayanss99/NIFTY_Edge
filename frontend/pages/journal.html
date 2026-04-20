@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NiftyEdge — Trade Journal</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <style>
+        .journal-summary {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .summary-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .summary-card .label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .summary-card .value {
+            font-size: 20px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+        }
+        .summary-card .sub {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+        .journal-filters {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .journal-filters select,
+        .journal-filters input {
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 12px;
+            background: var(--bg-card);
+        }
+        .journal-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .journal-table th {
+            background: var(--bg-secondary, #F9FAFB);
+            padding: 8px 12px;
+            text-align: left;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            border-bottom: 2px solid var(--border);
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .journal-table th:hover {
+            background: var(--bg-hover);
+        }
+        .journal-table th .sort-arrow {
+            margin-left: 4px;
+            font-size: 9px;
+            opacity: 0.4;
+        }
+        .journal-table th .sort-arrow.active {
+            opacity: 1;
+        }
+        .journal-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+        .journal-table tr.profit {
+            background: rgba(22, 163, 74, 0.04);
+        }
+        .journal-table tr.loss {
+            background: rgba(220, 38, 38, 0.04);
+        }
+        .journal-table tr:hover {
+            background: rgba(0,0,0,0.02);
+        }
+        .expiry-group {
+            margin-bottom: 20px;
+        }
+        .expiry-group-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: var(--bg-secondary, #F9FAFB);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .expiry-group-header:hover {
+            background: var(--bg-hover);
+        }
+        .expiry-group-header .expiry-label {
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .expiry-group-header .expiry-stats {
+            font-size: 12px;
+            display: flex;
+            gap: 16px;
+        }
+        .view-toggle {
+            display: flex;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .view-toggle button {
+            padding: 6px 12px;
+            border: none;
+            background: var(--bg-card);
+            font-size: 11px;
+            cursor: pointer;
+            color: var(--text-secondary);
+        }
+        .view-toggle button.active {
+            background: var(--primary, #2563EB);
+            color: #fff;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+        .empty-state .icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar" id="sidebar"></aside>
+        <div class="main-content">
+            <header class="header" id="header"></header>
+            <div class="page-content">
+                <!-- P&L Summary -->
+                <div class="journal-summary" id="journal-summary">
+                    <div class="summary-card">
+                        <div class="label">Total Realized P&L</div>
+                        <div class="value" id="s-total-pnl">-</div>
+                        <div class="sub" id="s-trade-count">-</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="label">This Month</div>
+                        <div class="value" id="s-month-pnl">-</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="label">Win Rate</div>
+                        <div class="value" id="s-win-rate">-</div>
+                        <div class="sub" id="s-win-loss">-</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="label">Avg P&L / Trade</div>
+                        <div class="value" id="s-avg-pnl">-</div>
+                        <div class="sub" id="s-best-worst">-</div>
+                    </div>
+                </div>
+
+                <!-- Filters & View Toggle -->
+                <div class="journal-filters">
+                    <select id="filter-expiry">
+                        <option value="">All Expiries</option>
+                    </select>
+                    <select id="filter-type">
+                        <option value="">All Types</option>
+                        <option value="CE_SELL">CE SELL</option>
+                        <option value="PE_SELL">PE SELL</option>
+                        <option value="CE_BUY">CE BUY</option>
+                        <option value="PE_BUY">PE BUY</option>
+                    </select>
+                    <select id="filter-result">
+                        <option value="">All Results</option>
+                        <option value="profit">Profit</option>
+                        <option value="loss">Loss</option>
+                    </select>
+                    <div style="flex:1"></div>
+                    <button class="btn btn-secondary btn-sm" onclick="exportCSV()" style="margin-right:8px;font-size:11px">Export CSV</button>
+                    <div class="view-toggle">
+                        <button class="active" id="view-flat" onclick="setView('flat')">All Trades</button>
+                        <button id="view-grouped" onclick="setView('grouped')">By Expiry</button>
+                    </div>
+                </div>
+
+                <!-- Trade Table / Grouped View -->
+                <div class="card" style="padding:0;overflow:hidden">
+                    <div id="journal-content">
+                        <div class="empty-state">
+                            <div class="icon">&#9776;</div>
+                            <div>Loading trades...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/utils.js"></script>
+    <script src="/js/ws.js"></script>
+    <script>
+        if (!API.requireAuth()) throw new Error('Auth required');
+
+        document.getElementById('sidebar').innerHTML = Utils.buildSidebar('journal');
+        document.getElementById('header').innerHTML = Utils.buildHeader('Trade Journal');
+
+        let allTrades = [];
+        let currentView = 'flat';
+        let sortCol = 'exit_date';
+        let sortDir = -1; // -1 = desc
+
+        // ── Load data ─────────────────────────────────────────────────
+        (async () => {
+            Utils.initHeader();
+            try {
+                const [tradesResp, summaryResp] = await Promise.all([
+                    API.fetch('/api/trades/?status=CLOSED'),
+                    API.fetch('/api/trades/journal/summary'),
+                ]);
+
+                if (tradesResp && tradesResp.trades) {
+                    allTrades = tradesResp.trades;
+                    populateExpiryFilter();
+                    renderCurrentView();
+                }
+
+                if (summaryResp) {
+                    renderSummary(summaryResp);
+                }
+            } catch (e) {
+                console.error('Failed to load journal:', e);
+            }
+        })();
+
+        // ── Summary ───────────────────────────────────────────────────
+        function renderSummary(s) {
+            const totalEl = document.getElementById('s-total-pnl');
+            totalEl.innerHTML = Utils.pnlHtml(s.total_pnl);
+            document.getElementById('s-trade-count').textContent =
+                s.trade_count ? `${s.trade_count} closed trades` : 'No trades yet';
+
+            const monthEl = document.getElementById('s-month-pnl');
+            monthEl.innerHTML = Utils.pnlHtml(s.month_pnl);
+
+            document.getElementById('s-win-rate').textContent =
+                s.trade_count ? `${s.win_rate}%` : '-';
+            document.getElementById('s-win-loss').textContent =
+                s.trade_count ? `${s.win_count}W / ${s.loss_count}L` : '';
+
+            const avgEl = document.getElementById('s-avg-pnl');
+            avgEl.innerHTML = s.trade_count ? Utils.pnlHtml(s.avg_pnl) : '-';
+
+            const bestWorst = document.getElementById('s-best-worst');
+            if (s.best_trade && s.worst_trade) {
+                bestWorst.textContent =
+                    `Best: ${Utils.formatINR(s.best_trade.realized_pnl)} | Worst: ${Utils.formatINR(s.worst_trade.realized_pnl)}`;
+            }
+        }
+
+        // ── Expiry filter options ─────────────────────────────────────
+        function populateExpiryFilter() {
+            const expiries = [...new Set(allTrades.map(t => t.expiry_date))].sort();
+            const sel = document.getElementById('filter-expiry');
+            sel.innerHTML = '<option value="">All Expiries</option>' +
+                expiries.map(e => `<option value="${e}">${e}</option>`).join('');
+        }
+
+        // ── Filtering ─────────────────────────────────────────────────
+        function getFilteredTrades() {
+            const expiry = document.getElementById('filter-expiry').value;
+            const type = document.getElementById('filter-type').value;
+            const result = document.getElementById('filter-result').value;
+
+            return allTrades.filter(t => {
+                if (expiry && t.expiry_date !== expiry) return false;
+                if (type && t.trade_type !== type) return false;
+                if (result === 'profit' && (t.realized_pnl || 0) <= 0) return false;
+                if (result === 'loss' && (t.realized_pnl || 0) > 0) return false;
+                return true;
+            });
+        }
+
+        // ── Sorting ───────────────────────────────────────────────────
+        function sortTrades(trades) {
+            return [...trades].sort((a, b) => {
+                let va = a[sortCol], vb = b[sortCol];
+                if (sortCol === 'exit_date' || sortCol === 'entry_date') {
+                    va = va ? new Date(va).getTime() : 0;
+                    vb = vb ? new Date(vb).getTime() : 0;
+                }
+                if (typeof va === 'string') return va.localeCompare(vb) * sortDir;
+                return ((va || 0) - (vb || 0)) * sortDir;
+            });
+        }
+
+        function onSort(col) {
+            if (sortCol === col) {
+                sortDir *= -1;
+            } else {
+                sortCol = col;
+                sortDir = col === 'realized_pnl' || col === 'exit_date' ? -1 : 1;
+            }
+            renderCurrentView();
+        }
+
+        // ── View toggle ───────────────────────────────────────────────
+        function setView(view) {
+            currentView = view;
+            document.getElementById('view-flat').classList.toggle('active', view === 'flat');
+            document.getElementById('view-grouped').classList.toggle('active', view === 'grouped');
+            renderCurrentView();
+        }
+
+        function renderCurrentView() {
+            if (currentView === 'flat') {
+                renderFlatView();
+            } else {
+                renderGroupedView();
+            }
+        }
+
+        // ── Flat table view ───────────────────────────────────────────
+        function renderFlatView() {
+            const trades = sortTrades(getFilteredTrades());
+            const container = document.getElementById('journal-content');
+
+            if (!trades.length) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">&#9776;</div>
+                        <div>No closed trades found</div>
+                    </div>`;
+                return;
+            }
+
+            const cols = [
+                { key: 'exit_date', label: 'Closed' },
+                { key: 'trade_type', label: 'Type' },
+                { key: 'strike', label: 'Strike' },
+                { key: 'expiry_date', label: 'Expiry' },
+                { key: 'entry_premium', label: 'Entry' },
+                { key: 'exit_price', label: 'Exit' },
+                { key: 'quantity', label: 'Qty' },
+                { key: 'realized_pnl', label: 'P&L' },
+                { key: '_duration', label: 'Duration' },
+            ];
+
+            const arrow = (col) => {
+                if (sortCol !== col) return '<span class="sort-arrow">&#9650;</span>';
+                return `<span class="sort-arrow active">${sortDir > 0 ? '&#9650;' : '&#9660;'}</span>`;
+            };
+
+            let html = `<table class="journal-table">
+                <thead><tr>
+                    ${cols.map(c => `<th onclick="onSort('${c.key}')">${c.label}${arrow(c.key)}</th>`).join('')}
+                </tr></thead><tbody>`;
+
+            for (const t of trades) {
+                const pnl = t.realized_pnl || 0;
+                const rowClass = pnl > 0 ? 'profit' : pnl < 0 ? 'loss' : '';
+                const exitDate = t.exit_date ? new Date(t.exit_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+                const entryDate = t.entry_date ? new Date(t.entry_date) : null;
+                const closedDate = t.exit_date ? new Date(t.exit_date) : null;
+                const duration = entryDate && closedDate
+                    ? Math.max(0, Math.round((closedDate - entryDate) / (1000 * 60 * 60 * 24))) + 'd'
+                    : '-';
+
+                html += `<tr class="${rowClass}">
+                    <td>${exitDate}</td>
+                    <td><span class="badge ${Utils.tradeTypeClass(t.trade_type)}">${t.trade_type.replace('_', ' ')}</span></td>
+                    <td class="font-mono">${Utils.formatNum(t.strike)}</td>
+                    <td>${t.expiry_date}</td>
+                    <td class="font-mono">${Utils.formatNum(t.entry_premium, 2)}</td>
+                    <td class="font-mono">${Utils.formatNum(t.exit_price, 2)}</td>
+                    <td>${t.quantity}L</td>
+                    <td class="font-mono fw-600">${Utils.pnlHtml(pnl)}</td>
+                    <td>${duration}</td>
+                </tr>`;
+            }
+
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        // ── Grouped by expiry view ────────────────────────────────────
+        function renderGroupedView() {
+            const trades = getFilteredTrades();
+            const container = document.getElementById('journal-content');
+
+            if (!trades.length) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">&#9776;</div>
+                        <div>No closed trades found</div>
+                    </div>`;
+                return;
+            }
+
+            // Group by expiry
+            const groups = {};
+            for (const t of trades) {
+                const exp = t.expiry_date || 'Unknown';
+                if (!groups[exp]) groups[exp] = [];
+                groups[exp].push(t);
+            }
+
+            let html = '';
+            const sortedExpiries = Object.keys(groups).sort().reverse();
+
+            for (const expiry of sortedExpiries) {
+                const expTrades = groups[expiry];
+                const totalPnl = expTrades.reduce((s, t) => s + (t.realized_pnl || 0), 0);
+                const legs = expTrades.length;
+                const sells = expTrades.filter(t => t.trade_type.includes('SELL'));
+                const buys = expTrades.filter(t => t.trade_type.includes('BUY'));
+                const premCollected = sells.reduce((s, t) => s + (t.entry_premium || 0) * (t.quantity || 1), 0);
+                const premPaid = buys.reduce((s, t) => s + (t.entry_premium || 0) * (t.quantity || 1), 0);
+
+                html += `<div class="expiry-group">
+                    <div class="expiry-group-header" onclick="this.nextElementSibling.classList.toggle('hidden')">
+                        <div>
+                            <span class="expiry-label">${expiry}</span>
+                            <span style="font-size:11px;color:var(--text-muted);margin-left:8px">${legs} leg${legs > 1 ? 's' : ''}</span>
+                        </div>
+                        <div class="expiry-stats">
+                            <span style="font-size:11px;color:var(--text-muted)">Collected: ${Utils.formatNum(premCollected, 1)}</span>
+                            ${premPaid > 0 ? `<span style="font-size:11px;color:var(--text-muted)">Paid: ${Utils.formatNum(premPaid, 1)}</span>` : ''}
+                            <span class="fw-600">${Utils.pnlHtml(totalPnl)}</span>
+                        </div>
+                    </div>
+                    <div>
+                        <table class="journal-table">
+                            <thead><tr>
+                                <th>Type</th><th>Strike</th><th>Entry</th><th>Exit</th><th>Qty</th><th>P&L</th>
+                            </tr></thead><tbody>`;
+
+                for (const t of expTrades) {
+                    const pnl = t.realized_pnl || 0;
+                    const rowClass = pnl > 0 ? 'profit' : pnl < 0 ? 'loss' : '';
+                    html += `<tr class="${rowClass}">
+                        <td><span class="badge ${Utils.tradeTypeClass(t.trade_type)}">${t.trade_type.replace('_', ' ')}</span></td>
+                        <td class="font-mono">${Utils.formatNum(t.strike)}</td>
+                        <td class="font-mono">${Utils.formatNum(t.entry_premium, 2)}</td>
+                        <td class="font-mono">${Utils.formatNum(t.exit_price, 2)}</td>
+                        <td>${t.quantity}L</td>
+                        <td class="font-mono fw-600">${Utils.pnlHtml(pnl)}</td>
+                    </tr>`;
+                }
+
+                html += '</tbody></table></div></div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        // ── Export CSV ─────────────────────────────────────────────────
+        function exportCSV() {
+            const token = API.getToken();
+            if (!token) return;
+            // Open in new tab — the endpoint returns Content-Disposition: attachment
+            const url = `/api/trades/journal/export`;
+            fetch(url, { headers: { 'Authorization': `Bearer ${token}` } })
+                .then(r => r.blob())
+                .then(blob => {
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'niftyedge_trades.csv';
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                    Utils.showToast('CSV downloaded', 'success');
+                })
+                .catch(() => Utils.showToast('Export failed', 'error'));
+        }
+
+        // ── Filter change listeners ───────────────────────────────────
+        document.getElementById('filter-expiry').onchange = renderCurrentView;
+        document.getElementById('filter-type').onchange = renderCurrentView;
+        document.getElementById('filter-result').onchange = renderCurrentView;
+    </script>
+</body>
+</html>

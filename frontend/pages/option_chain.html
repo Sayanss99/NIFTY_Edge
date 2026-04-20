@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NiftyEdge — Option Chain</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <style>
+        .lookup-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .lookup-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 16px;
+            box-shadow: var(--shadow-sm);
+        }
+        .lookup-card.ce { border-top: 3px solid var(--red); }
+        .lookup-card.pe { border-top: 3px solid var(--blue); }
+        .lookup-input-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .lookup-input-row input {
+            flex: 1;
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: var(--font-mono);
+        }
+        .lookup-result {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+        .lookup-metric {
+            text-align: center;
+        }
+        .lookup-metric .label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+        .lookup-metric .value {
+            font-size: 14px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+        }
+        .chain-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            overflow: auto;
+            max-height: calc(100vh - 340px);
+            box-shadow: var(--shadow-sm);
+        }
+        .chain-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .chain-table thead {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .chain-table th {
+            padding: 8px 8px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 2px solid var(--border);
+            background: var(--bg-card);
+        }
+        .chain-table th.ce-header { background: #FEF2F2; color: var(--red); text-align: right; }
+        .chain-table th.pe-header { background: #EFF6FF; color: var(--blue); text-align: left; }
+        .chain-table th.strike-header { background: var(--bg-table-header); text-align: center; }
+        [data-theme="dark"] .chain-table th.ce-header { background: #2A1520; color: #FCA5A5; }
+        [data-theme="dark"] .chain-table th.pe-header { background: #15202E; color: #93C5FD; }
+        [data-theme="dark"] .chain-table th.strike-header { background: var(--bg-secondary); }
+        .chain-table td { padding: 5px 8px; border-bottom: 1px solid var(--border-light); }
+        .chain-table td.ce-cell { text-align: right; }
+        .chain-table td.pe-cell { text-align: left; }
+        .chain-table td.strike-cell {
+            text-align: center;
+            font-weight: 700;
+            background: var(--bg-table-strike);
+            cursor: pointer;
+            user-select: none;
+        }
+        .chain-table tr:hover td { background: var(--bg-hover); }
+        .chain-table tr:hover td.strike-cell { background: var(--bg-secondary); }
+        .chain-table tr.atm td { background: rgba(253, 230, 138, 0.3) !important; font-weight: 600; }
+        .chain-table tr.atm td.strike-cell { background: rgba(253, 230, 138, 0.5) !important; }
+        /* Premium tint based on ranking */
+        .chain-table td.premium-sweet { background: rgba(22, 163, 74, 0.06); }
+        .chain-table td.premium-very-low { background: rgba(220, 38, 38, 0.06); }
+        .filter-bar {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .btn-success { background:#16A34A; color:#fff; border:none; }
+        .btn-success:hover { background:#15803D; }
+        .btn-danger  { background:#DC2626; color:#fff; border:none; }
+        .btn-danger:hover  { background:#B91C1C; }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar" id="sidebar"></aside>
+        <div class="main-content">
+            <header class="header" id="header"></header>
+            <div class="page-content">
+                <!-- Strike Lookup Panel -->
+                <div class="lookup-panel">
+                    <!-- CE Lookup -->
+                    <div class="lookup-card ce">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                            <span class="fw-600" style="color:#991B1B">CE Lookup</span>
+                            <div id="ce-add-row" class="hidden" style="display:none;align-items:center;gap:6px">
+                                <button class="btn btn-sm btn-danger" onclick="setAndAdd('CE','SELL')">↓ Sell</button>
+                                <button class="btn btn-sm btn-success" onclick="setAndAdd('CE','BUY')">↑ Buy</button>
+                            </div>
+                        </div>
+                        <div class="lookup-input-row">
+                            <input type="number" id="ce-lookup-strike" placeholder="Strike" step="50">
+                            <button class="btn btn-sm btn-secondary" onclick="lookupStrike('CE')">Lookup</button>
+                        </div>
+                        <div class="lookup-result" id="ce-lookup-result">
+                            <div class="lookup-metric"><div class="label">LTP</div><div class="value" id="ce-lkp-ltp">-</div></div>
+                            <div class="lookup-metric"><div class="label">Delta</div><div class="value" id="ce-lkp-delta">-</div></div>
+                            <div class="lookup-metric"><div class="label">IV</div><div class="value" id="ce-lkp-iv">-</div></div>
+                            <div class="lookup-metric"><div class="label">Rank</div><div class="value" id="ce-lkp-rank">-</div></div>
+                        </div>
+                    </div>
+
+                    <!-- PE Lookup -->
+                    <div class="lookup-card pe">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                            <span class="fw-600" style="color:#1E3A8A">PE Lookup</span>
+                            <div id="pe-add-row" class="hidden" style="display:none;align-items:center;gap:6px">
+                                <button class="btn btn-sm btn-danger" onclick="setAndAdd('PE','SELL')">↓ Sell</button>
+                                <button class="btn btn-sm btn-success" onclick="setAndAdd('PE','BUY')">↑ Buy</button>
+                            </div>
+                        </div>
+                        <div class="lookup-input-row">
+                            <input type="number" id="pe-lookup-strike" placeholder="Strike" step="50">
+                            <button class="btn btn-sm btn-secondary" onclick="lookupStrike('PE')">Lookup</button>
+                        </div>
+                        <div class="lookup-result" id="pe-lookup-result">
+                            <div class="lookup-metric"><div class="label">LTP</div><div class="value" id="pe-lkp-ltp">-</div></div>
+                            <div class="lookup-metric"><div class="label">Delta</div><div class="value" id="pe-lkp-delta">-</div></div>
+                            <div class="lookup-metric"><div class="label">IV</div><div class="value" id="pe-lkp-iv">-</div></div>
+                            <div class="lookup-metric"><div class="label">Rank</div><div class="value" id="pe-lkp-rank">-</div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filter Bar -->
+                <div class="filter-bar">
+                    <span style="font-size:12px;color:var(--text-secondary)">Spot: <strong class="font-mono" id="chain-spot">-</strong></span>
+                    <label style="font-size:12px;display:flex;align-items:center;gap:4px">
+                        <input type="checkbox" id="filter-range" onchange="renderChain()">
+                        Show only strikes in range
+                    </label>
+                </div>
+
+                <!-- Option Chain Table -->
+                <div class="chain-container">
+                    <table class="chain-table" id="chain-table">
+                        <thead>
+                            <tr>
+                                <th class="ce-header">OI</th>
+                                <th class="ce-header">IV</th>
+                                <th class="ce-header">LTP</th>
+                                <th class="ce-header">Delta</th>
+                                <th class="strike-header">STRIKE</th>
+                                <th class="pe-header">Delta</th>
+                                <th class="pe-header">LTP</th>
+                                <th class="pe-header">IV</th>
+                                <th class="pe-header">OI</th>
+                            </tr>
+                        </thead>
+                        <tbody id="chain-body">
+                            <tr><td colspan="9" class="text-center text-muted" style="padding:40px">Loading option chain...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Trade Modal (redirects to positions page) -->
+
+    <script src="/js/api.js"></script>
+    <script src="/js/utils.js"></script>
+    <script src="/js/ws.js"></script>
+    <script>
+        if (!API.requireAuth()) throw new Error('Not authenticated');
+
+        document.getElementById('sidebar').innerHTML = Utils.buildSidebar('option-chain');
+        document.getElementById('header').innerHTML = Utils.buildHeader('Option Chain');
+
+        let chainData = [];
+        let currentSpot = 0;
+        let currentExpiry = '';
+        let lookupData = { CE: null, PE: null };
+        // Default action is SELL (most common for option writers)
+        let lookupAction = { CE: 'SELL', PE: 'SELL' };
+
+        function setAndAdd(side, action) {
+            lookupAction[side] = action;
+            addTradeFromLookup(side);
+        }
+
+        // ── Load initial data ──────────────────────────────────────────
+
+        (async () => {
+            const resp = await API.getOptionChain();
+            if (resp && !resp.error) {
+                chainData = resp.data;
+                currentSpot = resp.spot;
+                currentExpiry = resp.selected_expiry;
+
+                // Update expiry selector
+                if (resp.expiries) {
+                    const sel = document.getElementById('expiry-selector');
+                    sel.innerHTML = resp.expiries.map(e =>
+                        `<option value="${e}">${e}</option>`
+                    ).join('');
+                    // Restore user's last selection; fall back to nearest expiry
+                    const resolved = Utils.resolveExpiry(resp.expiries);
+                    sel.value = resolved;
+                    // If restored expiry differs from the default chain data, reload
+                    if (resolved !== currentExpiry) {
+                        const r = await API.getOptionChain(resolved);
+                        if (r && !r.error) {
+                            chainData = r.data;
+                            currentSpot = r.spot;
+                            currentExpiry = r.selected_expiry;
+                        }
+                    }
+                    sel.addEventListener('change', async () => {
+                        const newExpiry = sel.value;
+                        Utils.saveExpiry(newExpiry);
+                        const r = await API.getOptionChain(newExpiry);
+                        if (r && !r.error) {
+                            chainData = r.data;
+                            currentSpot = r.spot;
+                            currentExpiry = r.selected_expiry;
+                            renderChain();
+                        }
+                    });
+                }
+
+                renderChain();
+                Utils.updateRefreshInfo(new Date().toISOString());
+            }
+
+            WS.connect();
+        })();
+
+        // ── WebSocket: live chain updates ──────────────────────────────
+
+        WS.on('chain_update', (data) => {
+            if (!data || !data.rows) return;
+            chainData = data.rows.map(r => ({
+                strike: r.strike,
+                ce_oi: r.ce_oi || 0, ce_iv: r.ce_iv || 0,
+                ce_ltp: r.ce_ltp || 0, ce_delta: r.ce_delta || 0,
+                pe_oi: r.pe_oi || 0, pe_iv: r.pe_iv || 0,
+                pe_ltp: r.pe_ltp || 0, pe_delta: r.pe_delta || 0,
+            }));
+            currentSpot = data.spot || currentSpot;
+            renderChain();
+        });
+
+        WS.on('market_update', (data) => {
+            if (data && data.nifty_spot) currentSpot = data.nifty_spot;
+            Utils.updateRefreshInfo(data?.timestamp);
+        });
+
+        // ── Render chain table ─────────────────────────────────────────
+
+        function renderChain() {
+            const body = document.getElementById('chain-body');
+            document.getElementById('chain-spot').textContent = Utils.formatNum(currentSpot, 2);
+
+            if (!chainData.length) {
+                body.innerHTML = '<tr><td colspan="9" class="text-center text-muted" style="padding:40px">No data</td></tr>';
+                return;
+            }
+
+            const filterRange = document.getElementById('filter-range').checked;
+            let rows = chainData;
+
+            // Find ATM strike
+            const atm = rows.reduce((best, r) =>
+                Math.abs(r.strike - currentSpot) < Math.abs(best.strike - currentSpot) ? r : best
+            );
+
+            if (filterRange) {
+                // Show only strikes within ±5% of spot
+                const lo = currentSpot * 0.95;
+                const hi = currentSpot * 1.05;
+                rows = rows.filter(r => r.strike >= lo && r.strike <= hi);
+            }
+
+            let html = '';
+            for (const r of rows) {
+                const isAtm = r.strike === atm.strike;
+                const rowClass = isAtm ? 'atm' : '';
+
+                html += `<tr class="${rowClass}" onclick="onRowClick(${r.strike})" style="cursor:pointer">
+                    <td class="ce-cell font-mono">${r.ce_oi ? Utils.formatNum(r.ce_oi) : '-'}</td>
+                    <td class="ce-cell font-mono">${r.ce_iv ? r.ce_iv.toFixed(1) : '-'}</td>
+                    <td class="ce-cell font-mono fw-600">${r.ce_ltp ? r.ce_ltp.toFixed(2) : '-'}</td>
+                    <td class="ce-cell font-mono">${r.ce_delta ? Math.abs(r.ce_delta).toFixed(3) : '-'}</td>
+                    <td class="strike-cell">${Utils.formatNum(r.strike)}</td>
+                    <td class="pe-cell font-mono">${r.pe_delta ? Math.abs(r.pe_delta).toFixed(3) : '-'}</td>
+                    <td class="pe-cell font-mono fw-600">${r.pe_ltp ? r.pe_ltp.toFixed(2) : '-'}</td>
+                    <td class="pe-cell font-mono">${r.pe_iv ? r.pe_iv.toFixed(1) : '-'}</td>
+                    <td class="pe-cell font-mono">${r.pe_oi ? Utils.formatNum(r.pe_oi) : '-'}</td>
+                </tr>`;
+            }
+
+            body.innerHTML = html;
+
+            // Scroll ATM into view
+            const atmRow = body.querySelector('.atm');
+            if (atmRow) {
+                setTimeout(() => atmRow.scrollIntoView({ block: 'center', behavior: 'smooth' }), 100);
+            }
+        }
+
+        // ── Row click: OTM-aware lookup fill ───────────────────────────
+
+        function onRowClick(strike) {
+            if (strike > currentSpot) {
+                // OTM for CE
+                document.getElementById('ce-lookup-strike').value = strike;
+                lookupStrike('CE');
+            } else if (strike < currentSpot) {
+                // OTM for PE
+                document.getElementById('pe-lookup-strike').value = strike;
+                lookupStrike('PE');
+            } else {
+                // ATM — fill whichever is empty
+                if (!lookupData.CE) {
+                    document.getElementById('ce-lookup-strike').value = strike;
+                    lookupStrike('CE');
+                } else {
+                    document.getElementById('pe-lookup-strike').value = strike;
+                    lookupStrike('PE');
+                }
+            }
+            // Scroll to top to show lookup
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // ── Strike lookup ──────────────────────────────────────────────
+
+        async function lookupStrike(side) {
+            const input = document.getElementById(`${side.toLowerCase()}-lookup-strike`);
+            const strike = parseInt(input.value);
+            if (!strike) return;
+
+            const resp = await API.strikeLookup(strike, side, currentExpiry);
+            if (resp && !resp.error) {
+                lookupData[side] = resp;
+                const prefix = side.toLowerCase();
+                document.getElementById(`${prefix}-lkp-ltp`).textContent = resp.ltp.toFixed(2);
+                document.getElementById(`${prefix}-lkp-delta`).textContent = Math.abs(resp.delta).toFixed(3);
+                document.getElementById(`${prefix}-lkp-iv`).textContent = resp.iv.toFixed(1) + '%';
+
+                const rankEl = document.getElementById(`${prefix}-lkp-rank`);
+                rankEl.textContent = resp.premium_rank;
+                rankEl.className = 'value badge ' + Utils.premiumRankClass(resp.premium_rank);
+
+                const addRow = document.getElementById(`${prefix}-add-row`);
+                addRow.classList.remove('hidden');
+                addRow.style.display = 'flex';
+            } else {
+                Utils.toast(resp?.error || 'Lookup failed', 'error');
+            }
+        }
+
+        // Handle Enter key on lookup inputs
+        document.getElementById('ce-lookup-strike').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') lookupStrike('CE');
+        });
+        document.getElementById('pe-lookup-strike').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') lookupStrike('PE');
+        });
+
+        // ── Add trade from lookup ──────────────────────────────────────
+
+        function addTradeFromLookup(side) {
+            const data = lookupData[side];
+            if (!data) return;
+
+            const action = lookupAction[side] || 'SELL';
+            const params = new URLSearchParams({
+                action: 'add',
+                type: side + '_' + action,
+                strike: data.strike,
+                premium: data.ltp,
+                iv: data.iv,
+                delta: data.delta,
+                expiry: currentExpiry,
+            });
+            window.location.href = `/positions?${params.toString()}`;
+        }
+    </script>
+</body>
+</html>
