@@ -161,12 +161,18 @@
                      background:var(--bg-card);border:1px solid var(--border);border-radius:8px;
                      margin-bottom:12px;height:36px;">
                     <div id="news-ticker-track" style="display:flex;align-items:center;gap:32px;
-                         white-space:nowrap;position:absolute;animation:tickerScroll 40s linear infinite;
-                         top:50%;transform-origin:left center">
+                         white-space:nowrap;position:absolute;animation:tickerScroll 180s linear infinite;
+                         top:50%;transform-origin:left center;will-change:transform;
+                         backface-visibility:hidden;-webkit-backface-visibility:hidden;">
                     </div>
                     <style>
-                        @keyframes tickerScroll { 0%{transform:translateY(-50%) translateX(100vw);} 100%{transform:translateY(-50%) translateX(-100%);} }
-                        #news-ticker-wrap:hover #news-ticker-track { animation-play-state:paused; }
+                        /* translate3d forces GPU compositing so the slow animation stays smooth
+                           at full display refresh (60/120 Hz) instead of stepping pixel-by-pixel. */
+                        @keyframes tickerScroll {
+                            0%   { transform: translate3d(100vw, -50%, 0); }
+                            100% { transform: translate3d(-100%, -50%, 0); }
+                        }
+                        #news-ticker-wrap:hover #news-ticker-track { animation-play-state: paused; }
                     </style>
                 </div>
 
@@ -460,7 +466,9 @@
                         sel.innerHTML = futureExpiries.map(e =>
                             `<option value="${e}">${e}</option>`
                         ).join('');
-                        defaultExpiry = futureExpiries[0];
+                        // Default to nearest *tradeable* expiry (DTE > 0).
+                        // On expiry day we roll to next week so range math doesn't collapse.
+                        defaultExpiry = Utils.nearestFutureExpiry(futureExpiries);
                         // Restore user's last selection; never select a past expiry
                         const resolved = Utils.resolveExpiry(futureExpiries);
                         sel.value = resolved;
@@ -473,8 +481,29 @@
             try {
                 const snapResp = await API.getSnapshot();
                 if (snapResp && snapResp.data) {
-                    updateMarketDisplay(snapResp.data);
-                    if (snapResp.data.expiry_date) defaultExpiry = snapResp.data.expiry_date;
+                    const snapExpiry = snapResp.data.expiry_date;
+                    // If snapshot is for a stale/expired expiry (DTE<=0) and we have
+                    // a rolled defaultExpiry, compute fresh data for that instead.
+                    const snapStale = snapResp.data.days_to_expiry != null
+                        && snapResp.data.days_to_expiry <= 0
+                        && defaultExpiry
+                        && defaultExpiry !== snapExpiry;
+                    if (snapStale && !usingCustomExpiry) {
+                        try {
+                            const fresh = await API.computeForExpiry(defaultExpiry, vixOffset);
+                            if (fresh && !fresh.error) {
+                                updateMarketDisplay(fresh);
+                                if (fresh.risk_reversal) updateRiskReversal(fresh.risk_reversal);
+                            } else {
+                                updateMarketDisplay(snapResp.data);
+                            }
+                        } catch (e) {
+                            updateMarketDisplay(snapResp.data);
+                        }
+                    } else {
+                        updateMarketDisplay(snapResp.data);
+                        if (snapExpiry) defaultExpiry = snapExpiry;
+                    }
                     if (snapResp.data.risk_reversal) {
                         updateRiskReversal(snapResp.data.risk_reversal);
                     }

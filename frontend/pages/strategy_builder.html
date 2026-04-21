@@ -200,20 +200,18 @@
             color: var(--text-muted);
             line-height: 1.4;
         }
-        .ranking-card.high-yield {
-            border-left: 3px solid #F59E0B;
-            background: color-mix(in srgb, #F59E0B 5%, transparent);
-        }
-        .ranking-card.high-yield:hover { background: color-mix(in srgb, #F59E0B 10%, transparent); }
-        .badge-yield {
-            font-size: 9px;
-            font-weight: 800;
-            padding: 2px 6px;
-            border-radius: 6px;
-            background: linear-gradient(90deg, #D97706, #F59E0B);
-            color: #fff;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
+        .ranking-recommended {
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--primary, #2563EB);
+            background: color-mix(in srgb, var(--primary, #2563EB) 8%, transparent);
+            border-left: 3px solid var(--primary, #2563EB);
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-top: 6px;
+            font-family: var(--font-mono);
+            line-height: 1.4;
+            word-break: break-word;
         }
         .risk-note {
             font-size: 10px;
@@ -447,10 +445,43 @@
         </div>
     </div>
 
+    <!-- Shared Confirmation Modal (Execute / Close) -->
+    <div class="modal-overlay" id="sb-confirm-modal" style="display:none">
+        <div class="modal" style="max-width:540px">
+            <div class="modal-title" id="sb-confirm-title">Confirm Strategy</div>
+            <div id="sb-confirm-body" style="font-size:13px"></div>
+            <div class="modal-actions" style="margin-top:16px">
+                <button class="btn btn-secondary" onclick="_sbConfirmCancel()">Cancel</button>
+                <button class="btn btn-primary" id="sb-confirm-ok" onclick="_sbConfirmOk()">Confirm</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
+    <script src="/js/ws.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Not authenticated');
+
+        // ── Generic in-page confirmation modal ────────────────────────────
+        let _sbConfirmHandler = null;
+        function _sbConfirmOpen(title, bodyHtml, onConfirm, okLabel) {
+            document.getElementById('sb-confirm-title').textContent = title;
+            document.getElementById('sb-confirm-body').innerHTML = bodyHtml;
+            document.getElementById('sb-confirm-ok').textContent = okLabel || 'Confirm';
+            _sbConfirmHandler = onConfirm;
+            document.getElementById('sb-confirm-modal').style.display = 'flex';
+        }
+        function _sbConfirmCancel() {
+            _sbConfirmHandler = null;
+            document.getElementById('sb-confirm-modal').style.display = 'none';
+        }
+        async function _sbConfirmOk() {
+            const h = _sbConfirmHandler;
+            _sbConfirmHandler = null;
+            document.getElementById('sb-confirm-modal').style.display = 'none';
+            if (h) await h();
+        }
 
         document.getElementById('sidebar').innerHTML = Utils.buildSidebar('strategy-builder');
         document.getElementById('header').innerHTML = Utils.buildHeader('Strategy Builder');
@@ -461,25 +492,28 @@
         let currentExpiry = '';
         let payoffData = null;      // from /api/strategies/{id}/payoff (after create)
 
-        // Default strike suggestions per strategy type (populated from analytics)
+        // Default strike suggestions per strategy type (populated from analytics).
+        // Offsets below are *fallback* widths used only when analytics are
+        // unavailable; live strikes come from _computeStrikeOffsets which
+        // biases toward safety (wider OTM shorts, wider wings).
         const strategyLegsTemplate = {
             IRON_CONDOR: [
-                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +200 },
-                { label: 'CE BUY',  optType: 'CE', action: 'BUY',  offset: +400 },
-                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -200 },
-                { label: 'PE BUY',  optType: 'PE', action: 'BUY',  offset: -400 },
+                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +250 },
+                { label: 'CE BUY',  optType: 'CE', action: 'BUY',  offset: +500 },
+                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -250 },
+                { label: 'PE BUY',  optType: 'PE', action: 'BUY',  offset: -500 },
             ],
             STRANGLE: [
-                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +250 },
-                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -250 },
+                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +350 },
+                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -350 },
             ],
             BULL_PUT_SPREAD: [
-                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -100 },
-                { label: 'PE BUY',  optType: 'PE', action: 'BUY',  offset: -200 },
+                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -150 },
+                { label: 'PE BUY',  optType: 'PE', action: 'BUY',  offset: -250 },
             ],
             BEAR_CALL_SPREAD: [
-                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +100 },
-                { label: 'CE BUY',  optType: 'CE', action: 'BUY',  offset: +200 },
+                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +150 },
+                { label: 'CE BUY',  optType: 'CE', action: 'BUY',  offset: +250 },
             ],
             CALENDAR_SPREAD: [
                 { label: 'CE SELL (near)', optType: 'CE', action: 'SELL', offset: 0 },
@@ -734,19 +768,19 @@
                 const badgeCls = r.confidence_score >= 70 ? 'badge-green' : r.confidence_score >= 45 ? 'badge-amber' : 'badge-red';
                 const isSelected = selectedStrategy && selectedStrategy.strategy_type === r.strategy_type;
                 const isStrangle = r.strategy_type === 'STRANGLE' || r.strategy_type === 'SHORT_STRANGLE';
-                const cardClass = isSelected ? 'selected' : (isStrangle ? 'high-yield' : '');
+                const cardClass = isSelected ? 'selected' : '';
 
-                // Ranked position label — strangles always shown with their actual rank
                 const rankLabel = `<span style="font-size:12px;color:var(--text-muted);min-width:16px">${i + 1}.</span>`;
-
-                // High-yield badge only for strangles (premium collection strategy)
-                const yieldBadge = isStrangle
-                    ? `<span class="badge-yield" title="Highest raw premium collection via dual short strikes">HIGH YIELD</span>`
-                    : '';
 
                 // Risk note for unlimited-risk strategies
                 const riskNote = isStrangle
                     ? `<div class="risk-note">⚠ Unlimited risk on both wings — size carefully and keep a hedge plan</div>`
+                    : '';
+
+                // Per-card recommended strike configuration line
+                const recText = _recommendedStrikesText(r.strategy_type);
+                const recLine = recText
+                    ? `<div class="ranking-recommended">&#9679; Recommended: ${recText}</div>`
                     : '';
 
                 return `<div class="ranking-card ${cardClass}" onclick="selectStrategy(${i})">
@@ -754,9 +788,9 @@
                         ${rankLabel}
                         <span class="ranking-badge ${badgeCls}">${r.confidence_score.toFixed(0)}</span>
                         <span class="ranking-name">${r.label}</span>
-                        ${yieldBadge}
                     </div>
                     <div class="ranking-rationale">${r.rationale}</div>
+                    ${recLine}
                     ${riskNote}
                 </div>`;
             }).join('');
@@ -802,17 +836,20 @@
          * Compute dynamic strike offsets from ATM for each leg role.
          *
          *   1-SD period move     = spot × ATM-IV × √(DTE / 365)
-         *                          (if ATM-IV unavailable, fall back to VIX)
          *   Max-pain bias [-1,1] = clamp((max_pain − spot) / 1-SD, ±1)
-         *       bias > 0 → upward pull  → widen CE short, narrow PE short
-         *       bias < 0 → downward pull → widen PE short, narrow CE short
          *
-         * Short legs sit ~1 SD out (≈0.16 delta, ≈84 % POT) so they stay
-         * comfortably outside the VIX band; long wings go ~1.6 SD for
-         * realistic hedge cost. Spreads use tighter 0.7 SD / 1.4 SD.
+         * Defaults bias toward safety: short legs sit farther OTM (~0.12 delta,
+         * ≈88 % POT) and wings are wider. Strangles (unlimited risk) push
+         * further still. Users can pull them in if they want higher premium.
+         *
+         * Per-strategy SD multipliers (safer side):
+         *   STRANGLE        — 1.35 SD shorts (no longs)
+         *   IRON_CONDOR     — 1.20 SD shorts, 1.80 SD longs
+         *   *_SPREAD        — 0.85 SD shorts, 1.50 SD longs
+         *
          * OI support/resistance anchor the short leg when it sits within
-         * ±0.4 SD of the computed distance — so we never short through a
-         * wall of OI. All strikes are finally snapped to the 50-pt grid.
+         * ±0.4 SD of the computed distance. Floor is ~0.8 SD so we never
+         * drift back toward ATM even with S/R pull. Strikes snap to 50-pt grid.
          */
         function _computeStrikeOffsets(analytics, strategyType) {
             const spot  = analytics.spot || 22000;
@@ -832,10 +869,13 @@
                 mpBias = Math.max(-1, Math.min(1, (mp - spot) / oneSD));
             }
 
-            // Per-strategy SD multipliers
+            // Per-strategy SD multipliers — biased toward safety
             const isSpread = strategyType === 'BULL_PUT_SPREAD' || strategyType === 'BEAR_CALL_SPREAD';
-            const shortSD  = isSpread ? 0.7 : 1.0;
-            const longSD   = isSpread ? 1.4 : 1.6;
+            const isStrangle = strategyType === 'STRANGLE' || strategyType === 'SHORT_STRANGLE';
+            let shortSD, longSD;
+            if (isStrangle)   { shortSD = 1.35; longSD = 1.35; }  // no longs — longSD unused
+            else if (isSpread){ shortSD = 0.85; longSD = 1.50; }
+            else              { shortSD = 1.20; longSD = 1.80; }  // IC / default
 
             // Asymmetric drift adjustment — shift short legs by 25% of mpBias SDs.
             // Positive mpBias (MP above spot, upward pull) → CE short further, PE short closer.
@@ -861,8 +901,8 @@
                 }
             }
 
-            // Floor: never tighter than ~0.6 SD (avoid ATM-ish strikes)
-            const floor = Math.round(0.6 * oneSD);
+            // Floor: never tighter than ~0.8 SD (safer side — avoid ATM drift)
+            const floor = Math.round(0.8 * oneSD);
             ceShort = Math.max(ceShort, floor);
             peShort = Math.max(peShort, floor);
 
@@ -873,10 +913,30 @@
                 oneSD,
                 mpBias,
                 CE_SHORT: snap(ceShort),
-                CE_LONG:  snap(Math.max(ceLong, ceShort + 100)),  // long always at least 100 pts beyond short
+                CE_LONG:  snap(Math.max(ceLong, ceShort + 150)),  // wings ≥150 pts beyond short for meaningful protection
                 PE_SHORT: -snap(peShort),
-                PE_LONG:  -snap(Math.max(peLong, peShort + 100)),
+                PE_LONG:  -snap(Math.max(peLong, peShort + 150)),
             };
+        }
+
+        /**
+         * Produce a one-line "Recommended:" summary of computed strikes for a
+         * given strategy type — shown inside each ranking card so the user
+         * sees the app's suggested legs upfront. Returns '' if analytics aren't
+         * loaded yet.
+         */
+        function _recommendedStrikesText(strategyType) {
+            if (!analyticsData) return '';
+            const template = strategyLegsTemplate[strategyType] || [];
+            if (!template.length) return '';
+            const off = _computeStrikeOffsets(analyticsData, strategyType);
+            const parts = template.map(leg => {
+                const roleKey = `${leg.optType}_${leg.action === 'SELL' ? 'SHORT' : 'LONG'}`;
+                const dyn = off[roleKey] != null ? off[roleKey] : leg.offset;
+                const strike = Math.round((off.atm + dyn) / 50) * 50;
+                return `${leg.action} ${leg.optType} ${strike}`;
+            });
+            return parts.join(' · ');
         }
 
         function loadStrikeSuggestions() {
@@ -1184,19 +1244,49 @@
             })).filter(l => l.strike > 0);
 
             if (!legs.length) { Utils.toast('Configure legs first', 'warning'); return; }
-            if (!confirm(`Execute ${selectedStrategy.label} with ${legs.length} legs @ ${expiry}?`)) return;
 
-            try {
-                const resp = await API.createStrategy({
-                    strategy_type: selectedStrategy.strategy_type,
-                    expiry_date: expiry,
-                    legs,
-                });
-                Utils.toast(`Strategy created: ${resp.name} (${resp.legs_created} legs)`, 'success');
-                showWizardTab('active');
-            } catch (e) {
-                Utils.toast('Strategy execution failed', 'error');
-            }
+            // Summarise before confirmation
+            const netCreditEst = (typeof payoffData === 'object' && payoffData?.net_premium != null)
+                ? payoffData.net_premium
+                : null;
+            const rows = legs.map(l =>
+                `<tr><td style="padding:4px 8px">${l.action}</td>
+                     <td style="padding:4px 8px;font-weight:600">${l.option_type} ${l.strike}</td>
+                     <td style="padding:4px 8px;text-align:right">${l.lots} lot(s)</td></tr>`).join('');
+            const body = `
+                <div style="color:var(--text-muted);margin-bottom:8px">
+                    <strong>${selectedStrategy.label}</strong> &middot; expiry <strong>${expiry}</strong>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:12px;
+                              background:var(--bg-secondary);border-radius:6px;overflow:hidden">
+                    <thead><tr style="background:var(--bg-card)">
+                        <th style="padding:6px 8px;text-align:left">Side</th>
+                        <th style="padding:6px 8px;text-align:left">Leg</th>
+                        <th style="padding:6px 8px;text-align:right">Qty</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                ${netCreditEst != null ? `<div style="margin-top:10px;font-size:12px">
+                    Net premium: <strong style="color:${netCreditEst >= 0 ? '#16A34A' : '#DC2626'}">
+                    ${netCreditEst >= 0 ? '+' : ''}₹${(netCreditEst).toFixed(2)}</strong>
+                </div>` : ''}
+                <div style="margin-top:10px;font-size:11px;color:#D97706">
+                    ⚠ This will open ${legs.length} live leg${legs.length>1?'s':''} at current LTP.
+                </div>`;
+
+            _sbConfirmOpen('Confirm Strategy Execution', body, async () => {
+                try {
+                    const resp = await API.createStrategy({
+                        strategy_type: selectedStrategy.strategy_type,
+                        expiry_date: expiry,
+                        legs,
+                    });
+                    Utils.toast(`Strategy created: ${resp.name} (${resp.legs_created} legs)`, 'success');
+                    showWizardTab('active');
+                } catch (e) {
+                    Utils.toast('Strategy execution failed', 'error');
+                }
+            }, 'Execute ' + (legs.length) + ' Legs');
         }
 
         // ── Active Strategies ──────────────────────────────────────────
@@ -1244,15 +1334,51 @@
             </div>`;
         }
 
-        async function closeStrategyConfirm(id, name) {
-            if (!confirm(`Close all legs of "${name}"? This will mark them as CLOSED at current LTP.`)) return;
-            try {
-                const resp = await API.closeStrategy(id);
-                Utils.toast(`Strategy closed. Realized P&L: ${Utils.formatINR(resp.total_realized_pnl)}`, 'success');
-                loadActiveStrategies();
-            } catch (e) {
-                Utils.toast('Close failed', 'error');
-            }
+        function closeStrategyConfirm(id, name) {
+            // Look up the strategy so we can show per-leg estimated P&L before close
+            API.getStrategies().then(resp => {
+                const s = (resp?.strategies || []).find(x => x.id === id);
+                const legsHtml = s ? s.legs.map(l => {
+                    const pnlColor = l.pnl >= 0 ? '#16A34A' : '#DC2626';
+                    return `<tr>
+                        <td style="padding:4px 8px">${l.trade_type}</td>
+                        <td style="padding:4px 8px;font-weight:600">${l.strike}</td>
+                        <td style="padding:4px 8px;text-align:right">₹${l.current_ltp}</td>
+                        <td style="padding:4px 8px;text-align:right;color:${pnlColor};font-weight:600">${Utils.formatINR(l.pnl)}</td>
+                    </tr>`;
+                }).join('') : '';
+                const totalColor = s && s.total_pnl >= 0 ? '#16A34A' : '#DC2626';
+                const body = `
+                    <div style="color:var(--text-muted);margin-bottom:8px">
+                        Closing all legs of <strong>${name}</strong> at current LTP.
+                    </div>
+                    ${s ? `<table style="width:100%;border-collapse:collapse;font-size:12px;
+                                        background:var(--bg-secondary);border-radius:6px;overflow:hidden">
+                        <thead><tr style="background:var(--bg-card)">
+                            <th style="padding:6px 8px;text-align:left">Leg</th>
+                            <th style="padding:6px 8px;text-align:left">Strike</th>
+                            <th style="padding:6px 8px;text-align:right">LTP</th>
+                            <th style="padding:6px 8px;text-align:right">Leg P&L</th>
+                        </tr></thead>
+                        <tbody>${legsHtml}</tbody>
+                    </table>
+                    <div style="margin-top:10px;font-size:13px">
+                        Total realized P&L (est.):
+                        <strong style="color:${totalColor}">${Utils.formatINR(s.total_pnl)}</strong>
+                    </div>` : ''}
+                    <div style="margin-top:10px;font-size:11px;color:#D97706">
+                        ⚠ This cannot be undone. All ${s ? s.legs.length : ''} legs will move to CLOSED.
+                    </div>`;
+                _sbConfirmOpen('Close Strategy', body, async () => {
+                    try {
+                        const rsp = await API.closeStrategy(id);
+                        Utils.toast(`Strategy closed. Realized P&L: ${Utils.formatINR(rsp.total_realized_pnl)}`, 'success');
+                        loadActiveStrategies();
+                    } catch (e) {
+                        Utils.toast('Close failed', 'error');
+                    }
+                }, 'Close All Legs');
+            });
         }
 
         // Theme change: redraw canvas

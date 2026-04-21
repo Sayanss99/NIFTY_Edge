@@ -1071,10 +1071,13 @@ def compute_hedge_v2(
     for r in (resistances or []):
         sr_strikes.append(r["strike"])
 
+    # Stress scenario: 250-pt breach of the short strike (safer side).
+    # A deeper shock forces the optimiser to pick more protective hedges and
+    # size them for a harsher move than the minimum textbook 200-pt case.
     if side == "CE":
-        scenario_spot = sold_strike + 200
+        scenario_spot = sold_strike + 250
     else:
-        scenario_spot = sold_strike - 200
+        scenario_spot = sold_strike - 250
 
     scores = []
     for _, row in cands.iterrows():
@@ -1152,16 +1155,18 @@ def compute_hedge_v2(
     sdf["f_skew"]  = sdf["skew_score"].clip(0, 100)
     sdf["f_sr"]    = sdf["sr_score"]
 
-    # DTE-adaptive weights
+    # DTE-adaptive weights — re-tuned to favour protection over cheapness.
+    # We want hedges that actually cover the breach, so delta-coverage and
+    # gamma weight are raised while raw cost-efficiency is de-emphasised.
     if dte >= 4:
-        w = {"cost": 0.30, "delta": 0.15, "gamma": 0.10,
-             "oi": 0.20, "skew": 0.15, "sr": 0.10}
+        w = {"cost": 0.22, "delta": 0.22, "gamma": 0.11,
+             "oi": 0.18, "skew": 0.15, "sr": 0.12}
     elif dte >= 2:
-        w = {"cost": 0.20, "delta": 0.25, "gamma": 0.15,
-             "oi": 0.15, "skew": 0.10, "sr": 0.15}
+        w = {"cost": 0.15, "delta": 0.30, "gamma": 0.17,
+             "oi": 0.13, "skew": 0.10, "sr": 0.15}
     else:  # 0-1 DTE — gamma-dominant
-        w = {"cost": 0.10, "delta": 0.30, "gamma": 0.25,
-             "oi": 0.15, "skew": 0.05, "sr": 0.15}
+        w = {"cost": 0.08, "delta": 0.32, "gamma": 0.27,
+             "oi": 0.13, "skew": 0.05, "sr": 0.15}
 
     sdf["composite"] = (
         w["cost"]  * sdf["f_cost"]  +
@@ -1197,11 +1202,12 @@ def compute_hedge_v2(
         loss_after_premium = max(short_loss - premium_collected, 0)
         raw_lots = max(math.ceil(loss_after_premium / net_payoff_per_lot), 1)
 
-    if dte == 0:     dte_mult = 1.3
-    elif dte == 1:   dte_mult = 1.2
-    elif dte == 2:   dte_mult = 1.1
-    else:            dte_mult = 1.0
-    hedge_lots = min(math.ceil(raw_lots * dte_mult), 3)
+    # Size a bit heavier on the safer side, with a slightly higher ceiling.
+    if dte == 0:     dte_mult = 1.4
+    elif dte == 1:   dte_mult = 1.3
+    elif dte == 2:   dte_mult = 1.2
+    else:            dte_mult = 1.1
+    hedge_lots = min(math.ceil(raw_lots * dte_mult), 4)
 
     cost = round(h_ltp * hedge_lots * lot_size, 2)
 

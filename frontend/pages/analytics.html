@@ -78,21 +78,39 @@
         }
         .time-filter {
             display: flex;
-            gap: 4px;
-            margin-bottom: 12px;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 10px;
         }
         .time-filter button {
-            padding: 4px 12px;
+            padding: 6px 14px;
             border: 1px solid var(--border);
-            border-radius: 4px;
+            border-radius: 5px;
             background: var(--bg-card);
-            font-size: 11px;
+            color: var(--text-primary);
+            font-size: 12.5px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
             cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
         }
+        .time-filter button:hover { border-color: var(--primary, #2563EB); }
         .time-filter button.active {
             background: var(--primary, #2563EB);
             color: #fff;
             border-color: var(--primary, #2563EB);
+        }
+        .time-filter .filter-note {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-left: 8px;
+        }
+        .chart-subtitle {
+            font-size: 10.5px;
+            color: var(--text-muted);
+            margin-top: -6px;
+            margin-bottom: 10px;
+            line-height: 1.45;
         }
         .vix-bar {
             display: flex;
@@ -152,6 +170,25 @@
             color: var(--text-muted);
             margin-bottom: 2px;
         }
+        .month-cell { cursor: help; transition: transform 0.1s; }
+        .month-cell:hover { transform: scale(1.06); }
+        .chart-wrap { position: relative; }
+        .chart-wrap canvas { cursor: crosshair; }
+        .chart-tooltip {
+            position: absolute;
+            pointer-events: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 11px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            white-space: nowrap;
+            z-index: 10;
+            display: none;
+            font-family: var(--font-mono);
+        }
+        .chart-tooltip .t-label { color: var(--text-muted); font-size: 10px; margin-bottom: 2px; }
     </style>
 </head>
 <body>
@@ -188,20 +225,27 @@
                     </div>
 
                     <div class="chart-container">
-                        <div class="chart-title">Cumulative P&L</div>
+                        <div class="chart-title">Cumulative P&L <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover to inspect)</span></div>
                         <div class="time-filter" id="time-filter">
-                            <button onclick="setTimeFilter(0)" class="active">All</button>
-                            <button onclick="setTimeFilter(1)">1M</button>
-                            <button onclick="setTimeFilter(3)">3M</button>
-                            <button onclick="setTimeFilter(6)">6M</button>
+                            <button onclick="setTimeFilter(0)" class="active" data-months="0">All time</button>
+                            <button onclick="setTimeFilter(1)" data-months="1">Last 1 month</button>
+                            <button onclick="setTimeFilter(3)" data-months="3">Last 3 months</button>
+                            <button onclick="setTimeFilter(6)" data-months="6">Last 6 months</button>
+                            <span class="filter-note" id="time-filter-note"></span>
                         </div>
-                        <canvas id="pnl-chart" height="220"></canvas>
+                        <div class="chart-wrap">
+                            <canvas id="pnl-chart" height="220"></canvas>
+                            <div class="chart-tooltip" id="pnl-tip"></div>
+                        </div>
                     </div>
 
                     <div class="chart-row">
                         <div class="chart-container">
-                            <div class="chart-title">P&L by Expiry</div>
-                            <canvas id="expiry-chart" height="200"></canvas>
+                            <div class="chart-title">P&L by Expiry <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover bars)</span></div>
+                            <div class="chart-wrap">
+                                <canvas id="expiry-chart" height="200"></canvas>
+                                <div class="chart-tooltip" id="expiry-tip"></div>
+                            </div>
                         </div>
                         <div class="chart-container">
                             <div class="chart-title">Monthly Performance</div>
@@ -214,18 +258,30 @@
                 <div id="tab-patterns" class="tab-content">
                     <div class="chart-row">
                         <div class="chart-container">
-                            <div class="chart-title">CE Strike Distance (OTM pts)</div>
-                            <canvas id="ce-dist-chart" height="200"></canvas>
+                            <div class="chart-title">CE Strike Distance (OTM pts) <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover bars)</span></div>
+                            <div class="chart-subtitle">How far OTM your <b>sold CE</b> strikes sat at entry, bucketed every 200 pts. Lighter bar = all trades in bucket; solid overlay = winners. Read it as: <i>do calls placed further OTM win more often?</i></div>
+                            <div class="chart-wrap">
+                                <canvas id="ce-dist-chart" height="200"></canvas>
+                                <div class="chart-tooltip" id="ce-dist-tip"></div>
+                            </div>
                         </div>
                         <div class="chart-container">
-                            <div class="chart-title">PE Strike Distance (OTM pts)</div>
-                            <canvas id="pe-dist-chart" height="200"></canvas>
+                            <div class="chart-title">PE Strike Distance (OTM pts) <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover bars)</span></div>
+                            <div class="chart-subtitle">Same idea for <b>sold PE</b> strikes. Use this to spot the distance band where your puts actually survive — your historical "safe cushion" on the downside.</div>
+                            <div class="chart-wrap">
+                                <canvas id="pe-dist-chart" height="200"></canvas>
+                                <div class="chart-tooltip" id="pe-dist-tip"></div>
+                            </div>
                         </div>
                     </div>
 
                     <div class="chart-container">
-                        <div class="chart-title">Strike Distance vs P&L</div>
-                        <canvas id="scatter-chart" height="220"></canvas>
+                        <div class="chart-title">Strike Distance vs P&L <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover points)</span></div>
+                        <div class="chart-subtitle">Each mark is one closed option leg. X-axis = OTM distance at entry, Y-axis = realised P&L. Circles are CE, squares are PE; green = winner. Clusters in the top-right mean "far OTM worked"; losses near the left mean strikes were too close to spot.</div>
+                        <div class="chart-wrap">
+                            <canvas id="scatter-chart" height="220"></canvas>
+                            <div class="chart-tooltip" id="scatter-tip"></div>
+                        </div>
                     </div>
 
                     <div class="chart-container">
@@ -260,8 +316,12 @@
                         </div>
                     </div>
                     <div class="chart-container" style="margin-bottom:16px">
-                        <div class="chart-title">Signal Score vs Next-Day Nifty Change</div>
-                        <canvas id="signal-chart" height="280"></canvas>
+                        <div class="chart-title">Signal Score vs Next-Day Nifty Change <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover for details)</span></div>
+                        <div class="chart-subtitle">Blue line = directional score we computed that day (left axis). Bars = what Nifty actually did the <i>next</i> session (right axis). Dot colour shows whether the signal's direction matched the next-day move — green = correct call, red = wrong call. The tighter the line and bars agree in sign, the more predictive our score was over this window.</div>
+                        <div class="chart-wrap">
+                            <canvas id="signal-chart" height="280"></canvas>
+                            <div class="chart-tooltip" id="signal-tip"></div>
+                        </div>
                     </div>
                     <div class="card">
                         <div class="card-header">
@@ -368,26 +428,46 @@
             drawPnlCurve(data.cumulative_pnl);
             drawExpiryBars(data.expiry_pnl);
             renderMonthlyHeatmap(data.monthly_pnl);
+            // Seed the time-filter note so the user understands the default view
+            setTimeFilter(0);
         }
 
         let currentTimeFilter = 0;
         function setTimeFilter(months) {
             currentTimeFilter = months;
             document.querySelectorAll('#time-filter button').forEach(b => {
-                b.classList.toggle('active', parseInt(b.textContent.replace('M','')) === months || (months === 0 && b.textContent === 'All'));
+                b.classList.toggle('active', parseInt(b.dataset.months || '0') === months);
             });
-            if (perfData) {
-                const points = perfData.cumulative_pnl;
-                if (months > 0) {
-                    const cutoff = new Date();
-                    cutoff.setMonth(cutoff.getMonth() - months);
-                    const filtered = points.filter(p => new Date(p.date) >= cutoff);
-                    drawPnlCurve(filtered);
+            if (!perfData) return;
+            const points = perfData.cumulative_pnl || [];
+            let filtered = points;
+            if (months > 0) {
+                const cutoff = new Date();
+                cutoff.setMonth(cutoff.getMonth() - months);
+                filtered = points.filter(p => new Date(p.date) >= cutoff);
+            }
+
+            // Helpful note so the user understands why short history windows
+            // render identically for 1M/3M/6M/All.
+            const note = document.getElementById('time-filter-note');
+            if (note) {
+                if (!points.length) {
+                    note.textContent = '';
+                } else if (months === 0) {
+                    note.textContent = `${points.length} data point${points.length > 1 ? 's' : ''} · full history`;
+                } else if (filtered.length === 0) {
+                    note.textContent = `No closed trades in the last ${months} month${months > 1 ? 's' : ''}`;
+                } else if (filtered.length === points.length) {
+                    note.textContent = `All ${points.length} points fall inside the last ${months} month${months > 1 ? 's' : ''} — identical to "All time"`;
                 } else {
-                    drawPnlCurve(points);
+                    note.textContent = `${filtered.length} of ${points.length} point${points.length > 1 ? 's' : ''} in the last ${months} month${months > 1 ? 's' : ''}`;
                 }
             }
+            drawPnlCurve(filtered);
         }
+
+        // Hover-state cache, so mousemove can translate pixels → data without re-reading the canvas.
+        const _hoverState = { pnl: null, expiry: null, ce: null, pe: null, scatter: null, signal: null };
 
         // ── Cumulative P&L chart ──────────────────────────────────────
         function drawPnlCurve(points) {
@@ -477,6 +557,8 @@
                     ctx.fillText(dt.toLocaleDateString('en-IN', {day:'2-digit', month:'short'}), x, H - 8);
                 }
             }
+
+            _hoverState.pnl = { points, pad, xStep, minV, range, cH, W, H };
         }
 
         // ── Expiry P&L bars ───────────────────────────────────────────
@@ -537,7 +619,130 @@
             ctx.moveTo(pad.left, zeroY);
             ctx.lineTo(W - pad.right, zeroY);
             ctx.stroke();
+
+            _hoverState.expiry = { expiries, pad, barW, gap, cH, W, H, minV, range, zeroY };
         }
+
+        // ── Chart hover tooltips ──────────────────────────────────────
+        function _bindHover(canvasId, tipId, onHover) {
+            const c = document.getElementById(canvasId);
+            const t = document.getElementById(tipId);
+            if (!c || !t) return;
+            c.addEventListener('mousemove', (e) => {
+                const rect = c.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const html = onHover(x, y);
+                if (html) {
+                    t.innerHTML = html;
+                    t.style.display = 'block';
+                    // Place tooltip near cursor but inside wrap
+                    t.style.left = Math.min(x + 12, rect.width - 180) + 'px';
+                    t.style.top  = Math.max(8, y - 40) + 'px';
+                } else {
+                    t.style.display = 'none';
+                }
+            });
+            c.addEventListener('mouseleave', () => { t.style.display = 'none'; });
+        }
+
+        _bindHover('pnl-chart', 'pnl-tip', (x, y) => {
+            const s = _hoverState.pnl;
+            if (!s || !s.points.length) return null;
+            const idx = Math.round((x - s.pad.left) / s.xStep);
+            if (idx < 0 || idx >= s.points.length) return null;
+            const p = s.points[idx];
+            const color = p.pnl >= 0 ? '#16A34A' : '#DC2626';
+            const trade = p.trade_type ? `${p.trade_type} ${p.strike || ''}` : '';
+            return `
+                <div class="t-label">${new Date(p.date).toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'})}</div>
+                <div>Cum P&L: <span style="color:${color};font-weight:700">${Utils.formatINR(p.pnl)}</span></div>
+                ${trade ? `<div style="font-size:10px;color:var(--text-muted)">${trade}</div>` : ''}
+            `;
+        });
+
+        _bindHover('expiry-chart', 'expiry-tip', (x, y) => {
+            const s = _hoverState.expiry;
+            if (!s || !s.expiries.length) return null;
+            // Find which bar x falls into
+            for (let i = 0; i < s.expiries.length; i++) {
+                const bx = s.pad.left + s.gap + i * (s.barW + s.gap);
+                if (x >= bx && x <= bx + s.barW) {
+                    const e = s.expiries[i];
+                    const color = e.pnl >= 0 ? '#16A34A' : '#DC2626';
+                    return `
+                        <div class="t-label">${e.expiry}</div>
+                        <div>P&L: <span style="color:${color};font-weight:700">${Utils.formatINR(e.pnl)}</span></div>
+                    `;
+                }
+            }
+            return null;
+        });
+
+        function _distHover(side) {
+            return (x, y) => {
+                const s = _hoverState[side];
+                if (!s) return null;
+                for (let i = 0; i < s.bucketCount; i++) {
+                    if (!s.buckets[i]) continue;
+                    const bx = s.pad.left + s.gap + i * (s.barW + s.gap);
+                    if (x >= bx && x <= bx + s.barW) {
+                        const total = s.buckets[i];
+                        const wins = s.winBuckets[i];
+                        const wr = total ? Math.round((wins / total) * 100) : 0;
+                        const lo = i * s.bucketSize;
+                        const hi = lo + s.bucketSize;
+                        const sideLabel = side === 'ce' ? 'CE' : 'PE';
+                        return `
+                            <div class="t-label">${sideLabel} · ${lo}–${hi} pts OTM</div>
+                            <div>${total} trade${total > 1 ? 's' : ''} · ${wins} win${wins === 1 ? '' : 's'}</div>
+                            <div>Win rate: <span style="color:${wr >= 50 ? '#16A34A' : '#DC2626'};font-weight:700">${wr}%</span></div>
+                        `;
+                    }
+                }
+                return null;
+            };
+        }
+        _bindHover('ce-dist-chart', 'ce-dist-tip', _distHover('ce'));
+        _bindHover('pe-dist-chart', 'pe-dist-tip', _distHover('pe'));
+
+        _bindHover('scatter-chart', 'scatter-tip', (x, y) => {
+            const s = _hoverState.scatter;
+            if (!s) return null;
+            let best = null, bestDist = 12;
+            for (const p of s.plotted) {
+                const dx = p.x - x, dy = p.y - y;
+                const d = Math.sqrt(dx*dx + dy*dy);
+                if (d < bestDist) { bestDist = d; best = p; }
+            }
+            if (!best) return null;
+            const d = best.d;
+            const color = d.pnl >= 0 ? '#16A34A' : '#DC2626';
+            return `
+                <div class="t-label">${best.side} · ${d.strike || ''} ${d.expiry ? '· ' + d.expiry : ''}</div>
+                <div>Distance: ${Math.round(d.distance)} pts OTM</div>
+                <div>P&L: <span style="color:${color};font-weight:700">${Utils.formatINR(d.pnl)}</span> · ${d.win ? 'Win' : 'Loss'}</div>
+            `;
+        });
+
+        _bindHover('signal-chart', 'signal-tip', (x, y) => {
+            const s = _hoverState.signal;
+            if (!s || !s.data.length) return null;
+            const idx = Math.round((x - s.pad.left) / s.xStep);
+            if (idx < 0 || idx >= s.data.length) return null;
+            const d = s.data[idx];
+            const chgCol = d.next_day_change_pct >= 0 ? '#16A34A' : '#DC2626';
+            const dotCol = d.signal_correct === true ? '#16A34A'
+                : d.signal_correct === false ? '#DC2626' : '#9CA3AF';
+            const verdict = d.signal_correct === true ? 'Correct call'
+                : d.signal_correct === false ? 'Wrong call' : 'Pending';
+            return `
+                <div class="t-label">${d.date} · ${d.direction || 'N/A'}</div>
+                <div>Score: <span style="color:#2563EB;font-weight:700">${d.score != null ? d.score.toFixed(2) : '-'}</span></div>
+                <div>Next day: <span style="color:${chgCol};font-weight:700">${d.next_day_change_pct != null ? (d.next_day_change_pct > 0 ? '+' : '') + d.next_day_change_pct.toFixed(2) + '%' : '-'}</span></div>
+                <div style="color:${dotCol}">&#9679; ${verdict}</div>
+            `;
+        });
 
         // ── Monthly heatmap ───────────────────────────────────────────
         function renderMonthlyHeatmap(months) {
@@ -556,8 +761,11 @@
                     ? `rgba(22,163,74,${alpha})`
                     : `rgba(220,38,38,${alpha})`;
                 const color = intensity > 0.5 ? '#fff' : (m.pnl >= 0 ? '#166534' : '#991B1B');
+                const fullMonth = new Date(m.month + '-01').toLocaleDateString('en-IN', {month:'long', year:'numeric'});
                 const label = new Date(m.month + '-01').toLocaleDateString('en-IN', {month:'short', year:'2-digit'});
-                return `<div class="month-cell" style="background:${bg};color:${color}">
+                const sign = m.pnl >= 0 ? 'Profit' : 'Loss';
+                return `<div class="month-cell" style="background:${bg};color:${color}"
+                            title="${fullMonth} — ${sign}: ${Utils.formatINR(m.pnl)}">
                     <div class="month-label">${label}</div>
                     ${Utils.formatINR(m.pnl)}
                 </div>`;
@@ -632,6 +840,9 @@
                 ctx.textAlign = 'center';
                 ctx.fillText(`${i * bucketSize}`, x + barW/2, H - 8);
             }
+
+            const side = canvasId === 'ce-dist-chart' ? 'ce' : 'pe';
+            _hoverState[side] = { buckets, winBuckets, bucketSize, bucketCount, pad, barW, gap, cH, W, H, maxCount };
         }
 
         // ── Scatter chart ─────────────────────────────────────────────
@@ -715,6 +926,24 @@
             ctx.fillStyle = '#6B7280'; ctx.fillText('PE', W - 88, 15);
             ctx.beginPath(); ctx.arc(W - 60, 12, 4, 0, Math.PI*2); ctx.fillStyle = '#16A34A'; ctx.fill();
             ctx.fillStyle = '#6B7280'; ctx.fillText('Win', W - 52, 15);
+
+            // Build lookup: pixel position for every plotted point
+            const plotted = [];
+            for (const d of data.ce_distances || []) {
+                plotted.push({
+                    side: 'CE', d,
+                    x: pad.left + (d.distance / maxDist) * cW,
+                    y: pad.top + cH * (1 - (d.pnl - minP) / rangeP),
+                });
+            }
+            for (const d of data.pe_distances || []) {
+                plotted.push({
+                    side: 'PE', d,
+                    x: pad.left + (d.distance / maxDist) * cW,
+                    y: pad.top + cH * (1 - (d.pnl - minP) / rangeP),
+                });
+            }
+            _hoverState.scatter = { plotted, W, H };
         }
 
         // ── VIX regime bars ───────────────────────────────────────────
@@ -935,6 +1164,8 @@
             ctx.fillText(data[0].date.slice(5), pad.left, h - 4);
             ctx.textAlign = 'right';
             ctx.fillText(data[data.length - 1].date.slice(5), pad.left + cw, h - 4);
+
+            _hoverState.signal = { data, pad, xStep, sMin, sMax, cMin, cMax, ch, w, h };
         }
     </script>
 </body>

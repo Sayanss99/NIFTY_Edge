@@ -1085,24 +1085,80 @@
             }).join('');
         }
 
-        async function executeRoll(scenarioId, scenarioData) {
+        // Two-step execute: click "Execute Roll" → confirmation panel → Confirm / Back.
+        let _pendingRoll = null;
+
+        function executeRoll(scenarioId, scenarioData) {
             if (!rollTradeId) return;
-            const label = scenarioId === 'futures_hedge' ? 'Execute futures hedge?' : `Execute roll to ${scenarioData.new_strike || ''} @ ${scenarioData.new_expiry || ''}?`;
-            if (!confirm(label)) return;
+            _pendingRoll = { scenarioId, data: scenarioData };
+            _renderRollConfirm(scenarioId, scenarioData);
+        }
+
+        function _renderRollConfirm(scenarioId, s) {
+            const trade = findTrade(rollTradeId) || {};
+            const c = document.getElementById('roll-scenarios-container');
+            const isFutures = scenarioId === 'futures_hedge';
+            const dcColor = (s.roll_debit_credit || 0) >= 0 ? '#16A34A' : '#DC2626';
+            const dcLabel = (s.roll_debit_credit || 0) >= 0 ? 'Net Credit' : 'Net Debit';
+            const rows = isFutures
+                ? [
+                    ['Action', `${s.futures_action || '-'} ${s.futures_lots || 0} futures lot(s)`],
+                    ['Est. Margin', `₹${Utils.formatNum(s.hedge_margin)}`],
+                    ['Net Delta After', '≈ 0'],
+                    ['Original Position', 'Stays OPEN'],
+                ]
+                : [
+                    ['From', `${trade.trade_type || ''} ${trade.strike || ''} · ${trade.expiry_date || ''}`],
+                    ['To', `${trade.trade_type || ''} ${s.new_strike || ''} · ${s.new_expiry || ''}`],
+                    [dcLabel, `<span style="color:${dcColor};font-weight:600">${(s.roll_debit_credit || 0) >= 0 ? '+' : ''}₹${Utils.formatNum(s.roll_debit_credit || 0, 2)}</span>`],
+                    ['New LTP', `₹${Utils.formatNum(s.new_ltp || 0, 2)}`],
+                    ['New Delta', s.new_delta != null ? s.new_delta.toFixed(3) : '-'],
+                    ['DTE', (s.new_dte != null ? s.new_dte + 'd' : '-')],
+                ];
+            c.innerHTML = `
+                <div style="border:2px solid #2563EB;border-radius:10px;padding:16px;background:var(--bg-secondary)">
+                    <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:#2563EB">
+                        Review ${isFutures ? 'Hedge' : 'Roll'} &mdash; ${Utils.escapeHtml ? Utils.escapeHtml(s.label || '') : (s.label || '')}
+                    </div>
+                    <div style="display:grid;grid-template-columns:140px 1fr;gap:6px 14px;font-size:12px;margin-bottom:12px">
+                        ${rows.map(([k,v]) => `<div style="color:var(--text-muted)">${k}</div><div style="font-weight:600">${v}</div>`).join('')}
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);background:var(--bg-card);border-radius:6px;padding:8px;margin-bottom:14px">
+                        ${s.rationale || ''}
+                    </div>
+                    ${isFutures ? '' : '<div style="font-size:10px;color:#D97706;margin-bottom:10px">⚠ Original leg will be CLOSED at current LTP; a new leg will open at the new strike/expiry.</div>'}
+                    <div style="display:flex;gap:8px;justify-content:flex-end">
+                        <button class="btn btn-sm btn-secondary" onclick="_cancelRollConfirm()">Back</button>
+                        <button class="btn btn-sm btn-primary" onclick="_confirmRoll()">Confirm ${isFutures ? 'Hedge' : 'Roll'}</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function _cancelRollConfirm() {
+            _pendingRoll = null;
+            openRollModal(rollTradeId);  // reload scenario list
+        }
+
+        async function _confirmRoll() {
+            if (!_pendingRoll || !rollTradeId) return;
+            const { scenarioId, data: s } = _pendingRoll;
+            _pendingRoll = null;
             try {
                 const body = {
                     scenario_id: scenarioId,
-                    new_strike: scenarioData.new_strike || 0,
-                    new_expiry: scenarioData.new_expiry || '',
-                    new_ltp: scenarioData.new_ltp || 0,
-                    futures_lots: scenarioData.futures_lots || 0,
-                    futures_action: scenarioData.futures_action || '',
+                    new_strike: s.new_strike || 0,
+                    new_expiry: s.new_expiry || '',
+                    new_ltp: s.new_ltp || 0,
+                    futures_lots: s.futures_lots || 0,
+                    futures_action: s.futures_action || '',
                 };
-                await API.post(`/api/trades/${rollTradeId}/roll`, body);
-                Utils.toast(scenarioId === 'futures_hedge' ? 'Futures hedge placed' : 'Roll executed successfully', 'success');
+                const resp = await API.post(`/api/trades/${rollTradeId}/roll`, body);
+                const pnl = resp && resp.realized_pnl != null ? ` · Realized: ${Utils.formatINR(resp.realized_pnl)}` : '';
+                Utils.toast((scenarioId === 'futures_hedge' ? 'Futures hedge placed' : 'Roll executed') + pnl, 'success');
                 closeRollModal();
                 loadPositions();
-            } catch (e) { Utils.toast('Roll execution failed', 'error'); }
+            } catch (e) { Utils.toast('Execution failed — try again', 'error'); }
         }
     </script>
 </body>

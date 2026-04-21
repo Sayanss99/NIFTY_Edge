@@ -482,11 +482,24 @@ def get_roll_scenarios(
     if not trade:
         raise HTTPException(status_code=404, detail="Trade not found")
 
+    # Guard: roll is meaningless for closed / expired trades.
+    if trade.status != TradeStatus.OPEN.value:
+        raise HTTPException(status_code=400, detail=f"Trade is {trade.status}; only OPEN trades can be rolled.")
+    try:
+        exp_date = datetime.strptime(trade.expiry_date, "%d-%b-%Y").date()
+        if exp_date < datetime.now(_IST).date():
+            raise HTTPException(status_code=400, detail=f"Expiry {trade.expiry_date} has already passed — close this position or wait for auto-expiry sweep.")
+    except ValueError:
+        pass
+
     # Load current chain for trade's expiry
     try:
         chain_df, expiries, spot = build_chain("NIFTY", trade.expiry_date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chain fetch failed: {e}")
+
+    if chain_df is None or chain_df.empty or "Strike" not in chain_df.columns:
+        raise HTTPException(status_code=503, detail="Option chain unavailable right now — try again during market hours.")
 
     dte = days_to_expiry(trade.expiry_date)
     T = time_to_expiry(trade.expiry_date)

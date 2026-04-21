@@ -355,13 +355,23 @@ const Utils = {
         `;
     },
 
-    /** Update refresh timestamp */
+    /** Update refresh timestamp.
+     * Backend stores snapshot timestamps as naive UTC (datetime.utcnow()), which
+     * serialise to an ISO string without a timezone marker. A naive ISO string
+     * is parsed by JS as *local* time, so IST users saw a 5h30m shift (e.g.
+     * 06:55 AM instead of 12:25 PM). We detect the missing tz and pin it to UTC.
+     */
     updateRefreshInfo(timestamp) {
         const el = document.getElementById('refresh-info');
-        if (!el) return;
-        if (!timestamp) return;
-        const d = new Date(timestamp);
-        el.textContent = `Last: ${d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+        if (!el || !timestamp) return;
+        let ts = timestamp;
+        if (typeof ts === 'string' && !/Z|[+-]\d{2}:?\d{2}$/.test(ts)) ts = ts + 'Z';
+        const d = new Date(ts);
+        if (isNaN(d.getTime())) return;
+        el.textContent = `Last: ${d.toLocaleTimeString('en-IN', {
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+            timeZone: 'Asia/Kolkata',
+        })} IST`;
     },
 
     /** localStorage key for persisted expiry selection */
@@ -414,6 +424,22 @@ const Utils = {
     },
 
     /**
+     * Nearest *tradeable* expiry — strictly after today (DTE > 0). On expiry
+     * day, today's expiry has DTE=0 which makes range math collapse, so the
+     * default rolls to next week. Falls back to the first item if all expiries
+     * are today or past (degenerate data).
+     */
+    nearestFutureExpiry(expiries) {
+        if (!expiries || !expiries.length) return '';
+        const today = this.todayIST();
+        for (const e of expiries) {
+            const d = this.parseExpiryDate(e);
+            if (d && d > today) return e;
+        }
+        return expiries[0];
+    },
+
+    /**
      * Save the user's expiry selection to localStorage.
      * @param {string} expiry  e.g. "17-Apr-2026"
      */
@@ -436,7 +462,7 @@ const Utils = {
         const saved = localStorage.getItem(this.EXPIRY_KEY);
         // Only restore saved expiry if it's still in the future
         if (saved && future.includes(saved)) return saved;
-        return future[0];
+        return this.nearestFutureExpiry(future);
     },
 
     /**
@@ -493,8 +519,125 @@ const Utils = {
             }
         } catch (e) {}
 
+        // Wire a global alert-triggered listener so any page pops the alert
+        // prominently and flashes the bell. Safe to call multiple times —
+        // WS.on pushes handlers; we guard with a single-instance flag.
+        this._wireGlobalAlertListener();
+
         // Show first-time tour (no-op if already completed)
         this.initTour();
+    },
+
+    /** Register a global WS listener that pops a rich toast + pulses the bell
+     *  whenever an alert fires. Idempotent — only binds once per page. */
+    _wireGlobalAlertListener() {
+        if (typeof WS === 'undefined' || this._alertListenerBound) return;
+        this._alertListenerBound = true;
+        this._injectAlertPopupStyles();
+
+        // If no page has opened a socket yet, open one so we still receive events.
+        if (!WS.socket || WS.socket.readyState > 1) {
+            try { WS.connect(); } catch (e) {}
+        }
+
+        WS.on('alert_triggered', (data) => {
+            this.showAlertPopup(data || {});
+            this.flashBell();
+            // Bump the badge locally; authoritative refresh happens next poll.
+            const badge = document.getElementById('alert-badge');
+            const prev = parseInt((badge && badge.textContent) || '0', 10) || 0;
+            this.updateAlertBadge(prev + 1);
+        });
+    },
+
+    _injectAlertPopupStyles() {
+        if (document.getElementById('ne-alert-popup-style')) return;
+        const s = document.createElement('style');
+        s.id = 'ne-alert-popup-style';
+        s.textContent = `
+            @keyframes ne-bell-shake {
+                0%,100% { transform: rotate(0); }
+                15% { transform: rotate(-18deg); }
+                30% { transform: rotate(14deg); }
+                45% { transform: rotate(-10deg); }
+                60% { transform: rotate(6deg); }
+                75% { transform: rotate(-3deg); }
+            }
+            .ne-bell-shake { animation: ne-bell-shake 0.9s ease-in-out; color: #DC2626 !important; }
+            .ne-alert-popup {
+                position: fixed; right: 20px; top: 72px; z-index: 9500;
+                background: var(--bg-card); border: 1px solid #DC2626;
+                border-left: 4px solid #DC2626;
+                border-radius: 8px; padding: 12px 14px 12px 14px;
+                box-shadow: 0 12px 28px rgba(0,0,0,0.22);
+                max-width: 360px; font-size: 12px; line-height: 1.45;
+                animation: ne-alert-in 0.25s ease-out;
+                cursor: pointer;
+            }
+            @keyframes ne-alert-in {
+                from { transform: translateY(-8px); opacity: 0; }
+                to   { transform: translateY(0);    opacity: 1; }
+            }
+            .ne-alert-popup .na-title {
+                font-weight: 700; color: #DC2626; font-size: 12.5px;
+                letter-spacing: 0.3px; margin-bottom: 4px;
+                display: flex; align-items: center; gap: 6px;
+            }
+            .ne-alert-popup .na-msg { color: var(--text-primary); margin-bottom: 6px; }
+            .ne-alert-popup .na-meta {
+                color: var(--text-muted); font-size: 10.5px;
+                font-family: var(--font-mono);
+            }
+            .ne-alert-popup .na-close {
+                position: absolute; top: 6px; right: 8px;
+                color: var(--text-muted); font-size: 14px; cursor: pointer;
+                border: none; background: none; padding: 0 4px;
+            }
+        `;
+        document.head.appendChild(s);
+    },
+
+    /** Show a prominent, clickable alert pop-up anchored to the bell. */
+    showAlertPopup(data) {
+        this._injectAlertPopupStyles();
+        // Stack successive popups vertically
+        const existing = document.querySelectorAll('.ne-alert-popup');
+        const offset = 72 + existing.length * 12;
+
+        const metric = (data.metric || '').toUpperCase().replace(/_/g, ' ');
+        const cond   = data.condition || '';
+        const thr    = data.threshold != null ? data.threshold : '';
+        const cur    = data.current_value != null ? data.current_value : '';
+        const msg    = data.message || 'Alert condition met.';
+
+        const popup = document.createElement('div');
+        popup.className = 'ne-alert-popup';
+        popup.style.top = offset + 'px';
+        popup.innerHTML = `
+            <button class="na-close" aria-label="Dismiss">&times;</button>
+            <div class="na-title">&#128276; Alert Triggered${metric ? ' — ' + metric : ''}</div>
+            <div class="na-msg">${msg}</div>
+            <div class="na-meta">${cond && thr !== '' ? `${cond} ${thr}` : ''}${cur !== '' ? `  ·  now ${cur}` : ''}</div>
+        `;
+        popup.querySelector('.na-close').addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            popup.remove();
+        });
+        popup.addEventListener('click', () => { window.location.href = '/alerts'; });
+        document.body.appendChild(popup);
+
+        setTimeout(() => { if (popup.isConnected) popup.remove(); }, 5000);
+    },
+
+    /** Briefly shake + tint the bell icon to grab attention. */
+    flashBell() {
+        const bell = document.getElementById('notification-bell');
+        if (!bell) return;
+        bell.classList.remove('ne-bell-shake');
+        // Force reflow so the animation restarts if fired repeatedly
+        void bell.offsetWidth;
+        bell.classList.add('ne-bell-shake');
+        setTimeout(() => bell.classList.remove('ne-bell-shake'), 1000);
     },
 
     /** Toggle dark mode */

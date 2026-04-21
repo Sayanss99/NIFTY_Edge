@@ -477,8 +477,30 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
         print(f"[Scheduler] Chain fetch failed: {e}")
         return None
 
-    expiry = expiries[0] if expiries else ""
+    # Pick nearest *tradeable* expiry (DTE > 0). On expiry day, today's expiry
+    # has DTE=0 which collapses range math and makes the dashboard useless,
+    # so we roll to next week. Fall back to expiries[0] only if nothing else.
+    expiry = ""
+    for e in expiries or []:
+        try:
+            if days_to_expiry(str(e)) > 0:
+                expiry = str(e)
+                break
+        except Exception:
+            continue
+    if not expiry and expiries:
+        expiry = str(expiries[0])
     dte = days_to_expiry(expiry) if expiry else 0
+
+    # If we rolled past the default nearest expiry, rebuild chain for the
+    # selected expiry so OI/IV/greeks reflect the tradeable series.
+    if expiry and expiries and expiry != str(expiries[0]):
+        try:
+            chain_df, _exp_list, spot = build_chain("NIFTY", expiry)
+            if chain_df.empty:
+                print(f"[Scheduler] Empty chain for rolled expiry {expiry}; keeping nearest")
+        except Exception as e:
+            print(f"[Scheduler] Failed to rebuild chain for {expiry}: {e}")
 
     vix_data = fetch_vix()
     vix = vix_data["last"] if vix_data else 0

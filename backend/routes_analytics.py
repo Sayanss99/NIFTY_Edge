@@ -208,46 +208,73 @@ def strike_patterns(
 
 
 def _generate_insights(ce_data, pe_data, vix_regime):
-    """Generate auto-insights from trade patterns."""
+    """Generate auto-insights from trade patterns.
+
+    Each insight aims to be *actionable* — either a threshold to respect, a regime
+    to avoid, or a confirmed edge to lean on. Small samples (<5 trades) get a
+    caveat so the user doesn't over-fit to noise.
+    """
     insights = []
 
-    # CE distance sweet spot
-    if ce_data:
-        winning_ce = [d for d in ce_data if d["win"]]
-        if winning_ce:
-            avg_win_dist = sum(d["distance"] for d in winning_ce) / len(winning_ce)
-            total_ce_wr = len(winning_ce) / len(ce_data) * 100
+    def _caveat(n):
+        return " <span style='opacity:0.7'>(small sample — treat as tentative)</span>" if n < 5 else ""
+
+    # Per-side win/loss distance comparison — the most actionable signal.
+    for label, data in [("CE", ce_data), ("PE", pe_data)]:
+        if not data:
+            continue
+        wins = [d for d in data if d["win"]]
+        losses = [d for d in data if not d["win"]]
+        wr = len(wins) / len(data) * 100
+        insights.append(
+            f"{label} sells: {wr:.0f}% win rate over {len(data)} trade{'s' if len(data) != 1 else ''}." + _caveat(len(data))
+        )
+        if wins and losses:
+            avg_win = sum(d["distance"] for d in wins) / len(wins)
+            avg_loss = sum(d["distance"] for d in losses) / len(losses)
+            gap = avg_win - avg_loss
+            if gap >= 100:
+                insights.append(
+                    f"{label} winners sat ~{gap:.0f}pts further OTM than losers "
+                    f"(~{avg_win:.0f} vs ~{avg_loss:.0f}). Treat ~{avg_win:.0f}pts as your safety floor."
+                    + _caveat(len(data))
+                )
+            elif gap <= -100:
+                insights.append(
+                    f"{label}: closer-to-spot strikes actually won more often here — "
+                    f"unusual. Re-check entry timing rather than just pushing strikes further OTM."
+                    + _caveat(len(data))
+                )
+
+    # CE vs PE comparative bias — tells the user which side is bleeding.
+    if ce_data and pe_data and len(ce_data) >= 3 and len(pe_data) >= 3:
+        ce_wr = sum(1 for d in ce_data if d["win"]) / len(ce_data) * 100
+        pe_wr = sum(1 for d in pe_data if d["win"]) / len(pe_data) * 100
+        diff = ce_wr - pe_wr
+        if abs(diff) >= 20:
+            weak, strong = ("PE", "CE") if diff > 0 else ("CE", "PE")
             insights.append(
-                f"CE sells: {total_ce_wr:.0f}% win rate across {len(ce_data)} trades. "
-                f"Winning CEs avg {avg_win_dist:.0f}pts OTM."
+                f"{strong} side is outperforming {weak} by {abs(diff):.0f}pp in win rate — "
+                f"consider sizing {weak} smaller or widening {weak} strikes until it catches up."
             )
 
-    # PE distance sweet spot
-    if pe_data:
-        winning_pe = [d for d in pe_data if d["win"]]
-        if winning_pe:
-            avg_win_dist = sum(d["distance"] for d in winning_pe) / len(winning_pe)
-            total_pe_wr = len(winning_pe) / len(pe_data) * 100
-            insights.append(
-                f"PE sells: {total_pe_wr:.0f}% win rate across {len(pe_data)} trades. "
-                f"Winning PEs avg {avg_win_dist:.0f}pts OTM."
-            )
-
-    # VIX regime insight
+    # VIX regime insight — flag both weak and strong buckets.
     for regime in vix_regime:
         if regime["total"] >= 3:
             if regime["win_rate"] < 50:
                 insights.append(
                     f"Win rate drops to {regime['win_rate']}% when {regime['label']} "
-                    f"({regime['total']} trades) — consider reducing size."
+                    f"({regime['total']} trades) — reduce size or skip until vol normalises."
+                    + _caveat(regime["total"])
                 )
             elif regime["win_rate"] >= 80:
                 insights.append(
                     f"Strong {regime['win_rate']}% win rate when {regime['label']} "
-                    f"({regime['total']} trades)."
+                    f"({regime['total']} trades) — this is your home turf."
+                    + _caveat(regime["total"])
                 )
 
-    # Distance threshold insight
+    # Far-OTM edge confirmation.
     for label, data in [("CE", ce_data), ("PE", pe_data)]:
         far_otm = [d for d in data if d["distance"] > 800]
         if len(far_otm) >= 2:
@@ -255,8 +282,23 @@ def _generate_insights(ce_data, pe_data, vix_regime):
             far_wr = far_wins / len(far_otm) * 100
             if far_wr >= 80:
                 insights.append(
-                    f"You've won {far_wr:.0f}% selling {label} >800pts OTM ({len(far_otm)} trades)."
+                    f"Far-OTM {label} (>800pts) held up in {far_wr:.0f}% of cases "
+                    f"({len(far_otm)} trades) — keep defaulting here when unsure."
+                    + _caveat(len(far_otm))
                 )
+
+    # Tail-risk check — a single loss that dwarfs the average win erases the edge.
+    all_data = ce_data + pe_data
+    wins = [d["pnl"] for d in all_data if d["win"]]
+    losses = [-d["pnl"] for d in all_data if not d["win"] and d["pnl"] < 0]
+    if wins and losses:
+        avg_win = sum(wins) / len(wins)
+        worst_loss = max(losses)
+        if worst_loss >= 3 * avg_win and worst_loss > 0:
+            insights.append(
+                f"Your worst loss was ~{worst_loss/avg_win:.1f}× the average win. "
+                f"One tail event wipes out multiple winners — review stop discipline on losers."
+            )
 
     return insights if insights else ["Not enough trade history for pattern insights yet."]
 

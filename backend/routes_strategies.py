@@ -195,78 +195,95 @@ def _compute_rr_zscore(db: Session, current_rr: float, lookback: int = 60) -> di
 
 
 def _score_strategies(iv_rank, direction, dir_score, rr_value, pcr, vix):
-    """Score 5 strategy types 0-100 for current market. Returns sorted list."""
+    """Score 5 strategy types 0-100 for current market. Safety-first bias —
+    defined-risk strategies (Iron Condor, spreads, Calendar) get a head start
+    over unlimited-risk Short Strangle. Strangle is penalised harder when vol
+    or directional conviction is elevated, since tail risk is asymmetric.
+    """
     scores = {}
     rationales = {}
 
-    # ── IRON CONDOR ──────────────────────────────────────────────────────────
-    ic = 50.0
+    # Convenience: strong directional conviction (|dir_score| tracks the
+    # 8-factor composite). High |score| means one-sided flow → bad for
+    # unlimited-risk short-vol plays.
+    strong_dir = abs(dir_score or 0) >= 4
+
+    # ── IRON CONDOR ─ safer premium-sell default; both wings defined ────────
+    ic = 55.0   # slight head-start: defined risk, neutral bias preferred
     if iv_rank > 70: ic += 25
-    elif iv_rank > 50: ic += 12
+    elif iv_rank > 50: ic += 14
     elif iv_rank < 30: ic -= 20
-    if direction == "NEUTRAL": ic += 15
-    elif direction != "NEUTRAL": ic -= 10
-    if abs(rr_value) < 2: ic += 10
+    if direction == "NEUTRAL": ic += 18
+    else: ic -= (15 if strong_dir else 8)
+    if abs(rr_value) < 2: ic += 12
+    if vix > 22: ic -= 6     # even defined risk hurts in chaos
     rationales["IRON_CONDOR"] = (
         f"IV Rank {iv_rank:.0f}% ({'elevated – premium selling favoured' if iv_rank > 60 else 'moderate'}). "
-        f"Market {'neutral – ideal for range-bound sell' if direction == 'NEUTRAL' else 'directional – increases risk of breach'}. "
-        f"RR {rr_value:+.1f} ({'balanced' if abs(rr_value) < 2 else 'skewed'})."
+        f"Market {'neutral – ideal for range-bound sell' if direction == 'NEUTRAL' else 'directional – defined wings cap risk'}. "
+        f"RR {rr_value:+.1f} ({'balanced' if abs(rr_value) < 2 else 'skewed'}). Defined-risk both sides."
     )
     scores["IRON_CONDOR"] = max(0, min(100, ic))
 
-    # ── SHORT STRANGLE ───────────────────────────────────────────────────────
-    st = 50.0
-    if iv_rank > 70: st += 30
-    elif iv_rank > 55: st += 15
-    elif iv_rank < 40: st -= 20
-    if vix > 18: st += 10
+    # ── SHORT STRANGLE ─ unlimited risk, safety-penalised ───────────────────
+    st = 42.0   # lower base — unlimited risk demands stronger justification
+    if iv_rank > 75: st += 22
+    elif iv_rank > 60: st += 12
+    elif iv_rank < 40: st -= 22
     if direction == "NEUTRAL": st += 10
+    else: st -= (18 if strong_dir else 10)   # directional markets → tail risk
+    if vix > 22: st -= 15                     # high-vol regime → blow-up risk
+    elif vix > 18: st -= 6
+    elif vix < 12: st -= 8                    # complacent vol, thin premium
+    if abs(rr_value) > 3: st -= 8             # skew stressed
     rationales["STRANGLE"] = (
         f"IV Rank {iv_rank:.0f}% ({'very high – strong premium-sell case' if iv_rank > 70 else 'moderate'}). "
-        f"VIX {vix:.1f} ({'elevated fear, wide straddle possible' if vix > 18 else 'low'}). "
-        f"Unlimited risk; works when market stays range-bound."
+        f"VIX {vix:.1f} ({'elevated – tail risk heightened' if vix > 18 else 'calm'}). "
+        f"Unlimited risk on both wings — prefer only when vol is rich and flow is neutral."
     )
     scores["STRANGLE"] = max(0, min(100, st))
 
-    # ── BULL PUT SPREAD ──────────────────────────────────────────────────────
+    # ── BULL PUT SPREAD ─ defined-risk directional ──────────────────────────
     bp = 50.0
-    if direction == "BULLISH": bp += 25
-    elif direction == "BEARISH": bp -= 20
-    if rr_value < -1: bp += 10   # puts expensive → good to sell puts
-    if pcr > 1.1: bp += 10       # high PCR = support building = bullish
-    if iv_rank > 40: bp += 10    # need premium to make the spread worthwhile
+    if direction == "BULLISH": bp += (30 if strong_dir else 22)
+    elif direction == "BEARISH": bp -= 25
+    if rr_value < -1: bp += 10
+    if pcr > 1.1: bp += 10
+    if iv_rank > 40: bp += 10
+    if vix > 25: bp -= 6
     rationales["BULL_PUT_SPREAD"] = (
         f"8-factor signal: {direction} (score {dir_score:+.1f}). "
         f"PCR {pcr:.2f} ({'supports bullish bias' if pcr > 1.0 else 'no strong support'}). "
-        f"RR {rr_value:+.1f} ({'put premium elevated – good to sell' if rr_value < -1 else 'neutral'})."
+        f"RR {rr_value:+.1f}. Defined risk — max loss capped at spread width."
     )
     scores["BULL_PUT_SPREAD"] = max(0, min(100, bp))
 
-    # ── BEAR CALL SPREAD ─────────────────────────────────────────────────────
+    # ── BEAR CALL SPREAD ─ defined-risk directional ─────────────────────────
     bc = 50.0
-    if direction == "BEARISH": bc += 25
-    elif direction == "BULLISH": bc -= 20
-    if rr_value > 1: bc += 10    # calls expensive → good to sell calls
-    if pcr < 0.9: bc += 10       # low PCR = resistance building = bearish
+    if direction == "BEARISH": bc += (30 if strong_dir else 22)
+    elif direction == "BULLISH": bc -= 25
+    if rr_value > 1: bc += 10
+    if pcr < 0.9: bc += 10
     if iv_rank > 40: bc += 10
+    if vix > 25: bc -= 6
     rationales["BEAR_CALL_SPREAD"] = (
         f"8-factor signal: {direction} (score {dir_score:+.1f}). "
         f"PCR {pcr:.2f} ({'heavy call resistance' if pcr < 0.9 else 'neutral'}). "
-        f"RR {rr_value:+.1f} ({'call premium elevated – good to sell' if rr_value > 1 else 'neutral'})."
+        f"RR {rr_value:+.1f}. Defined risk — max loss capped at spread width."
     )
     scores["BEAR_CALL_SPREAD"] = max(0, min(100, bc))
 
-    # ── CALENDAR SPREAD ──────────────────────────────────────────────────────
+    # ── CALENDAR SPREAD ─ defined-risk, long theta curve ────────────────────
     cs = 50.0
-    if iv_rank < 30: cs += 30     # low IV → buy cheap near, sell rich far
+    if iv_rank < 30: cs += 30
     elif iv_rank < 45: cs += 15
-    elif iv_rank > 70: cs -= 20   # high IV → avoid buying expensive options
+    elif iv_rank > 70: cs -= 20
     if vix < 15: cs += 15
-    if direction == "NEUTRAL": cs += 10
+    if direction == "NEUTRAL": cs += 12
+    elif strong_dir: cs -= 6
     rationales["CALENDAR_SPREAD"] = (
         f"IV Rank {iv_rank:.0f}% ({'depressed – buy near, sell far works well' if iv_rank < 30 else 'elevated – calendar spread less attractive'}). "
-        f"VIX {vix:.1f} ({'low volatility environment' if vix < 15 else 'moderate'}). "
-        f"Profits from term-structure differential and neutral drift."
+        f"VIX {vix:.1f} ({'low-vol environment' if vix < 15 else 'moderate'}). "
+        f"Debit capped — max loss is net premium paid."
     )
     scores["CALENDAR_SPREAD"] = max(0, min(100, cs))
 
