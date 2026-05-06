@@ -420,7 +420,47 @@ def get_risk_scores(
     pe_scores = []
     positions = []
 
+    # Futures contracts cache — populated lazily so we only hit NSE if the
+    # user actually has open FUT positions.
+    fut_by_expiry: dict | None = None
+
     for trade in open_trades:
+        # ── Futures branch ─────────────────────────────────────────────
+        # Futures aren't priced off the option chain; they have no strike,
+        # IV, delta, or risk score. We MTM against the live futures LTP and
+        # surface the row so the dashboard's "Open Positions" panel can
+        # render its FUT card.
+        if trade.instrument_type == "FUT" or trade.trade_type in ("FUT_BUY", "FUT_SELL"):
+            if fut_by_expiry is None:
+                try:
+                    from nse_futures import fetch_nifty_futures, NIFTY_LOT as FUT_LOT
+                    fut_data = fetch_nifty_futures()
+                    fut_by_expiry = {c["expiry_date"]: c for c in fut_data.get("contracts", [])}
+                except Exception:
+                    fut_by_expiry = {}
+                    FUT_LOT = LOT_SIZE
+            contract = fut_by_expiry.get(trade.expiry_date) if fut_by_expiry else None
+            ltp = float(contract["ltp"]) if contract and contract.get("ltp") else 0.0
+            lot = trade.lot_size_override or LOT_SIZE
+            qty_units = trade.quantity * lot
+            is_long = trade.trade_type == "FUT_BUY"
+            mtm = (ltp - trade.entry_premium) * qty_units if is_long else (trade.entry_premium - ltp) * qty_units
+            positions.append({
+                "trade_id": trade.id,
+                "trade_type": trade.trade_type,
+                "instrument_type": "FUT",
+                "expiry_date": trade.expiry_date,
+                "strike": 0,
+                "quantity": trade.quantity,
+                "current_ltp": round(ltp, 2) if ltp else None,
+                "entry_price": trade.entry_premium,
+                "unrealized_pnl": round(mtm, 2) if ltp else 0.0,
+                "risk": None,
+                "max_loss": None,
+                "verified": (contract or {}).get("verified", True) if contract else False,
+            })
+            continue
+
         trade_expiry = trade.expiry_date
         chain_df = chain_by_expiry.get(trade_expiry)
         if chain_df is None:

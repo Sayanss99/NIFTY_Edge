@@ -18,12 +18,13 @@ A real-time web app for NIFTY options traders to monitor positions, track risk, 
 10. [Trade Suggestion Engine](#trade-suggestion-engine)
 11. [Alerts — Setup Guide](#alerts--setup-guide)
 12. [News Desk](#news-desk)
-13. [Risk Scoring — How It Works](#risk-scoring--how-it-works)
-14. [Hedge Suggestions](#hedge-suggestions)
-15. [Directional Signal](#directional-signal)
-16. [Support & Resistance Levels](#support--resistance-levels)
-17. [Settings & Preferences](#settings--preferences)
-18. [Running the App](#running-the-app)
+13. [Futures](#futures)
+14. [Risk Scoring — How It Works](#risk-scoring--how-it-works)
+15. [Hedge Suggestions](#hedge-suggestions)
+16. [Directional Signal](#directional-signal)
+17. [Support & Resistance Levels](#support--resistance-levels)
+18. [Settings & Preferences](#settings--preferences)
+19. [Running the App](#running-the-app)
 
 ---
 
@@ -50,6 +51,8 @@ NIFTY_Edge/
 │   ├── routes_strategies.py     # /api/strategies/* — strategy CRUD, payoff computation
 │   ├── routes_suggestions.py    # /api/suggestions/* — list, execute, reject suggestions
 │   ├── routes_news.py           # /api/news/* — feed, ticker, recent-context, dismiss, stats
+│   ├── routes_futures.py        # /api/futures/* — contracts, positions, margin, execute hedge
+│   ├── nse_futures.py           # NIFTY index-futures fetcher with basis/lot/inversion sanity checks
 │   ├── news_entities.py         # Keyword categories, bullish/bearish word lists, MIN_STORE_SCORE config
 │   ├── news_sources.py          # RSS feed source registry (name, url, enabled, weight)
 │   ├── news_scorer.py           # Rule-based scorer: score_news_item() → NewsScore dataclass
@@ -62,6 +65,7 @@ NIFTY_Edge/
     ├── js/
     │   ├── api.js               # API client — fetch wrapper, auth header injection, getUser(), logout()
     │   ├── utils.js             # Shared UI utilities: buildHeader(), buildSidebar(), tour, profile card, formatters
+    │   ├── tweaks.js            # Tweaks panel — theme, accent hue, density, texture, card radius (persisted)
     │   └── ws.js                # WebSocket client with reconnect logic and event emitter
     └── pages/
         ├── login.html           # Animated landing + login/signup page
@@ -72,7 +76,8 @@ NIFTY_Edge/
         ├── analytics.html       # Performance charts, heatmap, signal accuracy history
         ├── strategy_builder.html# Multi-leg strategy builder with payoff diagram
         ├── alerts.html          # Alert management and trade signals
-        └── news_desk.html       # News Desk — live feed with scoring and filters
+        ├── news_desk.html       # News Desk — live feed with scoring and filters
+        └── futures.html         # NIFTY futures contracts, MTM positions, futures-based hedging
 ```
 
 ---
@@ -84,7 +89,7 @@ NIFTY_Edge/
 | **Backend** | Python 3.11+, FastAPI, Uvicorn |
 | **Database** | SQLite via SQLAlchemy ORM |
 | **Auth** | JWT (PyJWT), bcrypt password hashing |
-| **Data** | NSE via `pnsea` library + `yfinance` for IV history |
+| **Data** | NSE via `pnsea` library + `yfinance` for IV history; NIFTY index futures via custom `nse_futures` fetcher |
 | **Scheduler** | APScheduler (background jobs during market hours) |
 | **Frontend** | Vanilla HTML/CSS/JS — no framework |
 | **Realtime** | WebSocket (FastAPI WebSocket + custom `ws.js` client) |
@@ -136,11 +141,13 @@ At the top, you'll see these key numbers:
 | **Nifty Spot** | Current NIFTY index price with today's change |
 | **India VIX** | Fear gauge — higher VIX = more volatility expected |
 | **Days to Expiry** | Trading days left until the selected expiry |
-| **Calc Range** | Expected price range for NIFTY based on VIX (1 standard deviation) |
-| **Tendency** | Simple market mood — Positive, Negative, or Neutral (based on option skew + VIX) |
-| **Max Pain** | The strike where option writers make the most money — NIFTY tends to gravitate here near expiry |
-| **Directional** | Advanced 8-factor signal — BULLISH, BEARISH, or NEUTRAL with how many factors agree. Also shows a news annotation ("News: N HIGH · X↑ Y↓") if any HIGH/CRITICAL news items landed in the last 2 hours — purely cosmetic, does not affect the signal calculation |
+| **Calc Range** | Expected price range for NIFTY based on VIX (1 standard deviation). Tagged **~68% CHANCE** — a 1-SD move statistically captures ~68% of expected price action by expiry. The offset-scaled (VIX Range) row shows its own probability derived from a normal distribution with sigma = (1 + offset/100) |
+| **Skew** | Option skew read (Bullish / Bearish / Neutral) with a sub-line summarising the underlying tilt — replaces the old "Tendency" card |
+| **Max Pain** | The strike where option writers make the most money — NIFTY tends to gravitate here near expiry. Sub-line shows distance from spot |
+| **Signal** | Advanced 8-factor directional signal — BULLISH, BEARISH, or NEUTRAL with how many factors agree. A news context line ("News: N HIGH · X↑ Y↓") appears if HIGH/CRITICAL news landed in the last 2 hours — purely cosmetic, does not affect the signal calculation |
 | **IV Rank** | Where current ATM IV sits in its 52-week range (0% = historical low, 100% = historical high). Hover the card for full detail |
+| **Market Verdict (18-param)** | Aggregated read across all 18 analytics parameters — uses the same engine as the Strategy Builder's Market Outlook so the two surfaces can never disagree |
+| **News Tone (4h)** | Majority direction of HIGH/MEDIUM news items in the last 4 hours, sourced from the News Desk |
 
 ### News Ticker Strip
 
@@ -454,7 +461,7 @@ The News Desk is a completely separate module that pulls market-relevant news fr
 
 ### How News Is Fetched
 
-The scheduler polls the following RSS feeds every 90 seconds during market hours (6 AM – 11 PM IST):
+The scheduler polls the following RSS feeds every 90 seconds, **24/7** (the previous 6 AM – 11 PM IST active window has been removed — the dashboard ticker and News Desk page consume this feed at all hours):
 
 | Source | Weight |
 |--------|--------|
@@ -495,6 +502,34 @@ Items scoring below 5 are never stored.
 ### Data Isolation
 
 News data is stored in two separate tables (`news_items`, `news_dismissals`) and served through its own router (`/api/news/*`). None of the following are read from or written to by the news system: directional signal computation, risk scores, hedge suggestions, trade suggestion engine, alert rules, or any existing API endpoints.
+
+---
+
+## Futures
+
+The Futures page (`/futures`) is a dedicated module for trading and hedging with NIFTY index-futures contracts.
+
+### Live Contracts
+
+- All available NIFTY futures contracts (current, next, far month) are fetched live via `nse_futures.fetch_nifty_futures()`
+- Each contract is cross-validated against the spot/option chain with **basis, lot, and inversion sanity checks** — rows with suspicious values are flagged in the UI with a `verified` pill (green = passed all checks)
+- Each card shows expiry, LTP, change, OHLC, OI, volume, basis vs spot, contract value, and a freshness badge (`fetched_at`, `stale` flag)
+
+### Open Futures Positions
+
+- Stored as `Trade` rows with `instrument_type = "FUT"` and `trade_type` of `FUT_BUY` (long) or `FUT_SELL` (short)
+- Marked-to-market live: `MTM = (LTP − entry) × qty × lot` for longs, inverted for shorts
+- Lot size defaults to the current NSE NIFTY lot but can be overridden per-trade via `lot_size_override` if NSE bumps the lot mid-contract
+- Aggregated unrealized P&L and total margin blocked are shown at the top of the page
+- Margin is estimated via `estimate_futures_margin()` (a SPAN+exposure approximation)
+
+### Futures-Based Hedging
+
+Open option positions can be hedged with a futures contract instead of (or in addition to) a buy-side option. The "execute hedge" flow on the Futures page persists the futures trade as a **child Trade row** with `parent_trade_id` linking back to the option position — so the Positions page can show the hedge attached to its parent.
+
+### Data Source Caveat
+
+Futures data comes from a custom NSE fetcher, not the same `pnsea` chain used for options. The `verified` flag and `fetched_at` timestamp on every contract are your indicators of trust — never trade on a contract showing red `UNVERIFIED` or a stale timestamp.
 
 ---
 
@@ -630,10 +665,24 @@ Standard pivot points (calculated from yesterday's high, low, close) ranked by h
 
 Click your name or avatar in the top-right header to open the floating profile card. It shows:
 - Your name and email
-- A **Dark Mode** toggle switch (animates on/off, persists across sessions)
 - A **Sign Out** button
 
 The card closes by clicking outside it or pressing Escape.
+
+### Tweaks Panel
+
+A floating **Tweaks** launcher appears on every page (driven by `tweaks.js`). Open it to customise the look without touching CSS:
+
+| Control | Options | Notes |
+|---------|---------|-------|
+| **Refine** | on / off | Toggles the v3 refinement layer (subtle gradients, borders, shadows) |
+| **Theme** | auto / light / dark | Replaces the old standalone Dark Mode toggle |
+| **Accent hue** | Cobalt, Cyan, Mint, Lime, Amber, Magma | OKLCH-tuned hue applied app-wide |
+| **Density** | compact / normal / spacious | Adjusts paddings and row heights |
+| **Texture** | grid / scan / none | Background texture for the canvas |
+| **Card radius** | px slider | Card corner roundness |
+
+State persists in `localStorage` under `niftyedge_tweaks_v1`. First visit on any device gets the baked default: dark + cobalt + grid + radius 20.
 
 ### VIX Offset %
 
@@ -647,6 +696,10 @@ Found on the Dashboard chart card. Controls how wide the "VIX Range" amber band 
 ### Expiry Selector
 
 The dropdown in the header shows **all available NIFTY expiries** fetched live from NSE — this works even when the market is closed. Selecting a different expiry recalculates:
+
+> **Active expiry rule:** the dashboard / signal / tendency engines automatically roll to the **nearest expiry with ≥ 2 trading days remaining**. On expiry day or the day before, the chain's IV/skew/RR readings are too degenerate to drive these engines reliably. The rule is centralised in `pick_active_expiry()` so every surface (dashboard, analytics, strategy builder) agrees on what "this expiry" means.
+
+
 - Calculated range and VIX offset range
 - Days to expiry
 - 25-delta Risk Reversal (CE/PE IV, RR value, verdict)
@@ -695,7 +748,7 @@ The app fetches live data from NSE only during market hours:
 
 - **Every 15 seconds**: Spot price, VIX, option LTP, P&L, risk scores
 - **Every 3 minutes**: S/R levels, Fibonacci, Pivot points
-- **Every 90 seconds** (6 AM – 11 PM IST): News RSS fetch, score, and store
+- **Every 90 seconds, 24/7**: News RSS fetch, score, and store (independent of market hours)
 - All updates happen automatically via WebSocket — no need to refresh the page
 
 ---
