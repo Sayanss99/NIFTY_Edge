@@ -8,17 +8,23 @@
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         :root {
-            --blue:    #3B82F6;
-            --blue-d:  #1D4ED8;
-            --green:   #10B981;
-            --red:     #EF4444;
-            --amber:   #F59E0B;
-            --bg:      #070D1A;
-            --bg2:     #0D1526;
-            --border:  rgba(255,255,255,0.07);
-            --text:    #E2E8F0;
-            --muted:   #64748B;
-            --card-bg: rgba(13, 21, 38, 0.92);
+            /* Cobalt-tuned palette to match NiftyEdge v3 (dark + cobalt + grid + round) */
+            --blue:    oklch(0.62 0.16 220);
+            --blue-d:  oklch(0.50 0.16 220);
+            --blue-hi: oklch(0.74 0.13 220);
+            --green:   oklch(0.72 0.18 150);
+            --red:     oklch(0.68 0.20 27);
+            --amber:   oklch(0.78 0.15 75);
+            --bg:      #07090F;
+            --bg2:     #0E1219;
+            --bg3:     #161B26;
+            --border:  rgba(255,255,255,0.06);
+            --border-2: rgba(255,255,255,0.10);
+            --text:    #E5E7EB;
+            --muted:   #6B7280;
+            --muted-2: #9CA3AF;
+            --card-bg: rgba(14, 18, 25, 0.92);
+            --radius:  20px;
         }
 
         html, body {
@@ -26,7 +32,23 @@
             background: var(--bg);
             color: var(--text);
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-feature-settings: "ss01", "cv11", "tnum";
+            letter-spacing: -0.005em;
             overflow: hidden;
+        }
+        /* Hairline grid texture matches v3 backgrounds across the app */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            background-image:
+                linear-gradient(to right, rgba(255,255,255,0.025) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255,255,255,0.025) 1px, transparent 1px);
+            background-size: 32px 32px;
+            mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, #000 50%, transparent 100%);
+            -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, #000 50%, transparent 100%);
         }
 
         /* ── Ticker strip ─────────────────────────────────────────────── */
@@ -84,6 +106,9 @@
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            background:
+                radial-gradient(1200px 600px at 8% 110%, color-mix(in srgb, var(--blue) 22%, transparent), transparent 60%),
+                radial-gradient(900px 500px at 92% -10%, rgba(129,140,248,0.10), transparent 60%);
         }
 
         #price-canvas {
@@ -110,86 +135,139 @@
         .hero-content {
             position: relative;
             z-index: 2;
-            padding: 44px 52px;
+            padding: 44px 56px 44px;
             display: flex;
             flex-direction: column;
             height: 100%;
         }
 
-        /* Brand */
+        /* Slim status row at bottom of hero — matches in-app header rhythm */
+        .hero-statusbar {
+            display: flex;
+            align-items: center;
+            gap: 22px;
+            font-size: 10.5px;
+            font-family: 'SF Mono', 'JetBrains Mono', monospace;
+            color: var(--muted-2);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            margin-top: 4px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border);
+        }
+        .hero-statusbar .sb-item { display: inline-flex; align-items: center; gap: 7px; }
+        .hero-statusbar .sb-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent);
+            animation: sb-pulse 2.4s ease-in-out infinite;
+        }
+        @keyframes sb-pulse { 0%,100%{opacity:1;} 50%{opacity:0.55;} }
+        .hero-statusbar .sb-val { color: #fff; font-weight: 600; letter-spacing: 0; text-transform: none; }
+
+        /* Brand — matches in-app NE monogram */
         .brand {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
             margin-bottom: auto;
         }
         .brand-gem {
-            width: 32px;
-            height: 32px;
-            background: linear-gradient(135deg, var(--blue) 0%, #818CF8 100%);
-            border-radius: 8px;
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--blue) 0%, var(--blue-hi) 100%);
+            border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 16px;
-            box-shadow: 0 0 20px rgba(59,130,246,0.4);
+            font-size: 13px;
+            font-weight: 800;
+            color: #fff;
+            letter-spacing: 0.02em;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.20),
+                0 4px 16px color-mix(in srgb, var(--blue) 35%, transparent);
         }
         .brand-name {
-            font-size: 17px;
+            font-size: 16px;
             font-weight: 700;
-            letter-spacing: -0.3px;
+            letter-spacing: -0.01em;
         }
         .brand-beta {
             font-size: 9px;
             font-weight: 700;
-            background: rgba(59,130,246,0.15);
-            color: var(--blue);
-            border: 1px solid rgba(59,130,246,0.3);
+            font-family: 'SF Mono', monospace;
+            background: color-mix(in srgb, var(--blue) 16%, transparent);
+            color: var(--blue-hi);
+            border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent);
             border-radius: 4px;
-            padding: 1px 5px;
-            letter-spacing: 0.5px;
+            padding: 2px 6px;
+            letter-spacing: 0.08em;
+        }
+
+        /* Eyebrow above headline — gives a product-page rhythm */
+        .hero-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--muted-2);
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            margin-bottom: 18px;
+        }
+        .hero-eyebrow::before {
+            content: '';
+            width: 22px; height: 1px;
+            background: var(--blue);
         }
 
         /* Main headline */
         .hero-headline {
             margin-top: auto;
-            margin-bottom: 16px;
+            margin-bottom: 8px;
         }
         .hero-headline h1 {
-            font-size: clamp(28px, 3.2vw, 44px);
-            font-weight: 800;
-            line-height: 1.15;
-            letter-spacing: -0.8px;
+            font-size: clamp(30px, 3.4vw, 48px);
+            font-weight: 700;
+            line-height: 1.08;
+            letter-spacing: -0.025em;
             color: #fff;
         }
         .hero-headline h1 .hl-accent {
-            background: linear-gradient(90deg, var(--blue) 0%, #818CF8 100%);
+            background: linear-gradient(92deg, var(--blue-hi) 0%, var(--blue) 80%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
         .hero-sub {
-            margin-top: 12px;
+            margin-top: 16px;
             font-size: 14px;
-            color: var(--muted);
+            color: var(--muted-2);
             line-height: 1.6;
-            max-width: 460px;
+            max-width: 480px;
+            text-wrap: pretty;
         }
 
-        /* Feature bullets */
+        /* Feature pills */
         .feature-list {
             display: flex;
-            flex-direction: column;
+            flex-wrap: wrap;
             gap: 8px;
-            margin-top: 28px;
-            margin-bottom: 36px;
+            margin-top: 26px;
+            margin-bottom: 28px;
         }
         .feature-item {
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            gap: 10px;
-            font-size: 12.5px;
-            color: #94A3B8;
+            gap: 8px;
+            font-size: 11.5px;
+            color: var(--muted-2);
+            background: rgba(255,255,255,0.025);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 6px 12px 6px 10px;
         }
         .feature-dot {
             width: 6px;
@@ -197,9 +275,9 @@
             border-radius: 50%;
             flex-shrink: 0;
         }
-        .fd-blue  { background: var(--blue); box-shadow: 0 0 6px var(--blue); }
-        .fd-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
-        .fd-amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+        .fd-blue  { background: var(--blue);  box-shadow: 0 0 6px color-mix(in srgb, var(--blue) 60%, transparent); }
+        .fd-green { background: var(--green); box-shadow: 0 0 6px color-mix(in srgb, var(--green) 60%, transparent); }
+        .fd-amber { background: var(--amber); box-shadow: 0 0 6px color-mix(in srgb, var(--amber) 60%, transparent); }
 
         /* Floating metric badges */
         .floating-metrics {
@@ -210,12 +288,14 @@
         }
         .fm-badge {
             position: absolute;
-            background: rgba(13,21,38,0.82);
-            border: 1px solid rgba(255,255,255,0.10);
-            border-radius: 8px;
-            padding: 7px 11px;
-            backdrop-filter: blur(8px);
+            background: rgba(14,18,25,0.78);
+            border: 1px solid var(--border-2);
+            border-radius: 12px;
+            padding: 9px 13px;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
             animation: float-bob linear infinite;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.28);
         }
         .fm-badge .fm-label {
             font-size: 8.5px;
@@ -241,15 +321,27 @@
 
         /* ── Form panel (right) ───────────────────────────────────────── */
         .form-panel {
-            width: 420px;
+            width: 460px;
             flex-shrink: 0;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: var(--bg2);
+            background: linear-gradient(180deg, var(--bg2) 0%, var(--bg) 100%);
             border-left: 1px solid var(--border);
-            padding: 40px 36px;
+            padding: 40px 40px;
             position: relative;
+        }
+        /* Glassy elevated card around the form */
+        .form-panel .form-card {
+            background: rgba(22,27,38,0.55);
+            border: 1px solid var(--border-2);
+            border-radius: var(--radius);
+            padding: 30px 28px 24px;
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.04),
+                0 24px 64px rgba(0,0,0,0.35);
         }
 
         /* Subtle top glow on form panel */
@@ -266,17 +358,18 @@
         }
 
         .form-card-header {
-            margin-bottom: 28px;
+            margin-bottom: 22px;
         }
         .form-card-header h2 {
-            font-size: 20px;
+            font-size: 22px;
             font-weight: 700;
             color: #fff;
             margin-bottom: 4px;
+            letter-spacing: -0.018em;
         }
         .form-card-header p {
             font-size: 12.5px;
-            color: var(--muted);
+            color: var(--muted-2);
         }
 
         /* Form tab switcher */
@@ -303,8 +396,8 @@
             font-family: inherit;
         }
         .form-tab.active {
-            background: rgba(59,130,246,0.15);
-            color: var(--blue);
+            background: color-mix(in srgb, var(--blue) 16%, transparent);
+            color: var(--blue-hi);
             font-weight: 600;
         }
 
@@ -322,37 +415,41 @@
         }
         .f-input {
             width: 100%;
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.10);
-            border-radius: 8px;
-            padding: 9px 12px;
+            background: rgba(255,255,255,0.035);
+            border: 1px solid var(--border-2);
+            border-radius: 10px;
+            padding: 10px 13px;
             font-size: 13px;
             color: var(--text);
             font-family: inherit;
             outline: none;
-            transition: border-color 0.2s, box-shadow 0.2s;
+            transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
         }
-        .f-input::placeholder { color: #334155; }
+        .f-input::placeholder { color: #475569; }
+        .f-input:hover { background: rgba(255,255,255,0.05); }
         .f-input:focus {
-            border-color: rgba(59,130,246,0.5);
-            box-shadow: 0 0 0 3px rgba(59,130,246,0.10);
+            border-color: color-mix(in srgb, var(--blue) 60%, transparent);
+            background: rgba(255,255,255,0.05);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 18%, transparent);
         }
 
         .f-submit {
             width: 100%;
-            padding: 10px;
+            padding: 11px;
             border: none;
-            border-radius: 8px;
-            background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+            border-radius: 10px;
+            background: linear-gradient(180deg, var(--blue) 0%, var(--blue-d) 100%);
             color: #fff;
             font-size: 13.5px;
             font-weight: 600;
             cursor: pointer;
-            margin-top: 6px;
+            margin-top: 8px;
             font-family: inherit;
-            letter-spacing: 0.1px;
-            transition: opacity 0.15s, transform 0.1s;
-            box-shadow: 0 4px 15px rgba(37,99,235,0.3);
+            letter-spacing: 0.005em;
+            transition: opacity 0.15s, transform 0.1s, box-shadow 0.2s;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.18),
+                0 6px 18px color-mix(in srgb, var(--blue) 35%, transparent);
         }
         .f-submit:hover   { opacity: 0.92; }
         .f-submit:active  { transform: scale(0.99); }
@@ -486,12 +583,13 @@
             <div class="hero-content">
                 <!-- Brand -->
                 <div class="brand">
-                    <div class="brand-gem">◆</div>
+                    <div class="brand-gem">NE</div>
                     <span class="brand-name">NiftyEdge</span>
                     <span class="brand-beta">BETA</span>
                 </div>
 
-                <!-- Headline + sub -->
+                <!-- Eyebrow + Headline + sub -->
+                <div class="hero-eyebrow">Options Intelligence Platform · NIFTY</div>
                 <div class="hero-headline">
                     <h1>Options intelligence,<br><span class="hl-accent">edge-forward.</span></h1>
                     <p class="hero-sub">
@@ -512,6 +610,13 @@
                             Strategy builder scores and ranks setups against current market conditions
                         </div>
                     </div>
+                </div>
+                <!-- Live status row anchored to bottom of hero -->
+                <div class="hero-statusbar">
+                    <span class="sb-item"><span class="sb-dot"></span>Live · NSE feed</span>
+                    <span class="sb-item">NIFTY <span class="sb-val">24,312.50</span></span>
+                    <span class="sb-item">IV Rank <span class="sb-val">49.2%</span></span>
+                    <span class="sb-item">GEX <span class="sb-val">+0.58M</span></span>
                 </div>
             </div>
         </div>
@@ -986,5 +1091,6 @@
             });
         })();
     </script>
+    <script src="/js/tweaks.js"></script>
 </body>
 </html>

@@ -41,6 +41,18 @@ def _expire_past_trades(db: Session, user_id: int) -> int:
             count += 1
 
     if count:
+        # Detach OPEN children whose parent just expired so they keep showing
+        # as standalone open positions instead of disappearing under a now-
+        # EXPIRED parent. Mirrors the close-path promotion convention.
+        expired_ids = [t.id for t in open_trades if t.status == TradeStatus.EXPIRED.value]
+        if expired_ids:
+            orphaned_children = db.query(Trade).filter(
+                Trade.user_id == user_id,
+                Trade.status == TradeStatus.OPEN.value,
+                Trade.parent_trade_id.in_(expired_ids),
+            ).all()
+            for child in orphaned_children:
+                child.parent_trade_id = None
         db.commit()
         print(f"[Trades] Auto-expired {count} trade(s) for user {user_id}")
 
@@ -97,6 +109,8 @@ def list_trades(
         trade_dict = {
             "id": t.id,
             "trade_type": t.trade_type,
+            "instrument_type": t.instrument_type or "OPT",
+            "lot_size_override": t.lot_size_override,
             "strike": t.strike,
             "expiry_date": t.expiry_date,
             "entry_premium": t.entry_premium,
@@ -116,7 +130,10 @@ def list_trades(
             trade_dict["hedges"].append({
                 "id": h.id,
                 "trade_type": h.trade_type,
+                "instrument_type": h.instrument_type or "OPT",
+                "lot_size_override": h.lot_size_override,
                 "strike": h.strike,
+                "expiry_date": h.expiry_date,
                 "entry_premium": h.entry_premium,
                 "entry_iv": h.entry_iv,
                 "entry_delta": h.entry_delta,
@@ -190,11 +207,14 @@ def close_trade(
     if close_qty > trade.quantity:
         raise HTTPException(status_code=400, detail="Close quantity exceeds open quantity")
 
-    # Calculate realized P&L
-    if trade.trade_type in ("CE_SELL", "PE_SELL"):
-        pnl_per_lot = (trade.entry_premium - req.exit_price) * LOT_SIZE
+    # Calculate realized P&L. Futures use their own lot size override
+    # (currently the same 65, but kept overridable in case NSE bumps it).
+    lot = trade.lot_size_override if (trade.instrument_type == "FUT" and trade.lot_size_override) else LOT_SIZE
+    is_short_side = trade.trade_type in ("CE_SELL", "PE_SELL", "FUT_SELL")
+    if is_short_side:
+        pnl_per_lot = (trade.entry_premium - req.exit_price) * lot
     else:
-        pnl_per_lot = (req.exit_price - trade.entry_premium) * LOT_SIZE
+        pnl_per_lot = (req.exit_price - trade.entry_premium) * lot
 
     realized_pnl = round(pnl_per_lot * close_qty, 2)
 
@@ -204,6 +224,19 @@ def close_trade(
         trade.exit_date = datetime.utcnow()
         trade.status = TradeStatus.CLOSED.value
         trade.realized_pnl = realized_pnl
+
+        # Detach any open child trades (hedges, futures hedges, rolled legs)
+        # so they keep showing in Open Positions as standalone trades. There
+        # is still money in those legs — closing the parent must not orphan
+        # them out of the user's view. We null parent_trade_id rather than
+        # using a "promoted" flag so existing list filters
+        # (`parent_trade_id IS NULL` → top-level) handle it automatically.
+        open_children = db.query(Trade).filter(
+            Trade.parent_trade_id == trade.id,
+            Trade.status == TradeStatus.OPEN.value,
+        ).all()
+        for child in open_children:
+            child.parent_trade_id = None
     else:
         # Partial close: reduce quantity and create a closed record
         trade.quantity -= close_qty
@@ -401,20 +434,25 @@ def get_risk_scores(
             continue
 
         row = match.iloc[0]
-        risk = compute_risk_score(
-            delta=row["delta"],
-            entry_iv=trade.entry_iv,
-            current_iv=row["IV"],
-            entry_premium=trade.entry_premium,
-            current_ltp=row["LTP"],
-            current_spot=spot,
-            strike=trade.strike,
-            vix_abs=vix,
-            gamma=float(row.get("gamma", 0)),
-            theta=float(row.get("theta", 0)),
-            dte=dte,                  # ← per-trade DTE
-            vix_chg_pct=vix_chg_pct,
-        )
+        # Margin/assignment risk only applies to SHORT options.  Longs have
+        # defined risk = premium paid; no risk score, no hedge trigger.
+        is_short = "SELL" in trade.trade_type
+        risk = None
+        if is_short:
+            risk = compute_risk_score(
+                delta=row["delta"],
+                entry_iv=trade.entry_iv,
+                current_iv=row["IV"],
+                entry_premium=trade.entry_premium,
+                current_ltp=row["LTP"],
+                current_spot=spot,
+                strike=trade.strike,
+                vix_abs=vix,
+                gamma=float(row.get("gamma", 0)),
+                theta=float(row.get("theta", 0)),
+                dte=dte,                  # ← per-trade DTE
+                vix_chg_pct=vix_chg_pct,
+            )
 
         position_data = {
             "trade_id": trade.id,
@@ -426,18 +464,20 @@ def get_risk_scores(
             "iv_change_pct": round(((row["IV"] - trade.entry_iv) / trade.entry_iv * 100) if trade.entry_iv > 0 else 0, 1),
             "unrealized_pnl": round(
                 (trade.entry_premium - row["LTP"]) * LOT_SIZE * trade.quantity
-                if "SELL" in trade.trade_type
+                if is_short
                 else (row["LTP"] - trade.entry_premium) * LOT_SIZE * trade.quantity,
                 2
             ),
             "risk": risk,
+            "max_loss": (None if is_short else round(trade.entry_premium * LOT_SIZE * trade.quantity, 2)),
         }
         positions.append(position_data)
 
-        if "CE" in trade.trade_type:
-            ce_scores.append(risk["score"])
-        else:
-            pe_scores.append(risk["score"])
+        if is_short:
+            if "CE" in trade.trade_type:
+                ce_scores.append(risk["score"])
+            else:
+                pe_scores.append(risk["score"])
 
     ce_risk = round(max(ce_scores), 1) if ce_scores else None
     pe_risk = round(max(pe_scores), 1) if pe_scores else None
@@ -485,6 +525,16 @@ def get_roll_scenarios(
     # Guard: roll is meaningless for closed / expired trades.
     if trade.status != TradeStatus.OPEN.value:
         raise HTTPException(status_code=400, detail=f"Trade is {trade.status}; only OPEN trades can be rolled.")
+    # Guard: roll/hedge logic is built around premium-collected (short) positions
+    # under unbounded risk. Long options have defined risk = premium paid, no
+    # margin block, and no assignment risk — the rolls/futures-hedge produced
+    # by this engine would be misleading. Close, exit, or convert to a spread
+    # via "Add Hedge" instead.
+    if "BUY" in trade.trade_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Long options have defined risk (max loss = premium paid). Rolling and futures-delta hedging apply to short positions only — close the trade or pair it into a spread instead.",
+        )
     try:
         exp_date = datetime.strptime(trade.expiry_date, "%d-%b-%Y").date()
         if exp_date < datetime.now(_IST).date():
@@ -694,20 +744,37 @@ def execute_roll(
     now = datetime.now(_IST).replace(tzinfo=None)
 
     if req.scenario_id == "futures_hedge":
-        # Create futures placeholder trade — original stays open
+        # Book the futures hedge against the LIVE NIFTY-FUT contract LTP
+        # (not the index spot) and persist with instrument_type='FUT'. The
+        # nse_futures module guards the quote with basis/lot/inversion
+        # sanity checks and raises 503 if the LTP looks suspect — we surface
+        # that to the user instead of silently booking a wrong price.
+        from nse_futures import get_contract_by_expiry, NIFTY_LOT
         fut_type = f"FUT_{req.futures_action}"  # FUT_BUY or FUT_SELL
-        try:
-            _, _, spot = build_chain("NIFTY", trade.expiry_date)
-        except Exception:
-            spot = 22000.0
+        contract = get_contract_by_expiry(trade.expiry_date)
+        if contract is None:
+            # No futures for the option's expiry — fall back to the nearest
+            # active contract (NSE only lists current/next/far month for FUT,
+            # while options have weeklies).
+            from nse_futures import nearest_active_future
+            contract = nearest_active_future()
+            if contract is None:
+                raise HTTPException(status_code=503, detail="NIFTY futures quote unavailable; cannot book hedge.")
+        if not contract.get("verified", True):
+            raise HTTPException(
+                status_code=503,
+                detail=f"Live NIFTY-FUT LTP for {contract['expiry_date']} failed sanity check (basis {contract.get('basis_pct')}%); refusing to book.",
+            )
         new_trade = Trade(
             user_id=user.id,
             trade_type=fut_type,
+            instrument_type="FUT",
+            lot_size_override=contract["lot_size"] or NIFTY_LOT,
             strike=0,
-            expiry_date=trade.expiry_date,
-            entry_premium=round(spot, 2),
+            expiry_date=contract["expiry_date"],
+            entry_premium=contract["ltp"],
             entry_iv=0.0,
-            entry_delta=1.0,
+            entry_delta=1.0 if req.futures_action == "BUY" else -1.0,
             quantity=req.futures_lots or 1,
             status=TradeStatus.OPEN.value,
             parent_trade_id=trade.id,
@@ -717,7 +784,14 @@ def execute_roll(
         db.add(new_trade)
         db.commit()
         db.refresh(new_trade)
-        return {"status": "ok", "action": "futures_hedge", "new_trade_id": new_trade.id}
+        return {
+            "status": "ok",
+            "action": "futures_hedge",
+            "new_trade_id": new_trade.id,
+            "futures_expiry": contract["expiry_date"],
+            "entry_price": contract["ltp"],
+            "lot_size": contract["lot_size"],
+        }
 
     else:
         # Scenarios A & B: close original trade, open new one

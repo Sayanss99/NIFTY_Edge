@@ -365,6 +365,7 @@
 
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
+    <script src="/js/tweaks.js"></script>
     <script src="/js/ws.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Auth required');
@@ -690,11 +691,15 @@
                         const total = s.buckets[i];
                         const wins = s.winBuckets[i];
                         const wr = total ? Math.round((wins / total) * 100) : 0;
+                        const isOverflow = s.hasOverflow && i === s.bucketCount - 1;
                         const lo = i * s.bucketSize;
                         const hi = lo + s.bucketSize;
                         const sideLabel = side === 'ce' ? 'CE' : 'PE';
+                        const range = isOverflow
+                            ? `≥${s.visMax} pts (max ${s.overflowMax})`
+                            : `${lo}–${hi} pts OTM`;
                         return `
-                            <div class="t-label">${sideLabel} · ${lo}–${hi} pts OTM</div>
+                            <div class="t-label">${sideLabel} · ${range}</div>
                             <div>${total} trade${total > 1 ? 's' : ''} · ${wins} win${wins === 1 ? '' : 's'}</div>
                             <div>Win rate: <span style="color:${wr >= 50 ? '#16A34A' : '#DC2626'};font-weight:700">${wr}%</span></div>
                         `;
@@ -709,7 +714,7 @@
         _bindHover('scatter-chart', 'scatter-tip', (x, y) => {
             const s = _hoverState.scatter;
             if (!s) return null;
-            let best = null, bestDist = 12;
+            let best = null, bestDist = 14;
             for (const p of s.plotted) {
                 const dx = p.x - x, dy = p.y - y;
                 const d = Math.sqrt(dx*dx + dy*dy);
@@ -718,10 +723,14 @@
             if (!best) return null;
             const d = best.d;
             const color = d.pnl >= 0 ? '#16A34A' : '#DC2626';
+            const outlierTag = best.clipped
+                ? '<div style="font-size:10px;color:#9CA3AF;margin-top:2px">⚠ Outlier — pinned to chart edge</div>'
+                : '';
             return `
                 <div class="t-label">${best.side} · ${d.strike || ''} ${d.expiry ? '· ' + d.expiry : ''}</div>
                 <div>Distance: ${Math.round(d.distance)} pts OTM</div>
                 <div>P&L: <span style="color:${color};font-weight:700">${Utils.formatINR(d.pnl)}</span> · ${d.win ? 'Win' : 'Loss'}</div>
+                ${outlierTag}
             `;
         });
 
@@ -800,49 +809,99 @@
                 return;
             }
 
-            // Histogram: bucket by 200pt intervals
-            const bucketSize = 200;
-            const maxDist = Math.max(...distances.map(d => d.distance));
-            const bucketCount = Math.ceil(maxDist / bucketSize) + 1;
-            const buckets = Array(bucketCount).fill(0);
-            const winBuckets = Array(bucketCount).fill(0);
+            // Bucket size auto-scales: target ~10-14 buckets across the visible
+            // range, rounded to a clean step. Caps the upper edge at the 95th
+            // percentile + one step so a single far-OTM outlier doesn't
+            // squish the meaningful bars into the left margin. Outliers
+            // beyond p95 are summed into a final "+ ≥X" overflow bucket so
+            // they're still represented, never silently dropped.
+            const dists = distances.map(d => d.distance).sort((a, b) => a - b);
+            const p = (q) => dists.length ? dists[Math.min(dists.length - 1, Math.floor(dists.length * q))] : 0;
+            const p95 = Math.max(p(0.95), 100);
+            const visMax = Math.ceil(p95 / 100) * 100;     // round to 100s
+            const targetBuckets = 12;
+            const rawStep = visMax / targetBuckets;
+            // Snap step to a "nice" value: 25 / 50 / 100 / 200 / 250 / 500 / 1000
+            const niceSteps = [25, 50, 100, 200, 250, 500, 1000, 2000];
+            let bucketSize = niceSteps.find(s => s >= rawStep) || rawStep;
+            const visBuckets = Math.max(1, Math.ceil(visMax / bucketSize));
+            const buckets    = Array(visBuckets + 1).fill(0);   // last = overflow
+            const winBuckets = Array(visBuckets + 1).fill(0);
+            let overflowMax = 0;
 
             for (const d of distances) {
-                const idx = Math.floor(d.distance / bucketSize);
-                buckets[idx]++;
-                if (d.win) winBuckets[idx]++;
+                if (d.distance >= visMax) {
+                    buckets[visBuckets]++;
+                    if (d.win) winBuckets[visBuckets]++;
+                    overflowMax = Math.max(overflowMax, d.distance);
+                } else {
+                    const idx = Math.min(visBuckets - 1, Math.floor(d.distance / bucketSize));
+                    buckets[idx]++;
+                    if (d.win) winBuckets[idx]++;
+                }
             }
+            // Drop the overflow slot if no outliers landed in it
+            const hasOverflow = buckets[visBuckets] > 0;
+            const totalBuckets = hasOverflow ? visBuckets + 1 : visBuckets;
 
-            const pad = { top: 10, right: 10, bottom: 30, left: 30 };
+            const pad = { top: 14, right: 14, bottom: 36, left: 34 };
             const cW = W - pad.left - pad.right;
             const cH = H - pad.top - pad.bottom;
-            const maxCount = Math.max(...buckets, 1);
-            const barW = Math.min(30, cW / bucketCount - 2);
-            const gap = (cW - barW * bucketCount) / (bucketCount + 1);
+            const maxCount = Math.max(...buckets.slice(0, totalBuckets), 1);
+            const barW = Math.max(8, Math.min(36, cW / totalBuckets - 6));
+            const gap  = (cW - barW * totalBuckets) / (totalBuckets + 1);
 
-            for (let i = 0; i < bucketCount; i++) {
-                if (buckets[i] === 0) continue;
+            // Y-axis tick (count) — minimal, just min/max
+            ctx.fillStyle = '#6B7280';
+            ctx.font = '9px JetBrains Mono, monospace';
+            ctx.textAlign = 'right';
+            ctx.fillText(maxCount.toString(), pad.left - 4, pad.top + 8);
+
+            for (let i = 0; i < totalBuckets; i++) {
                 const x = pad.left + gap + i * (barW + gap);
-                const barH = (buckets[i] / maxCount) * cH;
-                const y = pad.top + cH - barH;
+                const isOverflow = (i === visBuckets) && hasOverflow;
 
-                // Total bar
-                ctx.fillStyle = color + '40';
-                ctx.fillRect(x, y, barW, barH);
-                // Win portion
-                const winH = (winBuckets[i] / maxCount) * cH;
-                ctx.fillStyle = color;
-                ctx.fillRect(x, pad.top + cH - winH, barW, winH);
+                if (buckets[i] > 0) {
+                    const barH = (buckets[i] / maxCount) * cH;
+                    const y = pad.top + cH - barH;
+                    // Total bar
+                    ctx.fillStyle = isOverflow ? '#9CA3AF55' : color + '40';
+                    ctx.fillRect(x, y, barW, barH);
+                    // Win portion
+                    const winH = (winBuckets[i] / maxCount) * cH;
+                    ctx.fillStyle = isOverflow ? '#9CA3AF' : color;
+                    ctx.fillRect(x, pad.top + cH - winH, barW, winH);
+                    // Count label above bar (only when bar is tall enough)
+                    if (barH > 14) {
+                        ctx.fillStyle = '#9CA3AF';
+                        ctx.font = '9px JetBrains Mono, monospace';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(buckets[i].toString(), x + barW / 2, y - 2);
+                    }
+                }
 
-                // Label
+                // X-axis label
                 ctx.fillStyle = '#6B7280';
-                ctx.font = '9px sans-serif';
+                ctx.font = '9px JetBrains Mono, monospace';
                 ctx.textAlign = 'center';
-                ctx.fillText(`${i * bucketSize}`, x + barW/2, H - 8);
+                const label = isOverflow ? `≥${visMax}` : (i * bucketSize).toString();
+                ctx.fillText(label, x + barW / 2, H - 18);
             }
 
+            // X-axis title with overflow callout
+            ctx.fillStyle = '#9CA3AF';
+            ctx.font = '9px sans-serif';
+            ctx.textAlign = 'center';
+            const overflowNote = hasOverflow
+                ? ` · ${buckets[visBuckets]} outlier${buckets[visBuckets] > 1 ? 's' : ''} (max ${overflowMax}pts)`
+                : '';
+            ctx.fillText('OTM distance (pts)' + overflowNote, pad.left + cW / 2, H - 4);
+
             const side = canvasId === 'ce-dist-chart' ? 'ce' : 'pe';
-            _hoverState[side] = { buckets, winBuckets, bucketSize, bucketCount, pad, barW, gap, cH, W, H, maxCount };
+            _hoverState[side] = {
+                buckets, winBuckets, bucketSize, bucketCount: totalBuckets,
+                pad, barW, gap, cH, W, H, maxCount, visMax, hasOverflow, overflowMax,
+            };
         }
 
         // ── Scatter chart ─────────────────────────────────────────────
@@ -866,83 +925,157 @@
                 return;
             }
 
-            const pad = { top: 15, right: 20, bottom: 30, left: 60 };
+            const pad = { top: 18, right: 28, bottom: 38, left: 68 };
             const cW = W - pad.left - pad.right;
             const cH = H - pad.top - pad.bottom;
 
-            const maxDist = Math.max(...all.map(d => d.distance), 100);
-            const pnls = all.map(d => d.pnl);
-            const minP = Math.min(0, ...pnls);
-            const maxP = Math.max(0, ...pnls);
-            const rangeP = maxP - minP || 1;
+            // Percentile-clip the X axis so a single far-OTM outlier doesn't
+            // crush the meaningful clusters into the left margin. Same for the
+            // Y axis when one trade has an extreme P&L. Outliers are still
+            // plotted, but pinned to the chart edge with a small "outlier
+            // sentinel" ring so the user can see they exist without losing
+            // resolution on the bulk of the data.
+            const dists = all.map(d => d.distance).sort((a,b) => a-b);
+            const pnls  = all.map(d => d.pnl).sort((a,b) => a-b);
+            const q = (arr, p) => arr.length ? arr[Math.min(arr.length - 1, Math.floor(arr.length * p))] : 0;
+            const xClip = Math.max(q(dists, 0.95), 100);
+            const yLo   = Math.min(q(pnls, 0.02), 0);
+            const yHi   = Math.max(q(pnls, 0.98), 0);
+            const minP  = yLo;
+            const maxP  = yHi;
+            const rangeP = (maxP - minP) || 1;
+            const xMaxRaw = dists[dists.length - 1] || xClip;
+            const yMaxRaw = pnls[pnls.length - 1]   || yHi;
+            const yMinRaw = pnls[0]                  || yLo;
+            const hasXOutliers = xMaxRaw > xClip;
+            const hasYOutliers = yMaxRaw > yHi || yMinRaw < yLo;
 
             // Zero line
             const zeroY = pad.top + cH * (1 - (0 - minP) / rangeP);
-            ctx.strokeStyle = '#E5E7EB';
+            ctx.strokeStyle = '#E5E7EB22';
             ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
             ctx.beginPath();
             ctx.moveTo(pad.left, zeroY);
             ctx.lineTo(W - pad.right, zeroY);
             ctx.stroke();
+            ctx.setLineDash([]);
 
-            // Dots
-            for (const d of data.ce_distances || []) {
-                const x = pad.left + (d.distance / maxDist) * cW;
-                const y = pad.top + cH * (1 - (d.pnl - minP) / rangeP);
-                ctx.beginPath();
-                ctx.arc(x, y, 5, 0, Math.PI * 2);
-                ctx.fillStyle = d.win ? 'rgba(22,163,74,0.7)' : 'rgba(220,38,38,0.7)';
-                ctx.fill();
-                ctx.strokeStyle = d.win ? '#166534' : '#991B1B';
-                ctx.lineWidth = 1;
-                ctx.stroke();
+            // Project a data point to canvas coords with edge clipping for outliers
+            const project = (d) => {
+                let clipped = false;
+                let x = d.distance;
+                let y = d.pnl;
+                if (x > xClip)         { x = xClip; clipped = true; }
+                if (y > yHi)           { y = yHi;   clipped = true; }
+                if (y < yLo)           { y = yLo;   clipped = true; }
+                return {
+                    px: pad.left + (x / xClip) * cW,
+                    py: pad.top + cH * (1 - (y - minP) / rangeP),
+                    clipped,
+                };
+            };
+
+            // Tiny deterministic jitter so overlapping points remain distinguishable.
+            // Hash the trade's strike+pnl so jitter is stable across re-renders.
+            const jitter = (seed) => {
+                const h = Math.abs(Math.sin(seed * 12.9898) * 43758.5453) % 1;
+                return (h - 0.5) * 4;        // ±2px
+            };
+
+            // Build plotted list once; reuse for hover-state and drawing
+            const plotted = [];
+            for (const d of (data.ce_distances || [])) {
+                const p = project(d);
+                plotted.push({ side: 'CE', d,
+                    x: p.px + jitter(d.strike + d.pnl),
+                    y: p.py + jitter(d.strike - d.pnl),
+                    clipped: p.clipped });
             }
-            for (const d of data.pe_distances || []) {
-                const x = pad.left + (d.distance / maxDist) * cW;
-                const y = pad.top + cH * (1 - (d.pnl - minP) / rangeP);
-                ctx.beginPath();
-                ctx.rect(x - 4, y - 4, 8, 8);
-                ctx.fillStyle = d.win ? 'rgba(22,163,74,0.7)' : 'rgba(220,38,38,0.7)';
-                ctx.fill();
-                ctx.strokeStyle = d.win ? '#166534' : '#991B1B';
-                ctx.lineWidth = 1;
-                ctx.stroke();
+            for (const d of (data.pe_distances || [])) {
+                const p = project(d);
+                plotted.push({ side: 'PE', d,
+                    x: p.px + jitter(d.strike + d.pnl),
+                    y: p.py + jitter(d.strike - d.pnl),
+                    clipped: p.clipped });
             }
 
-            // Axes labels
+            // Density-aware opacity: the more dots, the more transparent each
+            // becomes — so dense clusters still read as clusters but distinct
+            // points stay visible. Larger size when sparse, smaller when dense.
+            const fillAlpha = Math.max(0.25, Math.min(0.78, 14 / plotted.length));
+            const dotR = plotted.length > 80 ? 3.2
+                       : plotted.length > 40 ? 4
+                       : 5;
+
+            for (const pt of plotted) {
+                const win = pt.d.win;
+                const fill = win ? `rgba(22,163,74,${fillAlpha})` : `rgba(220,38,38,${fillAlpha})`;
+                const stroke = win ? '#166534' : '#991B1B';
+                ctx.fillStyle = fill;
+                ctx.strokeStyle = stroke;
+                ctx.lineWidth = 1;
+                if (pt.side === 'CE') {
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, dotR, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                } else {
+                    ctx.beginPath();
+                    ctx.rect(pt.x - dotR, pt.y - dotR, dotR * 2, dotR * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                }
+                // Outlier sentinel: small open ring around clipped points
+                if (pt.clipped) {
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, dotR + 3, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#9CA3AF';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([2, 2]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            }
+
+            // Axis tick labels (X) — 5 evenly spaced across the visible range
             ctx.fillStyle = '#6B7280';
-            ctx.font = '10px sans-serif';
+            ctx.font = '9px JetBrains Mono, monospace';
             ctx.textAlign = 'center';
-            ctx.fillText('Strike Distance (pts OTM)', W/2, H - 4);
+            for (let i = 0; i <= 5; i++) {
+                const v = Math.round((xClip * i / 5) / 50) * 50;
+                const x = pad.left + (i / 5) * cW;
+                ctx.fillText(v.toString(), x, H - 18);
+            }
+            // X-axis title with outlier note
+            const xNote = hasXOutliers ? ` · outliers clipped to right edge (max ${Math.round(xMaxRaw)} pts)` : '';
+            ctx.fillText('Strike distance (pts OTM)' + xNote, pad.left + cW / 2, H - 4);
+
+            // Axis tick labels (Y)
             ctx.textAlign = 'right';
-            ctx.fillText('P&L', pad.left - 8, pad.top + 4);
+            for (let i = 0; i <= 4; i++) {
+                const v = minP + (rangeP * i / 4);
+                const y = pad.top + cH * (1 - i / 4);
+                ctx.fillText(Utils.formatNum(Math.round(v)), pad.left - 6, y + 3);
+            }
+            // Y-axis title
+            ctx.save();
+            ctx.translate(14, pad.top + cH / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.textAlign = 'center';
+            ctx.fillText('P&L (₹)' + (hasYOutliers ? ' · clipped' : ''), 0, 0);
+            ctx.restore();
 
             // Legend
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'left';
-            ctx.beginPath(); ctx.arc(W - 140, 12, 4, 0, Math.PI*2); ctx.fillStyle = '#DC2626'; ctx.fill();
-            ctx.fillStyle = '#6B7280'; ctx.fillText('CE', W - 132, 15);
-            ctx.beginPath(); ctx.rect(W - 100, 8, 8, 8); ctx.fillStyle = '#2563EB'; ctx.fill();
-            ctx.fillStyle = '#6B7280'; ctx.fillText('PE', W - 88, 15);
-            ctx.beginPath(); ctx.arc(W - 60, 12, 4, 0, Math.PI*2); ctx.fillStyle = '#16A34A'; ctx.fill();
-            ctx.fillStyle = '#6B7280'; ctx.fillText('Win', W - 52, 15);
+            ctx.beginPath(); ctx.arc(W - 152, 14, 4, 0, Math.PI*2); ctx.fillStyle = '#DC2626'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('CE', W - 144, 17);
+            ctx.beginPath(); ctx.rect(W - 110, 10, 8, 8); ctx.fillStyle = '#2563EB'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('PE', W - 98, 17);
+            ctx.beginPath(); ctx.arc(W - 66, 14, 4, 0, Math.PI*2); ctx.fillStyle = '#16A34A'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('Win', W - 58, 17);
 
-            // Build lookup: pixel position for every plotted point
-            const plotted = [];
-            for (const d of data.ce_distances || []) {
-                plotted.push({
-                    side: 'CE', d,
-                    x: pad.left + (d.distance / maxDist) * cW,
-                    y: pad.top + cH * (1 - (d.pnl - minP) / rangeP),
-                });
-            }
-            for (const d of data.pe_distances || []) {
-                plotted.push({
-                    side: 'PE', d,
-                    x: pad.left + (d.distance / maxDist) * cW,
-                    y: pad.top + cH * (1 - (d.pnl - minP) / rangeP),
-                });
-            }
             _hoverState.scatter = { plotted, W, H };
         }
 

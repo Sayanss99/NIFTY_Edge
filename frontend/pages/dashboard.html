@@ -194,9 +194,24 @@
                         <div class="metric-change neutral" id="m-expiry-date"></div>
                     </div>
                     <div class="metric-card">
-                        <div class="metric-label">Calc Range</div>
+                        <div class="metric-label" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                            <span>Calc Range</span>
+                            <span title="A 1-SD move (the formula behind Calc Range) statistically captures ~68% of expected price action by expiry"
+                                  style="font-size:9px;font-weight:700;letter-spacing:0.4px;
+                                         background:rgba(37,99,235,0.15);color:var(--primary,#2563EB);
+                                         border:1px solid rgba(37,99,235,0.35);border-radius:10px;
+                                         padding:1px 6px;text-transform:none">~68% CHANCE</span>
+                        </div>
                         <div class="metric-value" id="m-calc-range" style="font-size:16px">-</div>
-                        <div class="metric-change neutral" id="m-vix-range" style="font-size:10px"></div>
+                        <div style="margin-top:6px;display:flex;flex-direction:column;gap:2px">
+                            <span id="m-vix-range-prob"
+                                  title="Probability that NIFTY ends inside the offset-scaled range, derived from a normal distribution with sigma = (1 + offset/100)"
+                                  style="font-size:9px;font-weight:700;letter-spacing:0.4px;
+                                         background:rgba(37,99,235,0.15);color:var(--primary,#2563EB);
+                                         border:1px solid rgba(37,99,235,0.35);border-radius:10px;
+                                         padding:1px 6px;align-self:flex-start"></span>
+                            <span id="m-vix-range" style="font-size:11.5px;font-weight:600;font-family:var(--font-mono);color:var(--text-primary)"></span>
+                        </div>
                     </div>
                     <div class="metric-card">
                         <div class="metric-label">Skew</div>
@@ -243,7 +258,7 @@
                                     <div class="vix-offset-control">
                                         <label for="vix-offset-input">VIX Offset %</label>
                                         <input type="number" id="vix-offset-input" value="50" min="0" max="200" step="10"
-                                               onchange="onVixOffsetChange()" onkeyup="onVixOffsetChange()">
+                                               onchange="onVixOffsetChange()" oninput="onVixOffsetChange()" onkeyup="onVixOffsetChange()">
                                         <span id="vix-offset-display" style="font-family:var(--font-mono);font-weight:700;font-size:13px;color:var(--primary,#2563EB);min-width:38px;text-align:right">50%</span>
                                     </div>
                                     <div class="chart-zoom">
@@ -411,6 +426,7 @@
 
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
+    <script src="/js/tweaks.js"></script>
     <script src="/js/ws.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Not authenticated');
@@ -456,6 +472,7 @@
             } catch (e) {}
 
             // Load LIVE expiries list from NSE (works even when market closed)
+            let _initialResolvedExpiry = null;
             try {
                 const expResp = await API.getExpiries();
                 if (expResp && expResp.expiries && expResp.expiries.length) {
@@ -468,10 +485,19 @@
                         ).join('');
                         // Default to nearest *tradeable* expiry (DTE > 0).
                         // On expiry day we roll to next week so range math doesn't collapse.
-                        defaultExpiry = Utils.nearestFutureExpiry(futureExpiries);
+                        // Backend computes the *active* default (≥ 2 trading
+                        // days remaining, holiday-aware).  Fall back to the
+                        // client-side nearest-future picker only if the
+                        // backend didn't return one — keeps every surface
+                        // (dashboard, analytics, strategy builder) on the
+                        // same expiry without duplicating the holiday list.
+                        defaultExpiry = (expResp.default_expiry && futureExpiries.includes(expResp.default_expiry))
+                            ? expResp.default_expiry
+                            : Utils.nearestFutureExpiry(futureExpiries);
                         // Restore user's last selection; never select a past expiry
                         const resolved = Utils.resolveExpiry(futureExpiries);
                         sel.value = resolved;
+                        _initialResolvedExpiry = resolved;
                         if (resolved !== defaultExpiry) usingCustomExpiry = true;
                     }
                 }
@@ -502,13 +528,36 @@
                         }
                     } else {
                         updateMarketDisplay(snapResp.data);
-                        if (snapExpiry) defaultExpiry = snapExpiry;
+                        // NOTE: do NOT overwrite `defaultExpiry` with the
+                        // snapshot's expiry here.  `defaultExpiry` was set
+                        // above to the *nearest tradeable* expiry from the
+                        // live list; the snapshot's `expiry_date` may lag
+                        // (e.g., still pointing at today's expired weekly).
+                        // If we overwrote it, the change-handler comparison
+                        // `selected === defaultExpiry` would mis-fire and
+                        // refuse to refresh DTE for the user's pick.
                     }
                     if (snapResp.data.risk_reversal) {
                         updateRiskReversal(snapResp.data.risk_reversal);
                     }
                 }
             } catch (e) {}
+
+            // If the user's restored selection is a different expiry from the
+            // default, the snapshot above showed the *default* expiry's data —
+            // which makes the dashboard cards lie about the dropdown's pick.
+            // Fetch the per-expiry numbers for the resolved selection so DTE,
+            // calc-range, max-pain etc. all match what the dropdown shows.
+            if (_initialResolvedExpiry && _initialResolvedExpiry !== defaultExpiry) {
+                try {
+                    const fresh = await API.computeForExpiry(_initialResolvedExpiry, vixOffset);
+                    if (fresh && !fresh.error) {
+                        updateMarketDisplay(fresh);
+                        if (fresh.risk_reversal) updateRiskReversal(fresh.risk_reversal);
+                        if (fresh.sr_levels) updateSRDisplay(fresh.sr_levels);
+                    }
+                } catch (e) {}
+            }
 
             // Load S/R levels
             try {
@@ -700,26 +749,31 @@
         }
 
         // ── Expiry selector change ────────────────────────────────────
+        // Token guards against a stale fetch overwriting the latest selection
+        // (user picks A, then B before A returns).
+        let _expiryFetchToken = 0;
         document.getElementById('expiry-selector').addEventListener('change', async function() {
             const selected = this.value;
             Utils.saveExpiry(selected);
-            // If user returns to default expiry, resume WS updates
-            if (!defaultExpiry || selected === defaultExpiry) {
-                usingCustomExpiry = false;
-                return;
-            }
+            if (!selected) return;
+
+            // Pause WS pushes for *every* manual selection — even the default —
+            // until our fetch completes, so the in-flight tick can't briefly
+            // flash old/wrong DTE in the cards.
             usingCustomExpiry = true;
-            // Show loading state on metric cards
-            ['m-spot', 'm-vix', 'm-dte', 'm-calc-range', 'm-maxpain'].forEach(id => {
+
+            const myToken = ++_expiryFetchToken;
+            ['m-spot', 'm-vix', 'm-dte', 'm-calc-range', 'm-maxpain', 'm-tendency', 'm-directional'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.style.opacity = '0.5';
             });
             try {
                 const data = await API.computeForExpiry(selected, vixOffset);
+                if (myToken !== _expiryFetchToken) return;   // stale fetch, ignore
                 if (data && data.error) {
                     Utils.toast(data.error, 'warning');
+                    if (defaultExpiry) this.value = defaultExpiry;
                     usingCustomExpiry = false;
-                    this.value = defaultExpiry || '';
                     return;
                 }
                 updateMarketDisplay(data);
@@ -740,15 +794,22 @@
                     };
                     if (typeof drawRangeChart === 'function' && currentSnapshot) drawRangeChart(currentSnapshot);
                 }
+                // Resume WS pushes only when the user lands back on the default
+                // expiry; otherwise stay in custom mode so background ticks
+                // don't clobber the per-expiry numbers we just rendered.
+                usingCustomExpiry = (selected !== defaultExpiry);
             } catch (e) {
+                if (myToken !== _expiryFetchToken) return;
                 Utils.toast('Failed to load data for expiry', 'error');
+                if (defaultExpiry) this.value = defaultExpiry;
                 usingCustomExpiry = false;
-                this.value = defaultExpiry || '';
             } finally {
-                ['m-spot', 'm-vix', 'm-dte', 'm-calc-range', 'm-maxpain'].forEach(id => {
-                    const el = document.getElementById(id);
-                    if (el) el.style.opacity = '1';
-                });
+                if (myToken === _expiryFetchToken) {
+                    ['m-spot', 'm-vix', 'm-dte', 'm-calc-range', 'm-maxpain', 'm-tendency', 'm-directional'].forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) el.style.opacity = '1';
+                    });
+                }
             }
         });
 
@@ -758,13 +819,25 @@
             vixOffset = parseFloat(document.getElementById('vix-offset-input').value) || 0;
             const displayEl = document.getElementById('vix-offset-display');
             if (displayEl) displayEl.textContent = `${vixOffset}%`;
-            // Save to user settings
+            // Probability badge is purely a function of the offset — refresh
+            // it unconditionally so it tracks the slider even before the
+            // first market snapshot arrives.
+            _refreshVixRangeProb();
+            // Save to user settings (debounced via .catch — no need to await)
             API.put('/api/auth/settings', { vix_offset: vixOffset }).catch(() => {});
-            // Recalculate VIX range locally using current snapshot
+            // Recalculate VIX range numbers + chart against current snapshot.
             if (currentSnapshot) {
                 recalcRangesLocally(currentSnapshot);
                 drawRangeChart(currentSnapshot);
             }
+        }
+
+        function _refreshVixRangeProb() {
+            const el = document.getElementById('m-vix-range-prob');
+            if (!el) return;
+            const sigma = Math.max(0, 1 + (vixOffset || 0) / 100);
+            const prob = Math.round(_normProb(sigma) * 100);
+            el.textContent = `~${prob}% CHANCE`;
         }
 
         function onYZoomChange() {
@@ -808,8 +881,28 @@
             // Update metric card
             document.getElementById('m-calc-range').textContent =
                 `${Utils.formatNum(data.calc_range_bottom)} - ${Utils.formatNum(data.calc_range_top)}`;
+            // Probability that the offset-scaled range will contain spot at
+            // expiry — derived from a normal distribution where the band is
+            // (1 + offset/100) standard deviations wide.
+            //   offset =   0%  → 1.0σ → ~68%
+            //   offset = +50%  → 1.5σ → ~87%
+            //   offset = +100% → 2.0σ → ~95%
+            const sigma = Math.max(0, 1 + (vixOffset || 0) / 100);
+            const prob = Math.round(_normProb(sigma) * 100);
+            document.getElementById('m-vix-range-prob').textContent = `~${prob}% CHANCE`;
             document.getElementById('m-vix-range').textContent =
-                `VIX: ${Utils.formatNum(data.vix_range_bottom)} - ${Utils.formatNum(data.vix_range_top)}`;
+                `${Utils.formatNum(data.vix_range_bottom)} – ${Utils.formatNum(data.vix_range_top)}`;
+        }
+
+        // P(|Z| ≤ sigma) for a standard normal — Abramowitz erf approximation.
+        function _normProb(sigma) {
+            if (sigma <= 0) return 0;
+            const x = sigma / Math.SQRT2;
+            const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
+            const a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+            const t = 1 / (1 + p * Math.abs(x));
+            const y = 1 - ((((a5*t + a4)*t + a3)*t + a2)*t + a1)*t * Math.exp(-x*x);
+            return Math.min(0.999, Math.max(0, y));
         }
 
         // ── Update functions ───────────────────────────────────────────
@@ -1070,6 +1163,30 @@
             const shown = positions.filter(p => p.parent_trade_id == null).slice(0, 4);
             let html = '';
             for (const pos of shown) {
+                // Futures branch — no IV / delta / risk; show side + LTP + MTM
+                const isFut = (pos.instrument_type === 'FUT')
+                              || pos.trade_type === 'FUT_BUY' || pos.trade_type === 'FUT_SELL';
+                if (isFut) {
+                    const isLong = pos.trade_type === 'FUT_BUY';
+                    const sideCol = isLong ? '#16A34A' : '#DC2626';
+                    const sideBg  = isLong ? 'rgba(22,163,74,0.14)' : 'rgba(220,38,38,0.14)';
+                    const sideTxt = isLong ? 'LONG' : 'SHORT';
+                    const ltpTxt  = (typeof pos.current_ltp === 'number') ? pos.current_ltp.toFixed(2) : '-';
+                    html += `
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-light)">
+                            <div style="display:flex;align-items:center;gap:8px">
+                                <span class="badge" style="background:${sideBg};color:${sideCol};border:1px solid ${sideCol}55;font-weight:700;letter-spacing:0.4px">FUT · ${sideTxt}</span>
+                                <span class="text-muted font-mono" style="font-size:11px">${pos.expiry_date || ''}</span>
+                                <span class="text-muted" style="font-size:11px">${pos.quantity || 1} lot${(pos.quantity || 1) > 1 ? 's' : ''}</span>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:16px;font-size:12px">
+                                <span class="font-mono">LTP ${ltpTxt}</span>
+                                ${Utils.pnlHtml(pos.unrealized_pnl)}
+                            </div>
+                        </div>`;
+                    continue;
+                }
+
                 const ivChange = pos.iv_change_pct != null ? Utils.formatPct(pos.iv_change_pct) : '-';
                 const ivClass = Utils.changeClass(pos.iv_change_pct);
                 const riskScore = pos.risk?.score ?? 0;
@@ -1482,6 +1599,10 @@
         loadNewsTicker();
         loadNewsContext();
         setInterval(loadNewsContext, 90000);
+        // News ticker is now 24/7 on the backend — keep it fresh on the
+        // dashboard even when the WS is quiet (e.g. dashboard opened during
+        // off-market hours, no market_update pushes happening).
+        setInterval(loadNewsTicker, 5 * 60 * 1000);
 
         // ── Market Verdict (mirrors Strategy Builder's outlook verdict) ────────
         // Uses the same /api/strategies/market-analytics feed and scoring rules

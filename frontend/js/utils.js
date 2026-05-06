@@ -79,8 +79,10 @@ const Utils = {
         const map = {
             'CE_SELL': 'badge-ce-sell',
             'PE_SELL': 'badge-pe-sell',
-            'CE_BUY': 'badge-ce-buy',
-            'PE_BUY': 'badge-pe-buy',
+            'CE_BUY':  'badge-ce-buy',
+            'PE_BUY':  'badge-pe-buy',
+            'FUT_BUY': 'badge-safe',
+            'FUT_SELL':'badge-danger',
         };
         return map[type] || 'badge-neutral';
     },
@@ -154,13 +156,14 @@ const Utils = {
             { id: 'positions', icon: '◫', label: 'Positions', href: '/positions' },
             { id: 'analytics', icon: '◔', label: 'Analytics', href: '/analytics' },
             { id: 'strategy-builder', icon: '◈', label: 'Strategy', href: '/strategy-builder' },
+            { id: 'futures', icon: '⇌', label: 'Futures', href: '/futures' },
             { id: 'journal', icon: '☰', label: 'Journal', href: '/journal' },
             { id: 'alerts', icon: '⚡', label: 'Alerts', href: '/alerts' },
             { id: 'news-desk', icon: '📰', label: 'News Desk', href: '/news-desk' },
         ];
 
         return `
-            <div class="sidebar-logo">N<span>iftyEdge</span></div>
+            <div class="sidebar-logo">N</div>
             <nav class="sidebar-nav">
                 ${pages.map(p => `
                     <a href="${p.href}" class="nav-item ${p.id === activePage ? 'active' : ''}">
@@ -182,6 +185,7 @@ const Utils = {
         'Journal':      { icon: '&#9776;',  color: '#6366F1' },
         'Alerts':       { icon: '&#9889;',  color: '#D97706' },
         'News Desk':    { icon: '&#128240;', color: '#0891B2' },
+        'Futures':      { icon: '&#8652;',  color: '#0EA5E9' },
     },
 
     /** Inject profile card CSS once (idempotent) */
@@ -270,6 +274,9 @@ const Utils = {
         if (!card) return;
         const opening = card.classList.contains('hidden');
         card.classList.toggle('hidden', !opening);
+        // Suppress hover-peek while the editor is open
+        const trigger = document.getElementById('ne-profile-trigger');
+        if (trigger) trigger.classList.toggle('is-open', opening);
         if (!opening) return;
         // Sync theme toggle thumb
         const toggle = document.getElementById('ne-theme-toggle');
@@ -280,14 +287,93 @@ const Utils = {
                 const trigger = document.getElementById('ne-profile-trigger');
                 if (!card.contains(e.target) && (!trigger || !trigger.contains(e.target))) {
                     card.classList.add('hidden');
+                    if (trigger) trigger.classList.remove('is-open');
                     document.removeEventListener('click', away);
                 }
             };
             document.addEventListener('click', away);
             document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape') card.classList.add('hidden');
+                if (e.key === 'Escape') {
+                    card.classList.add('hidden');
+                    const trig = document.getElementById('ne-profile-trigger');
+                    if (trig) trig.classList.remove('is-open');
+                }
             }, { once: true });
         }, 0);
+    },
+
+    /** Save credentials from the inline profile editor */
+    async saveProfile() {
+        const msgEl = document.getElementById('ne-pe-msg');
+        const setMsg = (txt, ok) => {
+            if (!msgEl) return;
+            msgEl.textContent = txt;
+            msgEl.className = 'pe-msg ' + (ok ? 'ok' : 'err');
+        };
+        const name    = (document.getElementById('ne-pe-name')?.value || '').trim();
+        const email   = (document.getElementById('ne-pe-email')?.value || '').trim();
+        const curPwd  = document.getElementById('ne-pe-current')?.value || '';
+        const newPwd  = document.getElementById('ne-pe-new')?.value || '';
+
+        if (!name)  return setMsg('Name cannot be empty', false);
+        if (!email) return setMsg('Email cannot be empty', false);
+
+        const current = API.getUser() || {};
+        const sensitive = (email !== current.email) || !!newPwd;
+        if (sensitive && !curPwd) {
+            return setMsg('Current password required to change email or password', false);
+        }
+        if (newPwd && newPwd.length < 6) {
+            return setMsg('New password must be at least 6 characters', false);
+        }
+
+        try {
+            setMsg('Saving…', true);
+            const body = {};
+            if (name !== current.name)   body.name = name;
+            if (email !== current.email) body.email = email;
+            if (newPwd)                   body.new_password = newPwd;
+            if (sensitive)                body.current_password = curPwd;
+
+            if (Object.keys(body).length === 0) {
+                return setMsg('No changes to save', false);
+            }
+
+            const updated = await API.put('/api/auth/profile', body);
+            if (updated && updated.detail) {
+                return setMsg(updated.detail, false);
+            }
+            if (updated && updated.id) {
+                // Persist refreshed user info so the header avatar/name update
+                // without a page reload.
+                const stored = API.getUser() || {};
+                const merged = { ...stored, name: updated.name, email: updated.email };
+                try { localStorage.setItem('niftyedge_user', JSON.stringify(merged)); } catch (e) {}
+
+                // Live-patch visible header bits so the change is immediate.
+                const initial = (updated.name || '?').charAt(0).toUpperCase();
+                document.querySelectorAll('.user-avatar, .ne-profile-avatar, .ne-profile-peek .pp-avatar')
+                    .forEach(el => el.textContent = initial);
+                document.querySelectorAll('.ne-profile-name, .ne-profile-peek .pp-name')
+                    .forEach(el => el.textContent = updated.name);
+                document.querySelectorAll('.ne-profile-email')
+                    .forEach(el => el.textContent = updated.email);
+                const userNameLabel = document.querySelector('#ne-profile-trigger > span');
+                if (userNameLabel) userNameLabel.textContent = updated.name;
+
+                // Clear the password fields after a successful change
+                if (document.getElementById('ne-pe-current')) document.getElementById('ne-pe-current').value = '';
+                if (document.getElementById('ne-pe-new'))     document.getElementById('ne-pe-new').value     = '';
+
+                setMsg('Saved', true);
+                setTimeout(() => setMsg('', true), 2200);
+            } else {
+                setMsg('Save failed', false);
+            }
+        } catch (e) {
+            const detail = (e && e.message) || 'Save failed';
+            setMsg(detail, false);
+        }
     },
 
     /** Build header HTML */
@@ -298,18 +384,27 @@ const Utils = {
 
         this._injectProfileCardStyles();
 
+        this._injectHeaderSpotStyles();
+
         return `
             <div class="header-left">
                 <div class="header-icon" style="background:${cfg.color}">${cfg.icon}</div>
                 <span class="header-title">${title}</span>
+                <span class="refresh-info" id="refresh-info" title="Last data tick (IST)">Connecting…</span>
             </div>
             <div class="header-right">
+                <!-- Live NIFTY CMP chip — populated by initHeader() and live-updated
+                     via the existing market_update WS event. -->
+                <div class="ne-spot-chip" id="ne-spot-chip" title="NIFTY 50 · live spot">
+                    <span class="ne-spot-label">NIFTY</span>
+                    <span class="ne-spot-value font-mono" id="ne-spot-value">—</span>
+                    <span class="ne-spot-change" id="ne-spot-change"></span>
+                </div>
                 <select id="expiry-selector" class="expiry-selector">
                     ${expiries.length ? expiries.map(e =>
                         `<option value="${e}">${e}</option>`
                     ).join('') : '<option value="">Loading...</option>'}
                 </select>
-                <span class="refresh-info" id="refresh-info">Connecting...</span>
                 <a href="/alerts" class="notification-bell" id="notification-bell" title="Alerts" style="position:relative;text-decoration:none;font-size:18px;color:#6B7280;margin:0 8px;cursor:pointer">
                     &#128276;
                     <span id="alert-badge" style="display:none;position:absolute;top:-4px;right:-6px;background:#DC2626;color:#fff;font-size:9px;font-weight:700;border-radius:50%;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px"></span>
@@ -317,13 +412,35 @@ const Utils = {
                 <div class="user-menu" id="ne-profile-trigger" onclick="Utils.toggleProfileCard()">
                     <div class="user-avatar">${initial}</div>
                     <span style="font-size:12px">${user ? user.name : ''}</span>
+                    <div class="ne-profile-peek">
+                        <div class="pp-avatar">${initial}</div>
+                        <div class="pp-meta">
+                            <div class="pp-name">${user ? user.name : ''}</div>
+                            <div class="pp-hint">${user ? (user.email || '') : ''} · click to edit</div>
+                        </div>
+                    </div>
                 </div>
                 <div id="ne-profile-card" class="ne-profile-card hidden">
                     <div class="ne-profile-card-header">
                         <div class="ne-profile-avatar">${initial}</div>
                         <div class="ne-profile-meta">
-                            <div class="ne-profile-name">${user ? user.name : ''}</div>
-                            <div class="ne-profile-email">${user ? (user.email || '') : ''}</div>
+                            <div class="ne-profile-name" id="ne-pc-name">${user ? user.name : ''}</div>
+                            <div class="ne-profile-email" id="ne-pc-email">${user ? (user.email || '') : ''}</div>
+                        </div>
+                    </div>
+                    <div class="ne-profile-divider"></div>
+                    <div class="ne-profile-edit-form" onclick="event.stopPropagation()">
+                        <label for="ne-pe-name">Display name</label>
+                        <input id="ne-pe-name" type="text" value="${user ? user.name : ''}" autocomplete="name">
+                        <label for="ne-pe-email">Email</label>
+                        <input id="ne-pe-email" type="email" value="${user ? (user.email || '') : ''}" autocomplete="email">
+                        <div class="pe-section">Change password (optional)</div>
+                        <input id="ne-pe-current" type="password" placeholder="Current password" autocomplete="current-password">
+                        <input id="ne-pe-new"     type="password" placeholder="New password (min 6 chars)" autocomplete="new-password">
+                        <div class="pe-msg" id="ne-pe-msg"></div>
+                        <div class="pe-actions">
+                            <button class="pe-cancel" type="button" onclick="Utils.toggleProfileCard()">Cancel</button>
+                            <button class="pe-save"   type="button" onclick="Utils.saveProfile()">Save</button>
                         </div>
                     </div>
                     <div class="ne-profile-divider"></div>
@@ -368,10 +485,117 @@ const Utils = {
         if (typeof ts === 'string' && !/Z|[+-]\d{2}:?\d{2}$/.test(ts)) ts = ts + 'Z';
         const d = new Date(ts);
         if (isNaN(d.getTime())) return;
-        el.textContent = `Last: ${d.toLocaleTimeString('en-IN', {
+        // Compact form on the left of the header — `12:24:25 PM IST` reads
+        // cleaner than the older "Last: …" prefix and saves horizontal space
+        // alongside the page title.
+        el.textContent = d.toLocaleTimeString('en-IN', {
             hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
             timeZone: 'Asia/Kolkata',
-        })} IST`;
+        }) + ' IST';
+    },
+
+    /** Update the live NIFTY CMP chip in the header (right side).
+     *  Accepts any payload that carries `nifty_spot` + `nifty_change` +
+     *  `nifty_change_pct` — the WS market_update push, the market_status
+     *  fallback, and the snapshot endpoint all share that shape.
+     */
+    updateHeaderSpot(data) {
+        if (!data) return;
+        const valEl = document.getElementById('ne-spot-value');
+        const chgEl = document.getElementById('ne-spot-change');
+        const chip  = document.getElementById('ne-spot-chip');
+        if (!valEl || !chgEl || !chip) return;
+        const spot = data.nifty_spot;
+        if (typeof spot !== 'number' || !isFinite(spot)) return;
+        valEl.textContent = spot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const chg = data.nifty_change;
+        const pct = data.nifty_change_pct;
+        if (typeof chg === 'number' && typeof pct === 'number') {
+            const sign = chg >= 0 ? '+' : '';
+            chgEl.textContent = `${sign}${chg.toFixed(2)} (${sign}${pct.toFixed(2)}%)`;
+            chip.classList.toggle('up',   chg > 0);
+            chip.classList.toggle('down', chg < 0);
+            chip.classList.toggle('flat', chg === 0);
+        } else {
+            chgEl.textContent = '';
+            chip.classList.remove('up', 'down', 'flat');
+        }
+    },
+
+    /** Inject the header CMP-chip styles once. */
+    _injectHeaderSpotStyles() {
+        if (document.getElementById('ne-spot-style')) return;
+        const s = document.createElement('style');
+        s.id = 'ne-spot-style';
+        s.textContent = `
+            .header-left .refresh-info {
+                margin-left: 10px;
+                padding: 3px 9px;
+                border-radius: 999px;
+                background: var(--bg-secondary);
+                color: var(--text-muted);
+                font-size: 11px;
+                font-family: var(--font-mono, 'JetBrains Mono', monospace);
+                font-weight: 600;
+                letter-spacing: 0.2px;
+                white-space: nowrap;
+            }
+            .ne-spot-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 5px 12px 5px 10px;
+                border-radius: 999px;
+                background: linear-gradient(135deg, rgba(37,99,235,0.12) 0%, rgba(99,102,241,0.10) 100%);
+                border: 1px solid rgba(37,99,235,0.28);
+                box-shadow: 0 2px 8px rgba(37,99,235,0.10);
+                line-height: 1;
+                transition: border-color 220ms, box-shadow 220ms, background 220ms;
+            }
+            .ne-spot-chip .ne-spot-label {
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.6px;
+                color: var(--primary, #2563EB);
+                text-transform: uppercase;
+            }
+            .ne-spot-chip .ne-spot-value {
+                font-size: 14px;
+                font-weight: 700;
+                color: var(--text-primary);
+                font-family: var(--font-mono, 'JetBrains Mono', monospace);
+                letter-spacing: -0.2px;
+            }
+            .ne-spot-chip .ne-spot-change {
+                font-size: 11px;
+                font-weight: 600;
+                font-family: var(--font-mono, 'JetBrains Mono', monospace);
+                color: var(--text-muted);
+            }
+            .ne-spot-chip.up   { border-color: rgba(22,163,74,0.40);  box-shadow: 0 2px 12px rgba(22,163,74,0.18);  background: linear-gradient(135deg, rgba(22,163,74,0.14) 0%, rgba(34,197,94,0.10) 100%); }
+            .ne-spot-chip.up   .ne-spot-label  { color: var(--green, #16A34A); }
+            .ne-spot-chip.up   .ne-spot-change { color: var(--green, #16A34A); }
+            .ne-spot-chip.down { border-color: rgba(220,38,38,0.40);  box-shadow: 0 2px 12px rgba(220,38,38,0.18);  background: linear-gradient(135deg, rgba(220,38,38,0.14) 0%, rgba(239,68,68,0.10) 100%); }
+            .ne-spot-chip.down .ne-spot-label  { color: var(--red, #DC2626); }
+            .ne-spot-chip.down .ne-spot-change { color: var(--red, #DC2626); }
+            [data-theme="dark"] .ne-spot-chip {
+                background: linear-gradient(135deg, rgba(59,130,246,0.16) 0%, rgba(99,102,241,0.12) 100%);
+                border-color: rgba(96,165,250,0.35);
+            }
+            [data-theme="dark"] .ne-spot-chip.up {
+                background: linear-gradient(135deg, rgba(22,163,74,0.22) 0%, rgba(34,197,94,0.14) 100%);
+                border-color: rgba(74,222,128,0.45);
+            }
+            [data-theme="dark"] .ne-spot-chip.down {
+                background: linear-gradient(135deg, rgba(220,38,38,0.22) 0%, rgba(248,113,113,0.14) 100%);
+                border-color: rgba(248,113,113,0.45);
+            }
+            @media (max-width: 720px) {
+                .ne-spot-chip .ne-spot-change { display: none; }
+                .header-left .refresh-info    { display: none; }
+            }
+        `;
+        document.head.appendChild(s);
     },
 
     /** localStorage key for persisted expiry selection */
@@ -424,14 +648,25 @@ const Utils = {
     },
 
     /**
-     * Nearest *tradeable* expiry — strictly after today (DTE > 0). On expiry
-     * day, today's expiry has DTE=0 which makes range math collapse, so the
-     * default rolls to next week. Falls back to the first item if all expiries
-     * are today or past (degenerate data).
+     * Nearest *active* expiry — chain readings (IV, skew, RR) become unreliable
+     * inside the last ~1 trading day, so we roll to the next series. Default
+     * threshold is 2 calendar days, which closely approximates "≥ 2 trading
+     * days remaining" — for the holiday-aware version, prefer the backend's
+     * `default_expiry` field returned by /api/market/expiries.
+     *
+     * Falls back to the first future entry, then the first item, if every
+     * expiry is too close.
      */
-    nearestFutureExpiry(expiries) {
+    nearestFutureExpiry(expiries, minCalendarDays = 2) {
         if (!expiries || !expiries.length) return '';
         const today = this.todayIST();
+        const ms = 1000 * 60 * 60 * 24;
+        // First pass: pick an expiry with at least `minCalendarDays` until expiry.
+        for (const e of expiries) {
+            const d = this.parseExpiryDate(e);
+            if (d && Math.round((d - today) / ms) >= minCalendarDays) return e;
+        }
+        // Fallback: any strictly-future expiry (DTE > 0).
         for (const e of expiries) {
             const d = this.parseExpiryDate(e);
             if (d && d > today) return e;
@@ -496,20 +731,42 @@ const Utils = {
                 sel.innerHTML = futureExpiries.map(e =>
                     `<option value="${e}">${e}</option>`
                 ).join('');
-                // Restore user's last selection, but never a past expiry
-                sel.value = this.resolveExpiry(futureExpiries);
+                // Backend computes the holiday-aware "active default" expiry
+                // (≥ 2 trading days remaining). Use it whenever available so
+                // every page (dashboard, analytics, strategy builder) rolls
+                // to the next series at the same time.
+                const backendDefault = (expResp.default_expiry && futureExpiries.includes(expResp.default_expiry))
+                    ? expResp.default_expiry : null;
+                // Restore user's last selection if still valid, else fall back
+                // to backend's default, else our client-side picker.
+                const saved = localStorage.getItem(this.EXPIRY_KEY);
+                sel.value = (saved && futureExpiries.includes(saved))
+                    ? saved
+                    : (backendDefault || this.nearestFutureExpiry(futureExpiries));
                 // Persist future changes from these pages
                 sel.addEventListener('change', () => this.saveExpiry(sel.value));
             }
         } catch (e) {}
 
-        // Use snapshot only for refresh-info timestamp
+        // Use snapshot for refresh-info timestamp + initial NIFTY CMP chip.
         try {
             const snap = await API.getSnapshot();
-            if (snap && snap.data && snap.data.timestamp) {
-                this.updateRefreshInfo(snap.data.timestamp);
+            if (snap && snap.data) {
+                if (snap.data.timestamp) this.updateRefreshInfo(snap.data.timestamp);
+                this.updateHeaderSpot(snap.data);
             }
         } catch (e) {}
+
+        // Wire the NIFTY CMP chip to live ticks. We bind once per page; the
+        // listener is idempotent because WS.on stacks handlers and the
+        // module-level guard prevents duplicate wiring across re-init.
+        if (typeof WS !== 'undefined' && !this._spotListenerBound) {
+            this._spotListenerBound = true;
+            WS.on('market_update', (data) => this.updateHeaderSpot(data));
+            WS.on('market_status', (data) => {
+                if (data && data.last_snapshot) this.updateHeaderSpot(data.last_snapshot);
+            });
+        }
 
         // Load unread alert count for bell badge
         try {
@@ -638,6 +895,103 @@ const Utils = {
         void bell.offsetWidth;
         bell.classList.add('ne-bell-shake');
         setTimeout(() => bell.classList.remove('ne-bell-shake'), 1000);
+    },
+
+    /** In-app confirmation modal (replaces native confirm()).
+     *  Returns a Promise<boolean>. Renders a small dialog identical in style
+     *  to the futures order modal — works on every page that uses utils.js.
+     *  Usage:  if (await Utils.confirm('Close position?', 'Books out at LTP', {okLabel:'Close', danger:true})) { ... }
+     */
+    confirm(title, body, opts = {}) {
+        this._injectConfirmModal();
+        return new Promise(resolve => {
+            const overlay = document.getElementById('ne-confirm-modal');
+            const okBtn   = document.getElementById('ne-confirm-ok');
+            const cxBtn   = document.getElementById('ne-confirm-cancel');
+            document.getElementById('ne-confirm-title').textContent = title || 'Confirm';
+            document.getElementById('ne-confirm-body').textContent  = body  || '';
+            okBtn.textContent = opts.okLabel || 'Confirm';
+            okBtn.className   = 'ne-cf-ok ' + (opts.danger ? 'is-danger' : '');
+            overlay.classList.add('show');
+            // Trap a single resolution; replace handlers on each open
+            const cleanup = (val) => {
+                overlay.classList.remove('show');
+                okBtn.onclick = null;
+                cxBtn.onclick = null;
+                overlay.onclick = null;
+                resolve(val);
+            };
+            okBtn.onclick = () => cleanup(true);
+            cxBtn.onclick = () => cleanup(false);
+            overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+        });
+    },
+
+    _injectConfirmModal() {
+        if (document.getElementById('ne-confirm-modal')) return;
+        if (!document.getElementById('ne-confirm-style')) {
+            const s = document.createElement('style');
+            s.id = 'ne-confirm-style';
+            s.textContent = `
+                #ne-confirm-modal {
+                    position: fixed; inset: 0;
+                    background: rgba(7, 13, 26, 0.70);
+                    backdrop-filter: blur(4px);
+                    display: none;
+                    align-items: center; justify-content: center;
+                    z-index: 10000;
+                }
+                #ne-confirm-modal.show { display: flex; }
+                #ne-confirm-modal .ne-cf-card {
+                    width: 380px; max-width: calc(100vw - 32px);
+                    background: var(--bg-card);
+                    border: 1px solid var(--border);
+                    border-radius: 16px;
+                    padding: 22px;
+                    box-shadow: 0 24px 64px rgba(0,0,0,0.40);
+                }
+                #ne-confirm-modal .ne-cf-title {
+                    font-size: 16px; font-weight: 700; color: var(--text-primary);
+                    margin-bottom: 6px;
+                }
+                #ne-confirm-modal .ne-cf-body {
+                    font-size: 13px; color: var(--text-secondary);
+                    margin-bottom: 18px; line-height: 1.5;
+                }
+                #ne-confirm-modal .ne-cf-actions {
+                    display: flex; gap: 10px; justify-content: flex-end;
+                }
+                #ne-confirm-modal button {
+                    padding: 8px 18px; border-radius: 10px;
+                    font-size: 13px; font-weight: 700;
+                    cursor: pointer; border: 1px solid var(--border);
+                    background: var(--bg-card); color: var(--text-primary);
+                    font-family: inherit;
+                    transition: filter 140ms;
+                }
+                #ne-confirm-modal button:hover { filter: brightness(1.06); }
+                #ne-confirm-modal .ne-cf-ok {
+                    background: var(--primary, #2563EB); color: #fff; border-color: var(--primary, #2563EB);
+                }
+                #ne-confirm-modal .ne-cf-ok.is-danger {
+                    background: #DC2626; border-color: #DC2626;
+                }
+            `;
+            document.head.appendChild(s);
+        }
+        const m = document.createElement('div');
+        m.id = 'ne-confirm-modal';
+        m.innerHTML = `
+            <div class="ne-cf-card" role="dialog" aria-modal="true">
+                <div class="ne-cf-title" id="ne-confirm-title">Confirm</div>
+                <div class="ne-cf-body"  id="ne-confirm-body"></div>
+                <div class="ne-cf-actions">
+                    <button id="ne-confirm-cancel">Cancel</button>
+                    <button id="ne-confirm-ok" class="ne-cf-ok">Confirm</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(m);
     },
 
     /** Toggle dark mode */
@@ -917,3 +1271,211 @@ const Utils = {
         setTimeout(() => show(0), 600);
     },
 };
+
+/* ═══════════════════════════════════════════════════════════════════════
+   UI uplift bootstrap — runs once per page on DOMContentLoaded.
+   - Top-of-page progress bar (drives off in-flight fetches)
+   - Live heartbeat dot in header (driven off WS connection)
+   - Value-flash on metric updates (MutationObserver)
+   - Click ripples on .btn
+   - Subtle 3D tilt on .metric-card hover
+   - Stagger reveal for .metrics-strip / dashboard grid children
+   All effects respect prefers-reduced-motion via the CSS media query.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function neUiUplift() {
+    if (typeof window === 'undefined') return;
+    if (window.__neUiUpliftInstalled) return;
+    window.__neUiUpliftInstalled = true;
+
+    const reduceMotion = window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // ── Top progress bar ──────────────────────────────────────────────
+    let _prog = null;
+    let _inFlight = 0;
+    function _ensureProg() {
+        if (_prog) return _prog;
+        _prog = document.createElement('div');
+        _prog.id = 'ne-top-progress';
+        document.body.appendChild(_prog);
+        return _prog;
+    }
+    const NProgress = {
+        start() {
+            _inFlight++;
+            const el = _ensureProg();
+            el.classList.remove('is-done');
+            el.style.opacity = '1';
+            // Easing curve toward 80% — never finishes until done() is called
+            const target = Math.min(80, 30 + _inFlight * 8);
+            el.style.width = target + '%';
+        },
+        done() {
+            _inFlight = Math.max(0, _inFlight - 1);
+            if (_inFlight > 0) return;
+            const el = _ensureProg();
+            el.classList.add('is-done');
+            setTimeout(() => {
+                if (_inFlight === 0) { el.style.width = '0'; el.style.opacity = '1'; }
+            }, 240);
+        },
+    };
+    Utils.NProgress = NProgress;
+
+    // Wrap API.fetch + API.post if present so every network call powers the bar.
+    if (window.API) {
+        ['fetch', 'post', 'put'].forEach(method => {
+            const orig = window.API[method];
+            if (typeof orig !== 'function' || orig.__neWrapped) return;
+            const wrapped = async function (...args) {
+                NProgress.start();
+                try { return await orig.apply(this, args); }
+                finally { NProgress.done(); }
+            };
+            wrapped.__neWrapped = true;
+            window.API[method] = wrapped;
+        });
+    }
+
+    // ── Header heartbeat dot ─────────────────────────────────────────
+    function _injectHeartbeat() {
+        const ri = document.getElementById('refresh-info');
+        if (!ri || ri.querySelector('.ne-live-dot')) return;
+        const dot = document.createElement('span');
+        dot.className = 'ne-live-dot';
+        dot.title = 'Live';
+        ri.prepend(dot);
+        // Down-rate to "stale" if no refresh in 90s, "dead" after 5min.
+        let lastBeat = Date.now();
+        Utils._neBeat = () => { lastBeat = Date.now(); dot.classList.remove('stale','dead'); };
+        setInterval(() => {
+            const age = Date.now() - lastBeat;
+            dot.classList.toggle('stale', age > 90_000 && age <= 300_000);
+            dot.classList.toggle('dead',  age > 300_000);
+        }, 5_000);
+        if (window.WS && typeof WS.on === 'function') {
+            WS.on('market_update',   () => Utils._neBeat());
+            WS.on('positions_update',() => Utils._neBeat());
+            WS.on('connected',       () => Utils._neBeat());
+            WS.on('disconnected',    () => dot.classList.add('dead'));
+        }
+    }
+
+    // ── Value-flash on metric updates ────────────────────────────────
+    // Watches text changes on common live nodes; if numeric delta is positive
+    // the cell briefly glows green, negative → red. Cheap MutationObserver
+    // guarded by selectors — only ~12 nodes are observed app-wide.
+    const FLASH_SELECTORS = [
+        '#m-spot', '#m-vix', '#m-dte', '#m-maxpain',
+        '#m-iv-rank', '#p-total', '#p-winrate', '#p-avg-expiry',
+        '.metric-value',
+    ];
+    function _wireFlash() {
+        if (reduceMotion) return;
+        const seen = new WeakMap();
+        const apply = (el) => {
+            const before = seen.get(el);
+            const cur = parseFloat(String(el.textContent).replace(/[^\d.\-]/g, ''));
+            seen.set(el, cur);
+            if (before == null || isNaN(before) || isNaN(cur) || cur === before) return;
+            el.classList.remove('ne-flash-up', 'ne-flash-down');
+            // Force reflow so the animation can re-trigger
+            void el.offsetWidth;
+            el.classList.add(cur > before ? 'ne-flash-up' : 'ne-flash-down');
+        };
+        const targets = new Set();
+        FLASH_SELECTORS.forEach(sel => {
+            document.querySelectorAll(sel).forEach(n => targets.add(n));
+        });
+        targets.forEach(el => {
+            seen.set(el, parseFloat(String(el.textContent).replace(/[^\d.\-]/g, '')));
+            new MutationObserver(() => apply(el))
+                .observe(el, { childList: true, characterData: true, subtree: true });
+        });
+    }
+
+    // ── Ripple on button press ───────────────────────────────────────
+    function _wireRipple() {
+        if (reduceMotion) return;
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('.btn');
+            if (!btn || btn.disabled) return;
+            const rect = btn.getBoundingClientRect();
+            const r = Math.max(rect.width, rect.height);
+            const ripple = document.createElement('span');
+            ripple.className = 'ne-ripple';
+            ripple.style.cssText = `
+                width:${r}px;height:${r}px;
+                left:${e.clientX - rect.left - r/2}px;
+                top:${e.clientY - rect.top - r/2}px;`;
+            btn.appendChild(ripple);
+            setTimeout(() => ripple.remove(), 600);
+        }, { passive: true });
+    }
+
+    // ── 3D tilt on metric cards ──────────────────────────────────────
+    function _wireTilt() {
+        if (reduceMotion) return;
+        const MAX = 4;       // degrees
+        const onMove = (e) => {
+            const card = e.currentTarget;
+            const r = card.getBoundingClientRect();
+            const px = (e.clientX - r.left) / r.width  - 0.5;
+            const py = (e.clientY - r.top)  / r.height - 0.5;
+            card.style.transform =
+                `perspective(700px) rotateX(${(-py * MAX).toFixed(2)}deg) rotateY(${(px * MAX).toFixed(2)}deg) translateY(-2px)`;
+        };
+        const reset = (e) => {
+            e.currentTarget.style.transform = '';
+        };
+        const wire = (root) => {
+            root.querySelectorAll('.metric-card:not([data-ne-tilt])').forEach(card => {
+                card.dataset.neTilt = '1';
+                card.addEventListener('mousemove', onMove);
+                card.addEventListener('mouseleave', reset);
+            });
+        };
+        wire(document);
+        // Re-scan as new metric cards get rendered (e.g. dashboard re-renders)
+        new MutationObserver(muts => {
+            for (const m of muts) {
+                m.addedNodes.forEach(n => { if (n.nodeType === 1) wire(n); });
+            }
+        }).observe(document.body, { childList: true, subtree: true });
+    }
+
+    // ── Stagger reveal — applied to obvious grid containers ──────────
+    function _wireStagger() {
+        if (reduceMotion) return;
+        const targets = [
+            '.metrics-strip',
+            '.summary-strip',
+            '.dashboard-grid',
+            '.position-metrics',
+        ];
+        const apply = (el) => {
+            if (el.classList.contains('ne-stagger')) return;
+            el.classList.add('ne-stagger');
+        };
+        targets.forEach(sel => document.querySelectorAll(sel).forEach(apply));
+    }
+
+    // Boot — wait for DOM, but be tolerant of late-loaded sections
+    function boot() {
+        _ensureProg();
+        _injectHeartbeat();
+        _wireRipple();
+        _wireTilt();
+        _wireStagger();
+        // Defer flash wiring slightly so initial population doesn't trigger flashes
+        setTimeout(_wireFlash, 800);
+        // Re-attempt heartbeat injection if header rendered later
+        setTimeout(_injectHeartbeat, 400);
+        setTimeout(_injectHeartbeat, 1200);
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot, { once: true });
+    } else {
+        boot();
+    }
+})();

@@ -54,8 +54,11 @@ class Trade(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    trade_type = Column(String, nullable=False)  # CE_SELL, PE_SELL, CE_BUY, PE_BUY
-    strike = Column(Integer, nullable=False)
+    trade_type = Column(String, nullable=False)  # CE_SELL, PE_SELL, CE_BUY, PE_BUY,
+                                                  # FUT_BUY, FUT_SELL  (futures hedges)
+    instrument_type = Column(String, default="OPT", nullable=False)  # OPT | FUT
+    lot_size_override = Column(Integer, nullable=True)   # for futures if NSE bumps the lot
+    strike = Column(Integer, nullable=False)             # 0 for futures (no strike)
     expiry_date = Column(String, nullable=False)  # DD-Mon-YYYY format
     entry_premium = Column(Float, nullable=False)
     entry_iv = Column(Float, default=0.0)

@@ -375,6 +375,7 @@
                         <div class="wizard-tabs">
                             <button class="active" onclick="showWizardTab('new')">New Strategy</button>
                             <button onclick="showWizardTab('active')">Active Strategies</button>
+                            <button onclick="showWizardTab('past')">Past Strategies</button>
                         </div>
 
                         <!-- New Strategy Tab -->
@@ -432,10 +433,21 @@
                         <!-- Active Strategies Tab -->
                         <div class="wizard-tab-content" id="tab-active">
                             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-                                <span style="font-size:13px;font-weight:600">Active Strategies</span>
+                                <span style="font-size:13px;font-weight:600">Active Strategies <span style="font-size:10px;color:var(--text-muted);font-weight:400">(live unrealised P&L)</span></span>
                                 <button class="btn btn-sm btn-secondary" onclick="loadActiveStrategies()">&#8635; Refresh</button>
                             </div>
                             <div id="active-strategies-container">
+                                <div class="text-muted text-center" style="padding:32px">Loading...</div>
+                            </div>
+                        </div>
+
+                        <!-- Past Strategies Tab -->
+                        <div class="wizard-tab-content" id="tab-past">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                                <span style="font-size:13px;font-weight:600">Past Strategies <span style="font-size:10px;color:var(--text-muted);font-weight:400">(realised P&L · most recent first)</span></span>
+                                <button class="btn btn-sm btn-secondary" onclick="loadPastStrategies()">&#8635; Refresh</button>
+                            </div>
+                            <div id="past-strategies-container">
                                 <div class="text-muted text-center" style="padding:32px">Loading...</div>
                             </div>
                         </div>
@@ -459,6 +471,7 @@
 
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
+    <script src="/js/tweaks.js"></script>
     <script src="/js/ws.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Not authenticated');
@@ -808,8 +821,10 @@
             document.querySelectorAll('.wizard-tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.wizard-tabs button').forEach(el => el.classList.remove('active'));
             document.getElementById('tab-' + tab).classList.add('active');
-            document.querySelectorAll('.wizard-tabs button')[tab === 'new' ? 0 : 1].classList.add('active');
+            const tabIdx = tab === 'new' ? 0 : tab === 'active' ? 1 : 2;
+            document.querySelectorAll('.wizard-tabs button')[tabIdx].classList.add('active');
             if (tab === 'active') loadActiveStrategies();
+            if (tab === 'past')   loadPastStrategies();
         }
 
         function renderWizard() {
@@ -972,35 +987,63 @@
             previewPayoff();
         }
 
+        // Debounced server-side payoff preview — uses live LTPs so max profit /
+        // max loss / break-evens reflect real net premium, not intrinsic-only.
+        let _payoffDebounce = null;
+        let _lastPayoffMeta = null;        // server response, for unbounded labels
         function previewPayoff() {
             if (!selectedStrategy || !analyticsData) return;
             const spot = analyticsData.spot || 22000;
             const lots = parseInt(document.getElementById('wizard-lots').value) || 1;
-            const LOT = 65;
+            const expiry = document.getElementById('wizard-expiry')?.value
+                        || (analyticsData.expiries && analyticsData.expiries[0])
+                        || '';
             const template = strategyLegsTemplate[selectedStrategy.strategy_type] || [];
             const legs = template.map((_, i) => {
                 const action = document.getElementById('leg-action-' + i)?.value || 'SELL';
                 const optType = document.getElementById('leg-opt-' + i)?.value || 'CE';
                 const strike = parseInt(document.getElementById('leg-strike-' + i)?.value) || 0;
-                return { action, optType, strike, lots };
+                return { action, option_type: optType, strike, lots };
             }).filter(l => l.strike > 0);
 
-            // Compute payoff at expiry across spot range
+            if (!legs.length || !expiry) return;
+
+            // Show stale curve immediately so the chart never appears blank
+            // while waiting for the network round-trip.
+            _previewIntrinsicFallback(legs, spot);
+
+            clearTimeout(_payoffDebounce);
+            _payoffDebounce = setTimeout(async () => {
+                try {
+                    const res = await API.post('/api/strategies/payoff-preview', { expiry, legs });
+                    if (!res || !res.curve) return;
+                    _lastPayoffMeta = res;
+                    const steps = res.curve.map(p => ({ s: p.spot, pnl: p.pnl }));
+                    drawPayoffCanvas(steps, res.spot || spot);
+                } catch (e) {
+                    // Network failed — keep the intrinsic-only fallback already drawn.
+                }
+            }, 250);
+        }
+
+        // Intrinsic-only fallback (no premium) — keeps the canvas non-empty
+        // even when the chain endpoint is slow or offline.
+        function _previewIntrinsicFallback(legs, spot) {
+            const LOT = 65;
+            const span = Math.max(800, Math.round(spot * 0.10));
             const steps = [];
-            const spotMin = Math.round(spot - 600);
-            const spotMax = Math.round(spot + 600);
-            let netPremium = 0;
-            // We don't have LTPs client-side — use intrinsic only (fair approximation)
-            for (let s = spotMin; s <= spotMax; s += 50) {
-                let pnl = netPremium;
+            for (let s = Math.round(spot) - span; s <= Math.round(spot) + span; s += 50) {
+                let pnl = 0;
                 for (const leg of legs) {
-                    const intrinsic = leg.optType === 'CE' ? Math.max(s - leg.strike, 0) : Math.max(leg.strike - s, 0);
+                    const intrinsic = leg.option_type === 'CE'
+                        ? Math.max(s - leg.strike, 0)
+                        : Math.max(leg.strike - s, 0);
                     const qty = leg.lots * LOT;
-                    pnl += leg.action === 'SELL' ? -intrinsic * qty : intrinsic * qty;
+                    pnl += (leg.action === 'SELL' ? -1 : 1) * intrinsic * qty;
                 }
                 steps.push({ s, pnl });
             }
-
+            _lastPayoffMeta = null;     // mark as approximate
             drawPayoffCanvas(steps, spot);
         }
 
@@ -1010,15 +1053,25 @@
         function drawPayoffCanvas(steps, spot) {
             const canvas = document.getElementById('payoff-canvas');
             if (!canvas) return;
+            // If the canvas isn't on screen yet (display:none parent),
+            // clientWidth is 0 — defer until layout settles.  This is the
+            // root cause of the "empty chart" bug for strategies whose
+            // wizard tab opens before paint completes.
+            if (!canvas.clientWidth || !canvas.offsetParent) {
+                requestAnimationFrame(() => drawPayoffCanvas(steps, spot));
+                return;
+            }
 
             // Setup canvas dimensions
             const dpr = window.devicePixelRatio || 1;
-            const W = canvas.clientWidth || canvas.offsetWidth || 500;
-            const H = 220;
+            const W = canvas.clientWidth;
+            const H = 240;                 // a touch taller to fit axis titles
             canvas.width = W * dpr;
             canvas.height = H * dpr;
+            canvas.style.height = H + 'px';
 
-            const PAD = { top: 20, bottom: 28, left: 60, right: 20 };
+            // Extra room on the bottom/left for axis titles.
+            const PAD = { top: 22, bottom: 46, left: 72, right: 20 };
             const cW = W - PAD.left - PAD.right;
             const cH = H - PAD.top - PAD.bottom;
             const pnls = steps.map(p => p.pnl);
@@ -1049,11 +1102,33 @@
                 canvas.addEventListener('mouseleave', () => { if (_payoffState) _renderPayoff(null); });
             }
 
-            // Update info text
-            const maxP = Math.max(...pnls);
-            const maxL = Math.min(...pnls);
-            document.getElementById('payoff-info').textContent =
-                `Max profit: \u20B9${Utils.formatNum(maxP)} | Max loss: \u20B9${Utils.formatNum(maxL)}`;
+            // Info text — prefer server-side metrics (live LTPs include the
+            // net premium and properly bound max profit / max loss). Fall
+            // back to chart extremes only while the preview round-trip is
+            // pending.
+            document.getElementById('payoff-info').textContent = _payoffInfoText(steps);
+        }
+
+        function _payoffInfoText(steps) {
+            const meta = _lastPayoffMeta;
+            const pnlsArr = steps.map(p => p.pnl);
+            const fallbackMaxP = Math.max(...pnlsArr);
+            const fallbackMaxL = Math.min(...pnlsArr);
+            const maxP = meta ? meta.max_profit : fallbackMaxP;
+            const maxL = meta ? meta.max_loss   : fallbackMaxL;
+            const profitTxt = meta && meta.profit_unbounded
+                ? 'Unlimited' : '₹' + Utils.formatNum(Math.round(maxP));
+            const lossTxt   = meta && meta.loss_unbounded
+                ? 'Unlimited' : '₹' + Utils.formatNum(Math.round(maxL));
+            const beTxt = (meta && meta.breakevens && meta.breakevens.length)
+                ? '  ·  BE: ' + meta.breakevens.map(b => Utils.formatNum(Math.round(b))).join(', ')
+                : '';
+            const premTxt = meta
+                ? '  ·  Net ' + (meta.net_premium >= 0 ? 'credit' : 'debit') +
+                  ': ₹' + Utils.formatNum(Math.abs(Math.round(meta.net_premium)))
+                : '';
+            const stale = meta ? '' : '  (intrinsic-only — fetching live…)';
+            return 'Max profit: ' + profitTxt + '  ·  Max loss: ' + lossTxt + beTxt + premTxt + stale;
         }
 
         function _renderPayoff(hoverX) {
@@ -1075,61 +1150,94 @@
             ctx.fillRect(0, 0, W, H);
 
             const zeroY = toY(0);
-
-            // Grid + Y-axis labels
             const pnls = steps.map(p => p.pnl);
-            ctx.fillStyle = textColor;
+            const niceK = v => {
+                const sign = v >= 0 ? '+' : '−';
+                const a = Math.abs(v);
+                if (a >= 100000) return sign + '₹' + (a / 100000).toFixed(1) + 'L';
+                if (a >= 1000)   return sign + '₹' + (a / 1000).toFixed(1) + 'k';
+                return sign + '₹' + Math.round(a);
+            };
+
+            // Y-axis: 5 evenly-spaced ticks anchored on zero so the zero line
+            // is always one of them.  Labels show actual rupee amounts (no
+            // bare integers in the thousands — that read as raw points).
+            const yTicks = [];
+            const above = pnlMax > 0 ? Math.ceil(pnlMax / (pnlRange / 5)) : 0;
+            const below = pnlMin < 0 ? Math.ceil(-pnlMin / (pnlRange / 5)) : 0;
+            const step = pnlRange / Math.max(above + below, 1);
+            for (let i = -below; i <= above; i++) yTicks.push(i * step);
+
             ctx.font = '10px Inter, sans-serif';
             ctx.textAlign = 'right';
-            [Math.min(...pnls), 0, Math.max(...pnls)].forEach(v => {
+            yTicks.forEach(v => {
                 const y = toY(v);
-                const label = (v >= 0 ? '+' : '') + (Math.abs(v) >= 1000 ? Math.round(v / 1000) + 'K' : Math.round(v));
                 ctx.fillStyle = textColor;
-                ctx.fillText(label, PAD.left - 4, y + 3);
-                ctx.strokeStyle = gridColor;
-                ctx.lineWidth = 0.5;
-                ctx.setLineDash([]);
+                ctx.fillText(v === 0 ? '₹0' : niceK(v), PAD.left - 6, y + 3);
+                ctx.strokeStyle = v === 0 ? '#9CA3AF' : gridColor;
+                ctx.lineWidth = v === 0 ? 1 : 0.5;
+                ctx.setLineDash(v === 0 ? [4, 3] : []);
                 ctx.beginPath();
                 ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + cW, y);
                 ctx.stroke();
+                ctx.setLineDash([]);
             });
 
-            // Zero line
-            ctx.strokeStyle = '#9CA3AF';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 3]);
+            // X-axis: ~6 spot-price ticks across the visible range, with a
+            // bottom border so the chart reads as a proper Cartesian plot.
+            ctx.strokeStyle = gridColor;
+            ctx.lineWidth = 0.5;
             ctx.beginPath();
-            ctx.moveTo(PAD.left, zeroY); ctx.lineTo(PAD.left + cW, zeroY);
+            ctx.moveTo(PAD.left, PAD.top + cH); ctx.lineTo(PAD.left + cW, PAD.top + cH);
             ctx.stroke();
-            ctx.setLineDash([]);
-
-            // Fill profit area (green above zero)
-            ctx.save();
             ctx.beginPath();
-            steps.forEach((p, i) => {
-                const x = toX(p.s), y = toY(p.pnl);
-                i === 0 ? ctx.moveTo(x, zeroY) : null;
-                ctx.lineTo(x, y);
-            });
-            ctx.lineTo(toX(steps[steps.length - 1].s), zeroY);
-            ctx.closePath();
-            ctx.fillStyle = 'rgba(22,163,74,0.15)';
-            ctx.fill();
+            ctx.moveTo(PAD.left, PAD.top); ctx.lineTo(PAD.left, PAD.top + cH);
+            ctx.stroke();
+
+            const tickCount = 6;
+            ctx.fillStyle = textColor;
+            ctx.textAlign = 'center';
+            ctx.font = '10px JetBrains Mono, monospace';
+            for (let i = 0; i <= tickCount; i++) {
+                const v = spotMin + (spotRange * i / tickCount);
+                const x = toX(v);
+                ctx.strokeStyle = gridColor;
+                ctx.beginPath();
+                ctx.moveTo(x, PAD.top + cH); ctx.lineTo(x, PAD.top + cH + 4);
+                ctx.stroke();
+                ctx.fillText(Math.round(v).toLocaleString('en-IN'), x, PAD.top + cH + 15);
+            }
+
+            // Axis titles
+            ctx.font = 'bold 10px Inter, sans-serif';
+            ctx.fillStyle = textColor;
+            ctx.textAlign = 'center';
+            ctx.fillText('NIFTY spot at expiry', PAD.left + cW / 2, H - 4);
+            ctx.save();
+            ctx.translate(14, PAD.top + cH / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText('P&L  (₹)', 0, 0);
             ctx.restore();
 
-            // Fill loss area (red below zero)
-            ctx.save();
-            ctx.beginPath();
-            steps.forEach((p, i) => {
-                const x = toX(p.s), y = toY(p.pnl);
-                if (i === 0) ctx.moveTo(x, zeroY);
-                ctx.lineTo(x, y);
-            });
-            ctx.lineTo(toX(steps[steps.length - 1].s), zeroY);
-            ctx.closePath();
-            ctx.fillStyle = 'rgba(220,38,38,0.12)';
-            ctx.fill();
-            ctx.restore();
+            // Profit fill: clip drawing to the region above the zero line so
+            // the green tint never leaks into loss territory (and vice-versa).
+            const drawAreaFill = (sign, color) => {
+                ctx.save();
+                ctx.beginPath();
+                if (sign > 0) ctx.rect(PAD.left, PAD.top, cW, Math.max(zeroY - PAD.top, 0));
+                else          ctx.rect(PAD.left, zeroY,  cW, Math.max(PAD.top + cH - zeroY, 0));
+                ctx.clip();
+                ctx.beginPath();
+                ctx.moveTo(toX(steps[0].s), zeroY);
+                steps.forEach(p => ctx.lineTo(toX(p.s), toY(p.pnl)));
+                ctx.lineTo(toX(steps[steps.length - 1].s), zeroY);
+                ctx.closePath();
+                ctx.fillStyle = color;
+                ctx.fill();
+                ctx.restore();
+            };
+            drawAreaFill(+1, 'rgba(22,163,74,0.18)');
+            drawAreaFill(-1, 'rgba(220,38,38,0.15)');
 
             // P&L line
             ctx.beginPath();
@@ -1334,6 +1442,54 @@
             </div>`;
         }
 
+        // ── Past Strategies (closed; realised P&L) ─────────────────────
+        async function loadPastStrategies() {
+            const c = document.getElementById('past-strategies-container');
+            c.innerHTML = '<div class="text-muted text-center" style="padding:24px">Loading...</div>';
+            try {
+                const resp = await API.fetch('/api/strategies/closed');
+                const strategies = resp?.strategies || [];
+                if (!strategies.length) {
+                    c.innerHTML = '<div class="text-muted text-center" style="padding:32px">No closed strategies yet. Closed strategies will appear here once their legs are exited.</div>';
+                    return;
+                }
+                c.innerHTML = strategies.map(s => renderPastStrategyRow(s)).join('');
+            } catch (e) {
+                c.innerHTML = '<div class="text-muted text-center" style="padding:24px">Failed to load past strategies.</div>';
+            }
+        }
+
+        function renderPastStrategyRow(s) {
+            const pnl = s.total_realized_pnl || 0;
+            const pnlColor = pnl >= 0 ? '#16A34A' : '#DC2626';
+            const closedDate = s.closed_at
+                ? new Date(s.closed_at).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })
+                : '—';
+            return `<div class="strategy-row" style="opacity:0.92">
+                <div class="strategy-row-header">
+                    <div>
+                        <div style="font-weight:600;font-size:14px">${s.name}</div>
+                        <div style="font-size:11px;color:var(--text-muted)">${s.expiry_date} · ${s.legs.length} legs · closed ${closedDate}</div>
+                    </div>
+                    <div style="text-align:right">
+                        <div style="font-size:16px;font-weight:700;font-family:var(--font-mono);color:${pnlColor}">${Utils.formatINR(pnl)}</div>
+                        <div style="font-size:10px;color:var(--text-muted)">Realised P&L</div>
+                    </div>
+                </div>
+                <div class="legs-grid">
+                    ${s.legs.map(l => {
+                        const r = l.realized_pnl || 0;
+                        const exit = l.exit_price != null ? '₹' + l.exit_price : '—';
+                        return `<div class="leg-cell">
+                            <div style="font-weight:600;font-size:12px">${l.trade_type} ${l.strike}</div>
+                            <div style="color:var(--text-muted);font-size:10px">Entry ₹${l.entry_premium} → Exit ${exit}</div>
+                            <div style="font-weight:600;font-size:11px;color:${r >= 0 ? '#16A34A' : '#DC2626'}">${Utils.formatINR(r)}</div>
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>`;
+        }
+
         function closeStrategyConfirm(id, name) {
             // Look up the strategy so we can show per-leg estimated P&L before close
             API.getStrategies().then(resp => {
@@ -1385,6 +1541,34 @@
         window.addEventListener('themechange', () => {
             if (selectedStrategy && analyticsData) previewPayoff();
         });
+
+        // Redraw on window resize (debounced) so the chart fills the wizard
+        // panel after layout changes (sidebar toggle, viewport resize, etc.).
+        let _resizeTimer = null;
+        window.addEventListener('resize', () => {
+            clearTimeout(_resizeTimer);
+            _resizeTimer = setTimeout(() => {
+                if (selectedStrategy && analyticsData) previewPayoff();
+            }, 150);
+        });
+
+        // Re-trigger a draw whenever the canvas first becomes visible — e.g.
+        // when the user clicks into the wizard tab, or when the rankings tile
+        // selection inflates the panel for the first time.  Without this the
+        // canvas was being sized at clientWidth=0 and rendered empty.
+        if ('IntersectionObserver' in window) {
+            const _payoffCanvas = document.getElementById('payoff-canvas');
+            if (_payoffCanvas) {
+                const io = new IntersectionObserver((entries) => {
+                    for (const e of entries) {
+                        if (e.isIntersecting && selectedStrategy && analyticsData) {
+                            previewPayoff();
+                        }
+                    }
+                }, { threshold: 0.1 });
+                io.observe(_payoffCanvas);
+            }
+        }
     </script>
 </body>
 </html>

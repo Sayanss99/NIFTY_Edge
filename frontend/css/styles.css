@@ -1057,3 +1057,1698 @@ input:focus, select:focus, textarea:focus {
     .metrics-strip { grid-template-columns: repeat(2, 1fr); }
     .position-metrics { grid-template-columns: repeat(3, 1fr); }
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DESIGN-SYSTEM UPLIFT — motion, depth, contextual feedback
+   Layered on top of existing rules so functionality is unaffected.
+   Everything below respects prefers-reduced-motion via the @media block
+   at the bottom.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+    --motion-fast:   140ms cubic-bezier(0.4, 0, 0.2, 1);
+    --motion-base:   220ms cubic-bezier(0.4, 0, 0.2, 1);
+    --motion-slow:   420ms cubic-bezier(0.16, 1, 0.3, 1);
+    --motion-spring: 520ms cubic-bezier(0.34, 1.56, 0.64, 1);
+
+    --elev-1: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
+    --elev-2: 0 4px 8px rgba(15, 23, 42, 0.06), 0 6px 16px rgba(15, 23, 42, 0.08);
+    --elev-3: 0 8px 24px rgba(15, 23, 42, 0.10), 0 16px 32px rgba(15, 23, 42, 0.06);
+
+    --glow-primary: 0 0 0 1px rgba(37, 99, 235, 0.20), 0 8px 24px rgba(37, 99, 235, 0.18);
+    --glow-green:   0 0 0 1px rgba(22, 163, 74, 0.25), 0 8px 24px rgba(22, 163, 74, 0.18);
+    --glow-red:     0 0 0 1px rgba(220, 38, 38, 0.25), 0 8px 24px rgba(220, 38, 38, 0.18);
+    --glow-amber:   0 0 0 1px rgba(217, 119, 6, 0.25), 0 8px 24px rgba(217, 119, 6, 0.16);
+}
+[data-theme="dark"] {
+    --elev-1: 0 1px 2px rgba(0, 0, 0, 0.40), 0 1px 3px rgba(0, 0, 0, 0.30);
+    --elev-2: 0 4px 12px rgba(0, 0, 0, 0.40), 0 6px 24px rgba(0, 0, 0, 0.30);
+    --elev-3: 0 12px 32px rgba(0, 0, 0, 0.50), 0 24px 64px rgba(0, 0, 0, 0.30);
+
+    --glow-primary: 0 0 0 1px rgba(96, 165, 250, 0.30), 0 12px 32px rgba(59, 130, 246, 0.28);
+    --glow-green:   0 0 0 1px rgba(74, 222, 128, 0.30), 0 12px 32px rgba(22, 163, 74, 0.30);
+    --glow-red:     0 0 0 1px rgba(248, 113, 113, 0.30), 0 12px 32px rgba(220, 38, 38, 0.30);
+    --glow-amber:   0 0 0 1px rgba(251, 191, 36, 0.30), 0 12px 32px rgba(217, 119, 6, 0.28);
+}
+
+/* ── Top-of-page progress bar ──────────────────────────────────────────── */
+#ne-top-progress {
+    position: fixed;
+    top: 0; left: 0;
+    height: 2px; width: 0;
+    background: linear-gradient(90deg, #60A5FA, #3B82F6, #818CF8);
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
+    z-index: 99999;
+    transition: width 200ms ease-out, opacity 240ms ease;
+    pointer-events: none;
+    border-radius: 0 2px 2px 0;
+}
+#ne-top-progress.is-done {
+    width: 100% !important;
+    opacity: 0;
+}
+
+/* ── Header: glassy translucent surface ───────────────────────────────── */
+.header {
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    background: color-mix(in srgb, var(--bg-header) 72%, transparent);
+    box-shadow: 0 1px 0 var(--border-light), 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+[data-theme="dark"] .header {
+    background: color-mix(in srgb, var(--bg-header) 70%, transparent);
+    box-shadow: 0 1px 0 var(--border), 0 12px 32px rgba(0, 0, 0, 0.40);
+}
+.header::after {
+    content: '';
+    position: absolute;
+    left: 24px; right: 24px; bottom: -1px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(59,130,246,0.5), transparent);
+    opacity: 0.35;
+    pointer-events: none;
+}
+.header-icon {
+    transition: transform var(--motion-spring), filter var(--motion-base);
+}
+.header-icon:hover {
+    transform: rotate(-6deg) scale(1.08);
+    filter: drop-shadow(0 4px 10px rgba(59, 130, 246, 0.45));
+}
+/* Live status dot — injected next to refresh-info by JS */
+.ne-live-dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #16A34A;
+    margin-right: 6px;
+    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.5);
+    animation: ne-heartbeat 1800ms ease-in-out infinite;
+    vertical-align: middle;
+}
+.ne-live-dot.stale  { background: #D97706; box-shadow-color: rgba(217, 119, 6, 0.5); }
+.ne-live-dot.dead   { background: #DC2626; animation: none; }
+@keyframes ne-heartbeat {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.55); transform: scale(1); }
+    50%      { box-shadow: 0 0 0 6px rgba(22, 163, 74, 0); transform: scale(1.18); }
+}
+
+/* ── Sidebar: gradient active rail + ambient glow ─────────────────────── */
+/* IMPORTANT: keep the sidebar fully opaque. The original `.sidebar` rule
+   uses `background:` (shorthand) for its linear gradient — we must not use
+   `background-image:` here because that would *replace* it and leave the
+   panel translucent. The ambient glows below are layered as multiple
+   gradients alongside the original opaque base. */
+.sidebar {
+    background:
+        radial-gradient(80% 60% at 50% 0%, rgba(59,130,246,0.06), transparent 60%),
+        radial-gradient(60% 50% at 50% 100%, rgba(129,140,248,0.05), transparent 65%),
+        linear-gradient(180deg, #060D1C 0%, #0C1628 55%, #111827 100%);
+}
+[data-theme="dark"] .sidebar {
+    background:
+        radial-gradient(80% 60% at 50% 0%, rgba(59,130,246,0.07), transparent 60%),
+        radial-gradient(60% 50% at 50% 100%, rgba(129,140,248,0.06), transparent 65%),
+        linear-gradient(180deg, #050810 0%, #08101F 55%, #0B1424 100%);
+}
+.nav-item {
+    position: relative;
+    transition: background var(--motion-base), color var(--motion-base), transform var(--motion-fast);
+}
+.nav-item::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 8px; bottom: 8px;
+    width: 3px;
+    border-radius: 0 4px 4px 0;
+    background: linear-gradient(180deg, #60A5FA, #818CF8);
+    transform: scaleY(0);
+    transform-origin: center;
+    transition: transform var(--motion-spring);
+    opacity: 0;
+}
+.nav-item:hover  { transform: translateX(2px); }
+.nav-item:hover::before,
+.nav-item.active::before {
+    transform: scaleY(1);
+    opacity: 1;
+}
+
+/* ── Cards: lift on hover with directional glow ──────────────────────── */
+.card {
+    transition:
+        transform var(--motion-base),
+        box-shadow var(--motion-base),
+        border-color var(--motion-base);
+    will-change: transform;
+}
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--elev-2);
+}
+[data-theme="dark"] .card:hover {
+    border-color: rgba(96, 165, 250, 0.30);
+}
+
+/* Metric cards: depth, parallax-ready, contextual border-tone, value-flash */
+.metric-card {
+    transition:
+        transform var(--motion-base),
+        box-shadow var(--motion-base),
+        border-color var(--motion-base);
+    transform: perspective(700px);   /* primes 3D for tilt JS */
+}
+.metric-card::before {
+    /* Soft glow stroke that fades in on hover — feels like the card "wakes up" */
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: 0 0 0 0 transparent;
+    transition: box-shadow var(--motion-base);
+}
+.metric-card:hover::before {
+    box-shadow: var(--glow-primary);
+}
+.metric-card.is-positive:hover::before { box-shadow: var(--glow-green); }
+.metric-card.is-negative:hover::before { box-shadow: var(--glow-red); }
+.metric-card.is-warning:hover::before  { box-shadow: var(--glow-amber); }
+
+/* Value flash: text recolours and pulses briefly on update */
+.metric-value, .pnl-value, .position-metric .value {
+    transition: color var(--motion-base);
+}
+.ne-flash-up   { animation: ne-flash-up   720ms ease-out; }
+.ne-flash-down { animation: ne-flash-down 720ms ease-out; }
+@keyframes ne-flash-up {
+    0%   { color: #16A34A; text-shadow: 0 0 16px rgba(22,163,74,0.7); }
+    100% { color: inherit; text-shadow: none; }
+}
+@keyframes ne-flash-down {
+    0%   { color: #DC2626; text-shadow: 0 0 16px rgba(220,38,38,0.7); }
+    100% { color: inherit; text-shadow: none; }
+}
+
+/* ── Buttons: ripple + subtle press ──────────────────────────────────── */
+.btn {
+    position: relative;
+    overflow: hidden;
+    transition: transform var(--motion-fast), box-shadow var(--motion-base), filter var(--motion-base);
+}
+.btn:hover { filter: brightness(1.05); }
+.btn:active { transform: scale(0.97); }
+.btn-primary { box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25); }
+.btn-primary:hover { box-shadow: 0 6px 22px rgba(37, 99, 235, 0.40); }
+.btn-danger:hover  { box-shadow: 0 6px 18px rgba(220, 38, 38, 0.35); }
+.ne-ripple {
+    position: absolute;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.40);
+    transform: scale(0);
+    animation: ne-ripple 560ms ease-out;
+    pointer-events: none;
+    mix-blend-mode: overlay;
+}
+@keyframes ne-ripple {
+    to { transform: scale(4); opacity: 0; }
+}
+
+/* ── Skeleton shimmer (for cards loading data) ────────────────────────── */
+.ne-skeleton {
+    background: linear-gradient(90deg,
+        var(--bg-secondary) 0%,
+        var(--border-light) 50%,
+        var(--bg-secondary) 100%);
+    background-size: 200% 100%;
+    animation: ne-shimmer 1400ms ease-in-out infinite;
+    border-radius: 6px;
+    color: transparent !important;
+    user-select: none;
+}
+@keyframes ne-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* ── Stagger entrance — applied to children of .ne-stagger ───────────── */
+.ne-stagger > * {
+    animation: ne-rise var(--motion-slow) both;
+}
+.ne-stagger > *:nth-child(1)  { animation-delay:  20ms; }
+.ne-stagger > *:nth-child(2)  { animation-delay:  60ms; }
+.ne-stagger > *:nth-child(3)  { animation-delay: 100ms; }
+.ne-stagger > *:nth-child(4)  { animation-delay: 140ms; }
+.ne-stagger > *:nth-child(5)  { animation-delay: 180ms; }
+.ne-stagger > *:nth-child(6)  { animation-delay: 220ms; }
+.ne-stagger > *:nth-child(7)  { animation-delay: 260ms; }
+.ne-stagger > *:nth-child(8)  { animation-delay: 300ms; }
+.ne-stagger > *:nth-child(9)  { animation-delay: 340ms; }
+.ne-stagger > *:nth-child(10) { animation-delay: 380ms; }
+@keyframes ne-rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Risk gauge: continuous fill gradient + pulsing tip when elevated ── */
+.risk-bar-container {
+    background: linear-gradient(90deg,
+        rgba(22,163,74,0.10),
+        rgba(217,119,6,0.10),
+        rgba(220,38,38,0.12));
+    position: relative;
+}
+.risk-bar-container::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.10), transparent);
+    transform: translateX(-100%);
+    animation: ne-sweep 4s ease-in-out infinite;
+    pointer-events: none;
+    mix-blend-mode: overlay;
+}
+@keyframes ne-sweep {
+    0%, 100% { transform: translateX(-100%); }
+    50%      { transform: translateX(100%); }
+}
+
+/* ── Tables: row hover lift + sticky header glow ─────────────────────── */
+.data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    backdrop-filter: blur(8px);
+}
+.data-table tbody tr {
+    transition: background var(--motion-fast), box-shadow var(--motion-fast);
+}
+.data-table tbody tr:hover {
+    background: var(--bg-secondary);
+    box-shadow: inset 3px 0 0 var(--primary);
+}
+
+/* ── Focus rings — keyboard a11y polish ──────────────────────────────── */
+.btn:focus-visible,
+.form-input:focus-visible,
+.form-select:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.35);
+    border-color: var(--primary, #2563EB) !important;
+}
+
+/* ── Scrollbar (webkit) ──────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 8px;
+    border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--primary, #2563EB);
+}
+
+/* ── Toasts: float-in stack ──────────────────────────────────────────── */
+.toast {
+    animation: ne-toast-in var(--motion-spring) both;
+    backdrop-filter: blur(10px);
+}
+@keyframes ne-toast-in {
+    from { opacity: 0; transform: translateX(40px) scale(0.96); }
+    to   { opacity: 1; transform: translateX(0)  scale(1); }
+}
+
+/* ── Tooltip primitive (data-tooltip attribute) ──────────────────────── */
+[data-tooltip] {
+    position: relative;
+}
+[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 9px;
+    font-size: 11px;
+    white-space: nowrap;
+    box-shadow: var(--elev-2);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--motion-fast), transform var(--motion-fast);
+    z-index: 50;
+}
+[data-tooltip]:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* ── Expiry selector — premium pill in the header ─────────────────────── */
+.expiry-selector {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding: 7px 36px 7px 32px;            /* room for left calendar + right chevron */
+    border: 1px solid var(--border);
+    border-radius: 999px;                  /* pill */
+    font-size: 12px;
+    font-weight: 600;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+    letter-spacing: 0.2px;
+    color: var(--text-primary);
+    cursor: pointer;
+    line-height: 1;
+    /* Subtle gradient fill, not a flat slab */
+    background:
+        /* Right-side chevron, drawn in CSS (no asset needed) */
+        linear-gradient(45deg, transparent 50%, currentColor 50%) calc(100% - 14px) 50% / 5px 5px no-repeat,
+        linear-gradient(135deg, currentColor 50%, transparent 50%) calc(100% - 9px)  50% / 5px 5px no-repeat,
+        /* Left-side calendar glyph */
+        radial-gradient(circle at 12px 50%, rgba(59,130,246,0.18) 4px, transparent 5px),
+        /* Body fill */
+        linear-gradient(180deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.4),
+        var(--elev-1, 0 1px 2px rgba(15,23,42,0.05));
+    transition:
+        border-color var(--motion-base, 220ms),
+        box-shadow var(--motion-base, 220ms),
+        transform var(--motion-fast, 140ms),
+        background var(--motion-base, 220ms);
+    position: relative;
+}
+.expiry-selector::-ms-expand { display: none; }   /* legacy IE */
+.expiry-selector:hover {
+    border-color: var(--primary, #2563EB);
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.10), var(--elev-2, 0 4px 12px rgba(15,23,42,0.08));
+    transform: translateY(-1px);
+}
+.expiry-selector:focus-visible {
+    outline: none;
+    border-color: var(--primary, #2563EB);
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.30);
+}
+.expiry-selector:active {
+    transform: translateY(0);
+}
+[data-theme="dark"] .expiry-selector {
+    background:
+        linear-gradient(45deg, transparent 50%, #94A3B8 50%) calc(100% - 14px) 50% / 5px 5px no-repeat,
+        linear-gradient(135deg, #94A3B8 50%, transparent 50%) calc(100% - 9px)  50% / 5px 5px no-repeat,
+        radial-gradient(circle at 12px 50%, rgba(96,165,250,0.40) 4px, transparent 5px),
+        linear-gradient(180deg, #1F2937 0%, #111827 100%);
+    color: #E2E8F0;
+    border-color: rgba(96,165,250,0.30);
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.06),
+        0 4px 14px rgba(0,0,0,0.30);
+}
+[data-theme="dark"] .expiry-selector:hover {
+    border-color: #60A5FA;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        0 0 0 3px rgba(96,165,250,0.20),
+        0 8px 22px rgba(0,0,0,0.40);
+}
+/* Style the dropdown options where possible — Chrome/Edge respect this */
+.expiry-selector option {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-weight: 600;
+    padding: 6px 10px;
+}
+[data-theme="dark"] .expiry-selector option {
+    background: #1F2937;
+    color: #E2E8F0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LIGHT-MODE REFINEMENT — warmer, more cohesive palette
+   IMPORTANT: scoped to `:root:not([data-theme="dark"])` because plain
+   `:root` has the same specificity as `[data-theme="dark"]` — and since
+   this block sits *after* the dark-mode declaration, an unscoped `:root`
+   would shadow dark mode and leak these light values into it. The
+   `:not(...)` makes the override apply only when the document is NOT in
+   dark mode, so dark mode stays bit-identical to the original.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root:not([data-theme="dark"]) {
+    --bg-primary:        #F4F6FB;       /* warm off-white with subtle blue */
+    --bg-card:           #FFFFFF;
+    --bg-header:         #FBFCFE;
+    --bg-secondary:      #EEF1F7;
+    --bg-hover:          #E6EBF3;
+    --bg-table-stripe:   #F7F9FC;
+    --bg-table-header:   #EAEEF5;
+    --bg-table-strike:   #F0F3F8;
+
+    --text-primary:      #0F172A;       /* deeper navy reads as ink, not raw black */
+    --text-secondary:    #475569;
+    --text-muted:        #7E8AA0;
+
+    --border:            #D8DEE8;
+    --border-light:      #ECEFF4;
+
+    /* Softer, gallery-grade status hues paired with peachy/mint backgrounds */
+    --green:    #15803D;
+    --green-bg: #ECFDF5;
+    --red:      #B91C1C;
+    --red-bg:   #FEF2F2;
+    --amber:    #B45309;
+    --amber-bg: #FEF3C7;
+    --blue:     #1D4ED8;
+    --blue-bg:  #EEF4FF;
+    --purple:   #6D28D9;
+    --purple-bg:#F3EEFE;
+
+    --primary:  #2563EB;
+
+    /* Slightly lifted shadows so cards float against the warm bg */
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.05);
+    --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.06), 0 2px 4px rgba(15, 23, 42, 0.04);
+    --shadow-lg: 0 16px 40px rgba(15, 23, 42, 0.10), 0 8px 16px rgba(15, 23, 42, 0.05);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ROUNDED-CORNER SWEEP — every bordered surface gets softer geometry
+   Listed individually so existing cap-radius rules in the file are
+   overridden without touching their original declarations.
+   ═══════════════════════════════════════════════════════════════════════ */
+.card,
+.modal-box,
+.modal,
+.summary-card,
+.metric-card,
+.chart-container,
+.alert-card,
+.position-card,
+.strategy-row,
+.ranking-card,
+.leg-cell,
+.insight-card,
+.toast,
+#market-closed-banner {
+    border-radius: 14px;
+}
+.btn,
+.form-input,
+.form-select,
+.expiry-selector,         /* already pill — guarded by the rule below */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="search"],
+select,
+textarea {
+    border-radius: 10px;
+}
+.expiry-selector { border-radius: 999px; }     /* keep the pill */
+.badge { border-radius: 999px; }
+.modal-overlay .modal,
+.modal-overlay .modal-box {
+    border-radius: 16px;
+}
+.btn-sm { border-radius: 8px; }
+
+/* Soften the metric card's left accent strip so the rounded corner reads cleanly */
+.metric-card {
+    border-left-width: 4px;
+    border-top-left-radius: 14px;
+    border-bottom-left-radius: 14px;
+}
+
+/* Inputs in light mode — gentle shadow + warmer neutral border */
+.form-input,
+.form-select,
+input,
+select,
+textarea {
+    transition:
+        border-color var(--motion-base, 220ms),
+        box-shadow var(--motion-base, 220ms),
+        background var(--motion-base, 220ms);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PROFILE — hover preview + click-to-edit settings panel
+   ═══════════════════════════════════════════════════════════════════════ */
+.user-menu {
+    border-radius: 999px;
+    padding: 4px 12px 4px 4px;
+    transition: background var(--motion-base, 220ms), box-shadow var(--motion-base, 220ms), transform var(--motion-fast, 140ms);
+    position: relative;
+}
+.user-menu:hover {
+    background: var(--bg-secondary);
+    box-shadow: var(--elev-1);
+    transform: translateY(-1px);
+}
+.user-avatar {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #2563EB 0%, #7C3AED 100%);
+    color: #fff;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.30);
+    margin-right: 6px;
+}
+
+/* Tiny preview that shows on hover (idle state, no click required) */
+.ne-profile-peek {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+    box-shadow: var(--elev-2);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 200px;
+    opacity: 0;
+    transform: translateY(-4px);
+    pointer-events: none;
+    transition: opacity var(--motion-base, 220ms), transform var(--motion-base, 220ms);
+    z-index: 199;
+}
+.user-menu:hover .ne-profile-peek { opacity: 1; transform: translateY(0); }
+.ne-profile-card:not(.hidden) ~ .ne-profile-peek,
+.user-menu.is-open .ne-profile-peek { opacity: 0 !important; }   /* hide preview when settings open */
+.ne-profile-peek .pp-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #2563EB 0%, #7C3AED 100%);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px;
+    flex-shrink: 0;
+}
+.ne-profile-peek .pp-meta { display: flex; flex-direction: column; min-width: 0; }
+.ne-profile-peek .pp-name { font-size: 12px; font-weight: 700; color: var(--text-primary); }
+.ne-profile-peek .pp-hint { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+/* Expand the existing profile card into a credentials editor */
+.ne-profile-card { width: 320px !important; }
+.ne-profile-edit-form {
+    padding: 4px 16px 14px;
+    display: flex; flex-direction: column; gap: 8px;
+}
+.ne-profile-edit-form label {
+    font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-muted);
+}
+.ne-profile-edit-form input {
+    width: 100%; padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 12px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-family: inherit;
+}
+.ne-profile-edit-form input:focus-visible {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.18);
+}
+.ne-profile-edit-form .pe-section {
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+.ne-profile-edit-form .pe-actions {
+    display: flex; gap: 8px;
+    margin-top: 6px;
+}
+.ne-profile-edit-form .pe-actions button {
+    flex: 1; padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 12px; font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background var(--motion-fast, 140ms), color var(--motion-fast, 140ms);
+}
+.ne-profile-edit-form .pe-actions .pe-save {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+}
+.ne-profile-edit-form .pe-actions .pe-save:hover { filter: brightness(1.05); }
+.ne-profile-edit-form .pe-actions .pe-cancel:hover { background: var(--bg-secondary); }
+.ne-profile-edit-form .pe-msg {
+    font-size: 11px;
+    margin-top: 4px;
+    min-height: 14px;
+}
+.ne-profile-edit-form .pe-msg.ok  { color: var(--green); }
+.ne-profile-edit-form .pe-msg.err { color: var(--red); }
+
+/* ── Reduced motion ──────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0ms !important;
+    }
+    .ne-live-dot { animation: none; }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   NIFTYEDGE v3 — REFINEMENT LAYER
+   Activated by data-ne-refine="on" on <html>. Defaults OFF so existing
+   look is unchanged unless the user opts in via Tweaks. Designed to be
+   surgical: tightens type, calms chroma on accent surfaces, swaps the
+   dotted bg for a faint hairline grid (truer to a terminal), and refines
+   metric cards / header. Dark mode gets a deeper, cooler ink palette.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Accent hue token — overridden by Tweaks (default = current blue). */
+:root {
+    --ne-accent-h: 220;
+    --ne-accent-c: 0.13;
+    --ne-radius: 14px;
+    --ne-density: 1;
+}
+
+/* === Refinement: typography & rhythm =================================== */
+html[data-ne-refine="on"] {
+    font-size: 13px;
+}
+html[data-ne-refine="on"] body {
+    font-feature-settings: "ss01", "cv11", "tnum";
+    letter-spacing: -0.005em;
+}
+html[data-ne-refine="on"] .num,
+html[data-ne-refine="on"] .metric-value,
+html[data-ne-refine="on"] .pnl-value,
+html[data-ne-refine="on"] .data-table td,
+html[data-ne-refine="on"] .data-table th,
+html[data-ne-refine="on"] .price {
+    font-variant-numeric: tabular-nums slashed-zero;
+    font-feature-settings: "tnum", "zero", "ss01";
+    letter-spacing: 0;
+}
+
+/* === Refinement: dark-mode palette (cooler ink, more depth) ============ */
+html[data-ne-refine="on"][data-theme="dark"] {
+    --bg-primary:        #07090F;
+    --bg-card:           #0E1219;
+    --bg-sidebar:        #05070C;
+    --bg-header:         #0B0E15;
+    --bg-secondary:      #161B26;
+    --bg-hover:          #1B2230;
+    --bg-table-stripe:   #11151E;
+    --bg-table-header:   #161B26;
+    --bg-table-strike:   #141925;
+    --text-primary:      #E6EAF2;
+    --text-secondary:    #9AA3B5;
+    --text-muted:        #5E6678;
+    --border:            #1F2533;
+    --border-light:      #161B26;
+}
+
+/* === Refinement: light-mode palette (paper, not blue-tint) ============= */
+html[data-ne-refine="on"]:not([data-theme="dark"]) {
+    --bg-primary:        #F6F6F4;        /* warm paper */
+    --bg-card:           #FFFFFF;
+    --bg-header:         #FBFBF8;
+    --bg-secondary:      #EFEFEA;
+    --bg-hover:          #E8E8E2;
+    --bg-table-stripe:   #F8F8F5;
+    --bg-table-header:   #EBEBE5;
+    --text-primary:      #14161A;
+    --text-secondary:    #4B5160;
+    --text-muted:        #8A8F9C;
+    --border:            #DCDCD4;
+    --border-light:      #ECECE5;
+}
+
+/* === Refinement: accent driven by hue token ============================ */
+html[data-ne-refine="on"] {
+    --primary: oklch(0.58 var(--ne-accent-c) var(--ne-accent-h));
+    --blue:    oklch(0.58 var(--ne-accent-c) var(--ne-accent-h));
+    --blue-bg: oklch(0.96 0.04 var(--ne-accent-h));
+}
+html[data-ne-refine="on"][data-theme="dark"] {
+    --blue-bg: oklch(0.30 0.07 var(--ne-accent-h) / 0.35);
+}
+
+/* === Refinement: status colors — same chroma family for harmony ======== */
+html[data-ne-refine="on"] {
+    --green: oklch(0.55 0.15 150);
+    --red:   oklch(0.55 0.18 27);
+    --amber: oklch(0.66 0.15 75);
+    --purple:oklch(0.55 0.17 295);
+}
+html[data-ne-refine="on"][data-theme="dark"] {
+    --green: oklch(0.72 0.18 150);
+    --red:   oklch(0.68 0.20 27);
+    --amber: oklch(0.78 0.16 78);
+}
+
+/* === Refinement: page background — hairline grid, not dot field ======== */
+html[data-ne-refine="on"] .page-content,
+html[data-ne-refine="on"] .content-area {
+    background-image:
+        linear-gradient(to right, color-mix(in srgb, var(--border) 35%, transparent) 1px, transparent 1px),
+        linear-gradient(to bottom, color-mix(in srgb, var(--border) 35%, transparent) 1px, transparent 1px);
+    background-size: 64px 64px, 64px 64px;
+    background-position: -1px -1px;
+}
+
+/* Texture variant: scanline (tweakable) */
+html[data-ne-refine="on"][data-ne-texture="scan"] .page-content,
+html[data-ne-refine="on"][data-ne-texture="scan"] .content-area {
+    background-image: repeating-linear-gradient(
+        to bottom,
+        transparent 0px, transparent 2px,
+        color-mix(in srgb, var(--text-muted) 6%, transparent) 2px,
+        color-mix(in srgb, var(--text-muted) 6%, transparent) 3px
+    );
+    background-size: auto;
+}
+html[data-ne-refine="on"][data-ne-texture="none"] .page-content,
+html[data-ne-refine="on"][data-ne-texture="none"] .content-area {
+    background-image: none;
+}
+
+/* === Refinement: header — quiet hairline, no gradient underline ======== */
+html[data-ne-refine="on"] .header {
+    background: var(--bg-header);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-bottom: 1px solid var(--border-light);
+    box-shadow: none;
+    background-image: none;
+}
+html[data-ne-refine="on"] .header::after { display: none; }
+html[data-ne-refine="on"] .header-icon {
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 10%, transparent);
+}
+html[data-ne-refine="on"] .header-title {
+    font-weight: 650;
+    letter-spacing: -0.01em;
+}
+
+/* Header gets a tiny ticker-style breadcrumb crumb */
+html[data-ne-refine="on"] .header-left::before {
+    content: '◆';
+    color: var(--text-muted);
+    font-size: 8px;
+    margin-right: 8px;
+    transform: translateY(-1px);
+    display: inline-block;
+}
+
+/* === Refinement: sidebar — flatter ink, sharper rail =================== */
+html[data-ne-refine="on"] .sidebar {
+    background: var(--bg-sidebar) !important;
+    border-right: 1px solid color-mix(in srgb, var(--primary) 18%, transparent);
+    box-shadow: none;
+}
+html[data-ne-refine="on"] .sidebar::before {
+    background: linear-gradient(90deg,
+        color-mix(in srgb, var(--primary) 90%, transparent),
+        color-mix(in srgb, var(--primary) 30%, transparent),
+        transparent);
+    height: 2px;
+}
+html[data-ne-refine="on"] .nav-item {
+    color: #8B93A6;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+}
+html[data-ne-refine="on"] .nav-item.active {
+    background: color-mix(in srgb, var(--primary) 16%, transparent);
+    color: #FFF;
+    filter: none;
+    box-shadow: inset 2px 0 0 var(--primary);
+}
+html[data-ne-refine="on"] .nav-item:hover {
+    background: rgba(255,255,255,0.04);
+    color: #FFF;
+    transform: none;
+}
+
+/* === Refinement: monogram — proper "NE" mark, not a bare "N" =========== */
+html[data-ne-refine="on"] .sidebar-logo {
+    margin-bottom: 24px;
+    position: relative;
+    width: 100%;
+    justify-content: center;
+}
+html[data-ne-refine="on"] .sidebar-logo {
+    color: transparent;        /* hide raw "N" text node */
+    font-size: 0;
+}
+html[data-ne-refine="on"] .sidebar-logo::before {
+    content: 'NE';
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 60%, #6366F1));
+    color: #FFF;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.15),
+        0 4px 12px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+html[data-ne-refine="on"] .sidebar-logo span {
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: #FFF;
+    margin-left: 8px;
+}
+
+/* === Refinement: cards — restrained, true terminal pane ================ */
+html[data-ne-refine="on"] .card {
+    border-radius: var(--ne-radius);
+    border: 1px solid var(--border-light);
+    border-top: 1px solid var(--border-light);   /* retire 3px primary top */
+    box-shadow: none;
+    position: relative;
+}
+html[data-ne-refine="on"] .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 14px;
+    width: 28px; height: 2px;
+    background: var(--primary);
+    border-radius: 0 0 2px 2px;
+    opacity: 0.85;
+}
+html[data-ne-refine="on"] .card:hover {
+    transform: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+    border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+}
+html[data-ne-refine="on"][data-theme="dark"] .card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+html[data-ne-refine="on"] .card-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+}
+html[data-ne-refine="on"] .card-title::before { display: none; }
+
+/* === Refinement: metric cards — confident numerics, no chrome ========== */
+html[data-ne-refine="on"] .metric-card {
+    border-left: 1px solid var(--border-light);
+    border-radius: var(--ne-radius);
+    padding: 14px 14px 12px;
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, var(--bg-card) 100%, transparent) 0%,
+            color-mix(in srgb, var(--bg-card) 100%, transparent) 100%);
+    transform: none;
+}
+html[data-ne-refine="on"] .metric-card::before {
+    /* small accent tick on left edge */
+    content: '';
+    position: absolute;
+    left: 0; top: 14px; bottom: 14px;
+    width: 2px;
+    background: var(--primary);
+    border-radius: 0 2px 2px 0;
+    box-shadow: none;
+    opacity: 0.7;
+    inset: auto auto auto 0;
+}
+html[data-ne-refine="on"] .metric-card.is-positive::before { background: var(--green); }
+html[data-ne-refine="on"] .metric-card.is-negative::before { background: var(--red); }
+html[data-ne-refine="on"] .metric-card.is-warning::before  { background: var(--amber); }
+html[data-ne-refine="on"] .metric-card::after { display: none; }
+html[data-ne-refine="on"] .metric-card:hover {
+    transform: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+}
+html[data-ne-refine="on"][data-theme="dark"] .metric-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    border-color: color-mix(in srgb, var(--primary) 25%, var(--border));
+}
+html[data-ne-refine="on"] .metric-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+html[data-ne-refine="on"] .metric-value {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    font-family: var(--font-sans, system-ui);
+    font-variant-numeric: tabular-nums slashed-zero;
+}
+html[data-ne-refine="on"] .metric-change {
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 6px;
+    font-family: var(--font-mono, monospace);
+}
+
+/* === Refinement: buttons =============================================== */
+html[data-ne-refine="on"] .btn {
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0;
+}
+html[data-ne-refine="on"] .btn-primary {
+    background: var(--primary);
+    box-shadow: none;
+}
+html[data-ne-refine="on"] .btn-primary:hover {
+    background: color-mix(in srgb, var(--primary) 88%, #000);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--primary) 30%, transparent);
+    filter: none;
+}
+
+/* === Refinement: tables — denser, tabular, hairline =================== */
+html[data-ne-refine="on"] .data-table th {
+    background: transparent;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+    font-weight: 700;
+    padding: 10px 10px;
+}
+html[data-ne-refine="on"] .data-table td {
+    border-bottom: 1px solid var(--border-light);
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    padding: 7px 10px;
+}
+html[data-ne-refine="on"] .data-table tbody tr:nth-child(even) td {
+    background: var(--bg-table-stripe);
+}
+html[data-ne-refine="on"] .data-table tr:hover td {
+    background: var(--bg-hover);
+    box-shadow: none;
+}
+
+/* === Refinement: badges — flatter, terminal-style ====================== */
+html[data-ne-refine="on"] .badge {
+    border-radius: 4px;
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 6px;
+}
+
+/* === Refinement: density modifier ====================================== */
+html[data-ne-refine="on"][data-ne-density="compact"] {
+    font-size: 12px;
+}
+html[data-ne-refine="on"][data-ne-density="compact"] .metric-value { font-size: 19px; }
+html[data-ne-refine="on"][data-ne-density="compact"] .metric-card  { padding: 10px 12px 9px; }
+html[data-ne-refine="on"][data-ne-density="compact"] .card         { padding: 12px; }
+html[data-ne-refine="on"][data-ne-density="compact"] .data-table td { padding: 5px 8px; }
+html[data-ne-refine="on"][data-ne-density="compact"] .data-table th { padding: 7px 8px; }
+
+html[data-ne-refine="on"][data-ne-density="spacious"] .metric-value { font-size: 26px; }
+html[data-ne-refine="on"][data-ne-density="spacious"] .metric-card  { padding: 18px 18px 16px; }
+html[data-ne-refine="on"][data-ne-density="spacious"] .card         { padding: 20px; }
+html[data-ne-refine="on"][data-ne-density="spacious"] .data-table td { padding: 10px 12px; }
+
+/* === Refinement: ticker chip in header right (CSS-only, no markup) ==== */
+html[data-ne-refine="on"] .refresh-info {
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+/* === Refinement: panel titles — quiet =================================  */
+html[data-ne-refine="on"] .panel-title {
+    background: transparent;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+}
+html[data-ne-refine="on"] .panel-title::before {
+    width: 3px; height: 11px;
+    background: var(--primary);
+}
+
+/* === Tweaks panel UI =================================================== */
+.ne-tweaks-launcher {
+    position: fixed;
+    right: 18px; bottom: 18px;
+    z-index: 9999;
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.10), 0 1px 3px rgba(0,0,0,0.08);
+    cursor: pointer;
+    display: inline-flex;     /* always visible — users open pages directly */
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    transition: transform 200ms ease, background 200ms ease;
+}
+.ne-tweaks-launcher:hover { transform: scale(1.06); background: var(--bg-secondary); }
+.ne-tweaks-launcher.is-active { display: inline-flex; }
+
+.ne-tweaks-panel {
+    position: fixed;
+    right: 18px; bottom: 70px;
+    z-index: 9998;
+    width: 320px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.18), 0 4px 16px rgba(0,0,0,0.08);
+    overflow: hidden;
+    display: none;
+    font-family: var(--font-sans, system-ui);
+    color: var(--text-primary);
+}
+.ne-tweaks-panel.is-open { display: block; animation: ne-tweaks-in 220ms ease-out; }
+@keyframes ne-tweaks-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.ne-tweaks-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-header);
+}
+.ne-tweaks-head .ne-tweaks-title {
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--text-secondary);
+    display: flex; align-items: center; gap: 8px;
+}
+.ne-tweaks-head .ne-tweaks-title::before {
+    content: ''; display: inline-block;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 25%, transparent);
+}
+.ne-tweaks-head .ne-tweaks-close {
+    background: transparent; border: 0; cursor: pointer;
+    color: var(--text-muted); font-size: 16px; line-height: 1;
+    padding: 2px 6px; border-radius: 6px;
+}
+.ne-tweaks-head .ne-tweaks-close:hover { background: var(--bg-secondary); color: var(--text-primary); }
+
+.ne-tweaks-body { padding: 4px 14px 14px; max-height: 70vh; overflow-y: auto; }
+.ne-tweak-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 10px 0;
+    border-bottom: 1px dashed var(--border-light);
+}
+.ne-tweak-row:last-child { border-bottom: 0; }
+.ne-tweak-row .ne-tweak-label {
+    font-size: 12px; font-weight: 600; color: var(--text-primary);
+    display: flex; flex-direction: column; gap: 2px;
+}
+.ne-tweak-row .ne-tweak-hint {
+    font-size: 10px; color: var(--text-muted); font-weight: 500;
+    letter-spacing: 0.02em;
+}
+.ne-seg {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-secondary);
+}
+.ne-seg button {
+    appearance: none; border: 0; cursor: pointer;
+    padding: 5px 9px;
+    font-size: 11px; font-weight: 600;
+    color: var(--text-secondary);
+    background: transparent;
+    font-family: inherit;
+    transition: background 150ms ease, color 150ms ease;
+}
+.ne-seg button + button { border-left: 1px solid var(--border); }
+.ne-seg button.is-on {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    box-shadow: inset 0 0 0 1px var(--primary);
+}
+.ne-seg button:hover { color: var(--text-primary); }
+
+.ne-hue-row {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 6px;
+    width: 100%;
+}
+.ne-hue-row button {
+    appearance: none; border: 1px solid var(--border);
+    height: 24px; border-radius: 6px;
+    cursor: pointer;
+    transition: transform 150ms ease, box-shadow 150ms ease;
+}
+.ne-hue-row button.is-on {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--primary);
+}
+
+.ne-tweaks-foot {
+    padding: 10px 14px;
+    border-top: 1px solid var(--border-light);
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--bg-secondary);
+}
+.ne-tweaks-foot .ne-reset {
+    background: transparent; border: 0; cursor: pointer;
+    color: var(--text-muted); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.1em;
+}
+.ne-tweaks-foot .ne-reset:hover { color: var(--text-primary); }
+.ne-tweaks-foot .ne-stamp {
+    font-family: var(--font-mono, monospace);
+    font-size: 10px; color: var(--text-muted);
+}
+
+
+/* ═════════════════════════════════════════════════════════════════════════
+   NIFTYEDGE v3.1 — DEEP REFINEMENT LAYER
+   Page-by-page polish. Pure CSS overrides — never touches markup or
+   data-bound classnames the JS reads/writes. Activated only when the
+   v3 refinement layer is on (data-ne-refine="on").
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* === Global card surface tuning ────────────────────────────────────────── */
+html[data-ne-refine="on"][data-theme="dark"] .card {
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, #fff 1.5%, var(--bg-card)),
+            var(--bg-card));
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.025),
+        0 1px 0 rgba(0,0,0,0.20);
+}
+html[data-ne-refine="on"][data-theme="dark"] .card:hover {
+    border-color: color-mix(in srgb, var(--primary) 25%, var(--border));
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.035),
+        0 6px 22px rgba(0,0,0,0.35);
+}
+
+/* Card header — quieter, with consistent eyebrow tick */
+html[data-ne-refine="on"] .card .card-header {
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+html[data-ne-refine="on"] .card-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+}
+html[data-ne-refine="on"] .card-title::before {
+    content: '';
+    display: inline-block;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+/* === Page-content padding rhythm ───────────────────────────────────────── */
+html[data-ne-refine="on"] .page-content {
+    padding: 18px 20px 28px;
+}
+
+/* === Header polish ─────────────────────────────────────────────────────── */
+html[data-ne-refine="on"] .header {
+    padding: 0 20px;
+    height: 52px;
+}
+html[data-ne-refine="on"][data-theme="dark"] .header {
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, #fff 1.5%, var(--bg-header)),
+            var(--bg-header));
+}
+html[data-ne-refine="on"] .header-title {
+    font-size: 13px;
+}
+
+/* === Metric grid spacing ───────────────────────────────────────────────── */
+html[data-ne-refine="on"] .metric-grid,
+html[data-ne-refine="on"] .metrics-grid {
+    gap: 10px;
+}
+html[data-ne-refine="on"] .metric-card {
+    padding: 14px 14px 12px;
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, #fff 1%, var(--bg-card)),
+            var(--bg-card));
+}
+
+/* Trend sparkline lane below metric value (CSS-only space reservation) */
+html[data-ne-refine="on"] .metric-card .metric-value {
+    font-feature-settings: "tnum", "ss01", "zero";
+}
+
+/* === Badge family ──────────────────────────────────────────────────────── */
+html[data-ne-refine="on"] .badge {
+    padding: 3px 7px;
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+html[data-ne-refine="on"] .badge-safe   { color: var(--green); }
+html[data-ne-refine="on"] .badge-danger { color: var(--red);   }
+html[data-ne-refine="on"] .badge-warn   { color: var(--amber); }
+
+/* === Buttons family ────────────────────────────────────────────────────── */
+html[data-ne-refine="on"] .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+}
+html[data-ne-refine="on"] .btn-ghost:hover {
+    border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+html[data-ne-refine="on"] .btn-sm {
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 7px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   DASHBOARD — Range chart, Support/Resistance, Risk meters
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* The .range-chart in dashboard has its own background; harmonize with v3 dark */
+html[data-ne-refine="on"][data-theme="dark"] .range-chart {
+    border-color: color-mix(in srgb, var(--primary) 14%, var(--border)) !important;
+    background:
+        radial-gradient(800px 500px at 12% 10%, color-mix(in srgb, var(--primary) 12%, transparent), transparent 60%),
+        radial-gradient(700px 400px at 90% 90%, color-mix(in srgb, var(--amber) 10%, transparent), transparent 60%),
+        linear-gradient(180deg, var(--bg-card), color-mix(in srgb, #000 18%, var(--bg-card))) !important;
+    border-radius: var(--ne-radius) !important;
+}
+
+/* Chart toolbar chips */
+html[data-ne-refine="on"] .vix-offset-control,
+html[data-ne-refine="on"] .chart-zoom {
+    background: color-mix(in srgb, var(--primary) 5%, transparent);
+    border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--border));
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+html[data-ne-refine="on"] .vix-offset-control input {
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
+    border-radius: 0;
+    padding: 2px 4px;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+html[data-ne-refine="on"] .legend-chip {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 10.5px;
+    letter-spacing: 0.02em;
+    transition: all 150ms ease;
+}
+html[data-ne-refine="on"] .legend-chip:hover {
+    border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+    color: var(--text-primary);
+}
+html[data-ne-refine="on"] .legend-chip.active,
+html[data-ne-refine="on"] .legend-chip[aria-pressed="true"] {
+    border-color: var(--primary);
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   OPTION CHAIN — calmer ATM highlight, sticky greeks, tabular rhythm
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-refine="on"] .option-chain-table th,
+html[data-ne-refine="on"] .option-chain-table td {
+    font-family: var(--font-mono, monospace);
+    font-variant-numeric: tabular-nums slashed-zero;
+    font-size: 11.5px;
+    padding: 6px 8px;
+}
+html[data-ne-refine="on"] .option-chain-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    font-weight: 700;
+}
+/* Strike rail — stronger center column */
+html[data-ne-refine="on"] .option-chain-table .strike-cell,
+html[data-ne-refine="on"] .option-chain-table td.strike,
+html[data-ne-refine="on"] .option-chain-table th.strike {
+    background: color-mix(in srgb, var(--primary) 6%, transparent);
+    color: var(--text-primary);
+    font-weight: 700;
+    border-left: 1px solid color-mix(in srgb, var(--primary) 16%, var(--border));
+    border-right: 1px solid color-mix(in srgb, var(--primary) 16%, var(--border));
+}
+
+/* ATM row — subtler highlight (no harsh fill) */
+html[data-ne-refine="on"] .option-chain-table tr.atm-row td,
+html[data-ne-refine="on"] .option-chain-table tr.atm td {
+    background: color-mix(in srgb, var(--amber) 9%, transparent);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--amber) 25%, transparent),
+                inset 0 -1px 0 color-mix(in srgb, var(--amber) 25%, transparent);
+}
+
+/* ITM tinting — restrained */
+html[data-ne-refine="on"] .option-chain-table .itm {
+    background: color-mix(in srgb, var(--green) 5%, transparent);
+}
+
+/* OI heat bars become hairline rails */
+html[data-ne-refine="on"] .oi-bar,
+html[data-ne-refine="on"] .oi-heat-bar {
+    height: 3px !important;
+    border-radius: 2px;
+    opacity: 0.85;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   POSITIONS — primary metric (P&L) leads, secondary metrics demoted
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-refine="on"] .position-card {
+    border-radius: var(--ne-radius);
+    border: 1px solid var(--border);
+    padding: 16px 18px;
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, #fff 1.5%, var(--bg-card)),
+            var(--bg-card));
+    transition: border-color 150ms ease, box-shadow 200ms ease;
+}
+html[data-ne-refine="on"] .position-card:hover {
+    border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+    box-shadow: 0 8px 28px rgba(0,0,0,0.25);
+}
+
+/* Big PnL number gets confident treatment */
+html[data-ne-refine="on"] .position-card .pnl-value,
+html[data-ne-refine="on"] .position-card .pnl-large,
+html[data-ne-refine="on"] .pnl-display .pnl-value {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.018em;
+    font-variant-numeric: tabular-nums slashed-zero;
+}
+
+/* Secondary metric row — quieter chrome */
+html[data-ne-refine="on"] .position-card .metric-row,
+html[data-ne-refine="on"] .position-metrics {
+    gap: 16px;
+    padding-top: 12px;
+    margin-top: 12px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+html[data-ne-refine="on"] .position-card .metric-row .metric-label,
+html[data-ne-refine="on"] .position-metrics .label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--text-muted);
+    font-weight: 700;
+}
+html[data-ne-refine="on"] .position-card .metric-row .metric-value-sm,
+html[data-ne-refine="on"] .position-metrics .value {
+    font-size: 12.5px;
+    font-weight: 600;
+    font-family: var(--font-mono, monospace);
+    color: var(--text-primary);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   STRATEGY BUILDER — refined leg list & ranking cards
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-refine="on"] .strategy-leg,
+html[data-ne-refine="on"] .leg-row {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, #fff 1%, var(--bg-card)),
+            var(--bg-card));
+    padding: 10px 12px;
+}
+html[data-ne-refine="on"] .strategy-leg:hover,
+html[data-ne-refine="on"] .leg-row:hover {
+    border-color: color-mix(in srgb, var(--primary) 25%, var(--border));
+}
+
+html[data-ne-refine="on"] .strategy-rank,
+html[data-ne-refine="on"] .ranking-card,
+html[data-ne-refine="on"] .strategy-suggestion {
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    padding: 14px 16px;
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, #fff 1.2%, var(--bg-card)),
+            var(--bg-card));
+    transition: all 180ms ease;
+    position: relative;
+    overflow: hidden;
+}
+html[data-ne-refine="on"] .strategy-rank::before,
+html[data-ne-refine="on"] .ranking-card::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 2px;
+    background: var(--primary);
+    opacity: 0.6;
+}
+html[data-ne-refine="on"] .strategy-rank:hover,
+html[data-ne-refine="on"] .ranking-card:hover {
+    border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+    transform: translateY(-1px);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.28);
+}
+
+/* Score chip */
+html[data-ne-refine="on"] .strategy-score,
+html[data-ne-refine="on"] .score-badge {
+    font-family: var(--font-mono, monospace);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    letter-spacing: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   ANALYTICS / NEWS DESK / JOURNAL / FUTURES / ALERTS — light polish
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Analytics chart frames */
+html[data-ne-refine="on"] .chart-container,
+html[data-ne-refine="on"] .analytics-chart {
+    border-radius: var(--ne-radius);
+    border: 1px solid var(--border);
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, #fff 1.5%, var(--bg-card)),
+            var(--bg-card));
+}
+
+/* News desk articles */
+html[data-ne-refine="on"] .news-card,
+html[data-ne-refine="on"] .news-item,
+html[data-ne-refine="on"] .article-card {
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    padding: 14px 16px;
+    transition: border-color 150ms ease, transform 200ms ease;
+}
+html[data-ne-refine="on"] .news-card:hover,
+html[data-ne-refine="on"] .news-item:hover,
+html[data-ne-refine="on"] .article-card:hover {
+    border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+    transform: translateY(-1px);
+}
+html[data-ne-refine="on"] .news-source,
+html[data-ne-refine="on"] .article-source {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+html[data-ne-refine="on"] .news-time,
+html[data-ne-refine="on"] .article-time {
+    font-family: var(--font-mono, monospace);
+    font-size: 10.5px;
+    color: var(--text-muted);
+}
+
+/* Journal trade rows */
+html[data-ne-refine="on"] .journal-table td,
+html[data-ne-refine="on"] .history-table td {
+    font-family: var(--font-mono, monospace);
+    font-variant-numeric: tabular-nums slashed-zero;
+    font-size: 11.5px;
+}
+html[data-ne-refine="on"] .journal-table th,
+html[data-ne-refine="on"] .history-table th {
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 10px;
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
+/* Futures tiles */
+html[data-ne-refine="on"] .futures-tile,
+html[data-ne-refine="on"] .future-card {
+    border-radius: var(--ne-radius);
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    padding: 14px;
+}
+
+/* Alerts list */
+html[data-ne-refine="on"] .alert-card,
+html[data-ne-refine="on"] .alert-item {
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+    background: var(--bg-card);
+    transition: border-color 150ms ease;
+}
+html[data-ne-refine="on"] .alert-card:hover,
+html[data-ne-refine="on"] .alert-item:hover {
+    border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+}
+html[data-ne-refine="on"] .alert-card.is-active,
+html[data-ne-refine="on"] .alert-item.is-active,
+html[data-ne-refine="on"] .alert-card.active {
+    border-left: 2px solid var(--primary);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   FORM CONTROLS — unified inputs/selects across all pages
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-refine="on"] input[type="text"],
+html[data-ne-refine="on"] input[type="email"],
+html[data-ne-refine="on"] input[type="number"],
+html[data-ne-refine="on"] input[type="search"],
+html[data-ne-refine="on"] input[type="password"],
+html[data-ne-refine="on"] select,
+html[data-ne-refine="on"] textarea {
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+}
+html[data-ne-refine="on"] input[type="text"]:focus,
+html[data-ne-refine="on"] input[type="email"]:focus,
+html[data-ne-refine="on"] input[type="number"]:focus,
+html[data-ne-refine="on"] input[type="search"]:focus,
+html[data-ne-refine="on"] input[type="password"]:focus,
+html[data-ne-refine="on"] select:focus,
+html[data-ne-refine="on"] textarea:focus {
+    border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 14%, transparent);
+    outline: none;
+}
+
+/* Modal polish */
+html[data-ne-refine="on"] .modal-box {
+    border-radius: var(--ne-radius);
+    border: 1px solid var(--border-light);
+    box-shadow: 0 32px 80px rgba(0,0,0,0.45);
+}
+html[data-ne-refine="on"][data-theme="dark"] .modal-box {
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, #fff 2%, var(--bg-card)),
+            var(--bg-card));
+}
+
+/* Toast / notification */
+html[data-ne-refine="on"] .toast,
+html[data-ne-refine="on"] .notification {
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    backdrop-filter: blur(8px);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   TWEAKS LAUNCHER — better dark-mode finish
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-theme="dark"] .ne-tweaks-launcher {
+    background: color-mix(in srgb, var(--primary) 14%, var(--bg-card));
+    border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+    color: #fff;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        0 8px 24px rgba(0,0,0,0.4),
+        0 0 0 0 color-mix(in srgb, var(--primary) 25%, transparent);
+}
+html[data-theme="dark"] .ne-tweaks-launcher:hover {
+    background: color-mix(in srgb, var(--primary) 22%, var(--bg-card));
+}

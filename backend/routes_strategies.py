@@ -317,8 +317,19 @@ def get_market_analytics(
     from market_data import (
         build_chain, compute_risk_reversal, compute_directional_signal,
         compute_tendency, compute_max_pain, days_to_expiry,
-        fetch_vix,
+        fetch_vix, pick_active_expiry,
     )
+
+    # If the caller didn't pin a specific expiry, default to the *active* one
+    # (≥ 2 trading days out).  This makes analytics/tendency/direction read
+    # off a chain that actually has signal — on expiry day or the day before,
+    # the front-month IV/skew is too compressed to be informative.
+    if not expiry:
+        try:
+            _, _exp_list, _ = build_chain("NIFTY")
+            expiry = pick_active_expiry(_exp_list) or expiry
+        except Exception:
+            pass
 
     # Fetch chain
     try:
@@ -326,7 +337,9 @@ def get_market_analytics(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chain fetch failed: {e}")
 
-    near_expiry = expiries[0] if expiries else expiry or ""
+    # Use the *active* expiry from the live list rather than blindly picking
+    # expiries[0] — keeps analytics consistent with the dashboard rollover.
+    near_expiry = expiry or pick_active_expiry(expiries) or (str(expiries[0]) if expiries else "")
     dte = days_to_expiry(near_expiry)
 
     # VIX
@@ -560,8 +573,32 @@ def list_strategies(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """List active strategies with combined unrealized P&L."""
+    """List ACTIVE strategies with combined unrealized P&L.
+
+    Auto-cleanup: any strategy whose legs have all been closed elsewhere
+    (e.g. closed individually from the Positions page) is transitioned to
+    CLOSED here so it stops showing up under Active.  Without this, the UI
+    would render zombie strategies — same name, 0 legs, 0 P&L — which is
+    exactly what the user reported.
+    """
     from market_data import build_chain, days_to_expiry
+
+    # Auto-close strategies that have no remaining OPEN legs.
+    candidate = db.query(Strategy).filter(
+        Strategy.user_id == user.id,
+        Strategy.status == "ACTIVE",
+    ).all()
+    cleanup_dirty = False
+    for s in candidate:
+        open_count = db.query(Trade).filter(
+            Trade.strategy_id == s.id,
+            Trade.status == TradeStatus.OPEN.value,
+        ).count()
+        if open_count == 0:
+            s.status = "CLOSED"
+            cleanup_dirty = True
+    if cleanup_dirty:
+        db.commit()
 
     strategies = db.query(Strategy).filter(
         Strategy.user_id == user.id,
@@ -576,6 +613,13 @@ def list_strategies(
             Trade.strategy_id == s.id,
             Trade.status == TradeStatus.OPEN.value,
         ).all()
+
+        # Defensive: if a concurrent close drained the legs between the
+        # cleanup pass above and this loop, skip rendering the empty card.
+        if not legs:
+            s.status = "CLOSED"
+            db.commit()
+            continue
 
         total_pnl = 0.0
         legs_data = []
@@ -622,6 +666,78 @@ def list_strategies(
             "created_at": s.created_at.isoformat() if s.created_at else None,
             "dte": dte,
             "total_pnl": round(total_pnl, 2),
+            "legs": legs_data,
+        })
+
+    return {"strategies": result}
+
+
+@router.get("/closed")
+def list_closed_strategies(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """List CLOSED strategies with combined *realized* P&L.
+
+    Powers the Strategy Builder's "Past Strategies" tab.  P&L sums the
+    realized_pnl of every leg, so the user sees the actual settled outcome
+    instead of a stale unrealized snapshot.
+    """
+    from market_data import days_to_expiry
+
+    # Promote any orphaned ACTIVE rows (no remaining open legs) to CLOSED so
+    # they show up here instead of disappearing.
+    orphans = db.query(Strategy).filter(
+        Strategy.user_id == user.id,
+        Strategy.status == "ACTIVE",
+    ).all()
+    dirty = False
+    for s in orphans:
+        oc = db.query(Trade).filter(
+            Trade.strategy_id == s.id,
+            Trade.status == TradeStatus.OPEN.value,
+        ).count()
+        if oc == 0:
+            s.status = "CLOSED"
+            dirty = True
+    if dirty:
+        db.commit()
+
+    strategies = db.query(Strategy).filter(
+        Strategy.user_id == user.id,
+        Strategy.status == "CLOSED",
+    ).order_by(_desc(Strategy.created_at)).all()
+
+    result = []
+    for s in strategies:
+        legs = db.query(Trade).filter(Trade.strategy_id == s.id).all()
+        total_realized = 0.0
+        legs_data = []
+        latest_exit = None
+        for leg in legs:
+            r = leg.realized_pnl or 0.0
+            total_realized += r
+            if leg.exit_date and (latest_exit is None or leg.exit_date > latest_exit):
+                latest_exit = leg.exit_date
+            legs_data.append({
+                "trade_id": leg.id,
+                "strike": leg.strike,
+                "trade_type": leg.trade_type,
+                "quantity": leg.quantity,
+                "entry_premium": leg.entry_premium,
+                "exit_price": leg.exit_price,
+                "realized_pnl": round(r, 2),
+            })
+
+        result.append({
+            "id": s.id,
+            "name": s.name,
+            "strategy_type": s.strategy_type,
+            "expiry_date": s.expiry_date,
+            "status": s.status,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "closed_at": latest_exit.isoformat() if latest_exit else None,
+            "total_realized_pnl": round(total_realized, 2),
             "legs": legs_data,
         })
 
@@ -687,6 +803,121 @@ def get_strategy_payoff(
     }
 
 
+class PayoffPreviewLeg(BaseModel):
+    option_type: str   # "CE" or "PE"
+    action: str        # "BUY" or "SELL"
+    strike: int
+    lots: int = 1
+
+
+class PayoffPreviewRequest(BaseModel):
+    expiry: str
+    legs: list[PayoffPreviewLeg]
+
+
+@router.post("/payoff-preview")
+def payoff_preview(req: PayoffPreviewRequest, _=Depends(get_current_user)):
+    """Compute true payoff-at-expiry curve from live LTPs + leg config.
+
+    Used by the Strategy Builder wizard to render an accurate payoff diagram
+    *before* the strategy is executed.  Unlike the client-side intrinsic-only
+    preview, this folds in actual mid-quotes so max profit / max loss / break-
+    evens reflect the real net premium credit or debit.
+    """
+    from market_data import build_chain
+
+    if not req.legs:
+        raise HTTPException(status_code=400, detail="At least one leg required.")
+
+    try:
+        chain_df, _, spot = build_chain("NIFTY", req.expiry)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chain fetch failed: {e}")
+
+    # Resolve LTP for each leg from the live chain
+    leg_records = []
+    net_premium = 0.0          # ₹ across all legs (positive = credit received)
+    for leg in req.legs:
+        row = chain_df[
+            (chain_df["Strike"] == leg.strike) & (chain_df["Type"] == leg.option_type)
+        ]
+        if row.empty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Strike {leg.strike}{leg.option_type} not found in chain for {req.expiry}.",
+            )
+        ltp = float(row["LTP"].iloc[0])
+        qty = leg.lots * LOT_SIZE
+        sign = +1 if leg.action.upper() == "SELL" else -1
+        net_premium += sign * ltp * qty
+        leg_records.append({
+            "option_type": leg.option_type,
+            "action": leg.action.upper(),
+            "strike": leg.strike,
+            "lots": leg.lots,
+            "qty": qty,
+            "ltp": round(ltp, 2),
+        })
+
+    # Build a wide spot range so flat regions of the curve are visible.
+    # ±25% of spot caps strangle/IC wings; 100-pt steps keep payload light.
+    span = max(800, int(spot * 0.10))
+    lo = int(spot) - span
+    hi = int(spot) + span
+    step = 50
+
+    curve = []
+    for s in range(lo, hi + step, step):
+        pnl = net_premium
+        for leg in leg_records:
+            intrinsic = (
+                max(s - leg["strike"], 0) if leg["option_type"] == "CE"
+                else max(leg["strike"] - s, 0)
+            )
+            sign = -1 if leg["action"] == "SELL" else +1
+            pnl += sign * intrinsic * leg["qty"]
+        curve.append({"spot": s, "pnl": round(pnl, 2)})
+
+    pnls = [p["pnl"] for p in curve]
+    max_profit = max(pnls)
+    max_loss = min(pnls)
+
+    # Break-evens: linear-interpolate where curve crosses zero.
+    breakevens = []
+    for i in range(1, len(curve)):
+        a, b = curve[i - 1], curve[i]
+        if (a["pnl"] == 0):
+            breakevens.append(a["spot"])
+        elif (a["pnl"] < 0) != (b["pnl"] < 0):
+            # zero crossing between a and b
+            t = -a["pnl"] / (b["pnl"] - a["pnl"])
+            breakevens.append(round(a["spot"] + t * (b["spot"] - a["spot"]), 1))
+    # de-dupe within 1 pt
+    dedup_be = []
+    for be in breakevens:
+        if not dedup_be or abs(be - dedup_be[-1]) > 1:
+            dedup_be.append(be)
+
+    # If the curve is unbounded on one side (long call: profit grows linearly
+    # with spot, short call: loss grows linearly), surface that to the client
+    # so the UI can render "Unlimited" instead of a misleading finite number.
+    profit_unbounded = (curve[-1]["pnl"] > curve[-2]["pnl"] > 0) or (curve[0]["pnl"] > curve[1]["pnl"] > 0)
+    loss_unbounded   = (curve[-1]["pnl"] < curve[-2]["pnl"] < 0) or (curve[0]["pnl"] < curve[1]["pnl"] < 0)
+
+    return {
+        "spot": round(spot, 2),
+        "expiry": req.expiry,
+        "net_premium": round(net_premium, 2),
+        "max_profit": round(max_profit, 2),
+        "max_loss": round(max_loss, 2),
+        "profit_unbounded": profit_unbounded,
+        "loss_unbounded": loss_unbounded,
+        "breakevens": dedup_be,
+        "legs": leg_records,
+        "curve": curve,
+    }
+
+
 @router.post("/{strategy_id}/close")
 def close_strategy(
     strategy_id: int,
@@ -739,6 +970,16 @@ def close_strategy(
         leg.status = TradeStatus.CLOSED.value
         leg.realized_pnl = round(realized, 2)
         total_realized += realized
+
+        # Detach any open child trades attached to this leg so they keep
+        # showing in Open Positions as standalone trades after the strategy
+        # collapses. Same convention as the option/futures close paths.
+        open_children = db.query(Trade).filter(
+            Trade.parent_trade_id == leg.id,
+            Trade.status == TradeStatus.OPEN.value,
+        ).all()
+        for child in open_children:
+            child.parent_trade_id = None
 
     strategy.status = "CLOSED"
     db.commit()

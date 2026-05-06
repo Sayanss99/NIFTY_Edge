@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NiftyEdge — Options Intelligence Platform</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            /* Cobalt-tuned palette to match NiftyEdge v3 (dark + cobalt + grid + round) */
+            --blue:    oklch(0.62 0.16 220);
+            --blue-d:  oklch(0.50 0.16 220);
+            --blue-hi: oklch(0.74 0.13 220);
+            --green:   oklch(0.72 0.18 150);
+            --red:     oklch(0.68 0.20 27);
+            --amber:   oklch(0.78 0.15 75);
+            --bg:      #07090F;
+            --bg2:     #0E1219;
+            --bg3:     #161B26;
+            --border:  rgba(255,255,255,0.06);
+            --border-2: rgba(255,255,255,0.10);
+            --text:    #E5E7EB;
+            --muted:   #6B7280;
+            --muted-2: #9CA3AF;
+            --card-bg: rgba(14, 18, 25, 0.92);
+            --radius:  20px;
+        }
+
+        html, body {
+            height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-feature-settings: "ss01", "cv11", "tnum";
+            letter-spacing: -0.005em;
+            overflow: hidden;
+        }
+        /* Hairline grid texture matches v3 backgrounds across the app */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            background-image:
+                linear-gradient(to right, rgba(255,255,255,0.025) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255,255,255,0.025) 1px, transparent 1px);
+            background-size: 32px 32px;
+            mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, #000 50%, transparent 100%);
+            -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, #000 50%, transparent 100%);
+        }
+
+        /* ── Ticker strip ─────────────────────────────────────────────── */
+        .ticker-strip {
+            height: 30px;
+            background: rgba(255,255,255,0.03);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            overflow: hidden;
+            position: relative;
+            z-index: 10;
+        }
+        .ticker-track {
+            display: flex;
+            gap: 0;
+            animation: ticker-scroll 120s linear infinite;
+            white-space: nowrap;
+            will-change: transform;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+        }
+        .ticker-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 0 24px;
+            font-size: 11px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            border-right: 1px solid var(--border);
+        }
+        .ticker-item .t-label { color: var(--muted); }
+        .ticker-item .t-val   { font-weight: 600; }
+        .ticker-item .t-chg   { font-size: 10px; }
+        .t-up   { color: var(--green); }
+        .t-down { color: var(--red); }
+        .t-neu  { color: var(--amber); }
+        @keyframes ticker-scroll {
+            0%   { transform: translate3d(0, 0, 0); }
+            100% { transform: translate3d(-50%, 0, 0); }
+        }
+        /* slowed for readability; translate3d forces GPU compositing so slow motion
+           stays smooth at full refresh rate instead of stepping by integer pixels. */
+
+        /* ── Main split ───────────────────────────────────────────────── */
+        .landing-split {
+            display: flex;
+            height: calc(100vh - 30px);
+        }
+
+        /* ── Hero panel (left) ────────────────────────────────────────── */
+        .hero-panel {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            background:
+                radial-gradient(1200px 600px at 8% 110%, color-mix(in srgb, var(--blue) 22%, transparent), transparent 60%),
+                radial-gradient(900px 500px at 92% -10%, rgba(129,140,248,0.10), transparent 60%);
+        }
+
+        #price-canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Radial overlay to keep left edge readable */
+        .hero-panel::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(
+                to right,
+                rgba(7,13,26,0.10) 0%,
+                rgba(7,13,26,0.05) 60%,
+                rgba(7,13,26,0.55) 100%
+            );
+            pointer-events: none;
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 2;
+            padding: 44px 56px 44px;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        /* Slim status row at bottom of hero — matches in-app header rhythm */
+        .hero-statusbar {
+            display: flex;
+            align-items: center;
+            gap: 22px;
+            font-size: 10.5px;
+            font-family: 'SF Mono', 'JetBrains Mono', monospace;
+            color: var(--muted-2);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            margin-top: 4px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border);
+        }
+        .hero-statusbar .sb-item { display: inline-flex; align-items: center; gap: 7px; }
+        .hero-statusbar .sb-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent);
+            animation: sb-pulse 2.4s ease-in-out infinite;
+        }
+        @keyframes sb-pulse { 0%,100%{opacity:1;} 50%{opacity:0.55;} }
+        .hero-statusbar .sb-val { color: #fff; font-weight: 600; letter-spacing: 0; text-transform: none; }
+
+        /* Brand — matches in-app NE monogram */
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: auto;
+        }
+        .brand-gem {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--blue) 0%, var(--blue-hi) 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 800;
+            color: #fff;
+            letter-spacing: 0.02em;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.20),
+                0 4px 16px color-mix(in srgb, var(--blue) 35%, transparent);
+        }
+        .brand-name {
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+        }
+        .brand-beta {
+            font-size: 9px;
+            font-weight: 700;
+            font-family: 'SF Mono', monospace;
+            background: color-mix(in srgb, var(--blue) 16%, transparent);
+            color: var(--blue-hi);
+            border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent);
+            border-radius: 4px;
+            padding: 2px 6px;
+            letter-spacing: 0.08em;
+        }
+
+        /* Eyebrow above headline — gives a product-page rhythm */
+        .hero-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--muted-2);
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            margin-bottom: 18px;
+        }
+        .hero-eyebrow::before {
+            content: '';
+            width: 22px; height: 1px;
+            background: var(--blue);
+        }
+
+        /* Main headline */
+        .hero-headline {
+            margin-top: auto;
+            margin-bottom: 8px;
+        }
+        .hero-headline h1 {
+            font-size: clamp(30px, 3.4vw, 48px);
+            font-weight: 700;
+            line-height: 1.08;
+            letter-spacing: -0.025em;
+            color: #fff;
+        }
+        .hero-headline h1 .hl-accent {
+            background: linear-gradient(92deg, var(--blue-hi) 0%, var(--blue) 80%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .hero-sub {
+            margin-top: 16px;
+            font-size: 14px;
+            color: var(--muted-2);
+            line-height: 1.6;
+            max-width: 480px;
+            text-wrap: pretty;
+        }
+
+        /* Feature pills */
+        .feature-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 26px;
+            margin-bottom: 28px;
+        }
+        .feature-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11.5px;
+            color: var(--muted-2);
+            background: rgba(255,255,255,0.025);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 6px 12px 6px 10px;
+        }
+        .feature-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .fd-blue  { background: var(--blue);  box-shadow: 0 0 6px color-mix(in srgb, var(--blue) 60%, transparent); }
+        .fd-green { background: var(--green); box-shadow: 0 0 6px color-mix(in srgb, var(--green) 60%, transparent); }
+        .fd-amber { background: var(--amber); box-shadow: 0 0 6px color-mix(in srgb, var(--amber) 60%, transparent); }
+
+        /* Floating metric badges */
+        .floating-metrics {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .fm-badge {
+            position: absolute;
+            background: rgba(14,18,25,0.78);
+            border: 1px solid var(--border-2);
+            border-radius: 12px;
+            padding: 9px 13px;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            animation: float-bob linear infinite;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+        }
+        .fm-badge .fm-label {
+            font-size: 8.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--muted);
+            margin-bottom: 2px;
+        }
+        .fm-badge .fm-val {
+            font-size: 14px;
+            font-weight: 700;
+            font-family: 'SF Mono', monospace;
+        }
+        .fm-badge .fm-sub {
+            font-size: 8px;
+            color: var(--muted);
+            margin-top: 1px;
+        }
+        @keyframes float-bob {
+            0%, 100% { transform: translateY(0px); }
+            50%       { transform: translateY(-8px); }
+        }
+
+        /* ── Form panel (right) ───────────────────────────────────────── */
+        .form-panel {
+            width: 460px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(180deg, var(--bg2) 0%, var(--bg) 100%);
+            border-left: 1px solid var(--border);
+            padding: 40px 40px;
+            position: relative;
+        }
+        /* Glassy elevated card around the form */
+        .form-panel .form-card {
+            background: rgba(22,27,38,0.55);
+            border: 1px solid var(--border-2);
+            border-radius: var(--radius);
+            padding: 30px 28px 24px;
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.04),
+                0 24px 64px rgba(0,0,0,0.35);
+        }
+
+        /* Subtle top glow on form panel */
+        .form-panel::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(59,130,246,0.4), transparent);
+        }
+
+        .form-card {
+            width: 100%;
+        }
+
+        .form-card-header {
+            margin-bottom: 22px;
+        }
+        .form-card-header h2 {
+            font-size: 22px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 4px;
+            letter-spacing: -0.018em;
+        }
+        .form-card-header p {
+            font-size: 12.5px;
+            color: var(--muted-2);
+        }
+
+        /* Form tab switcher */
+        .form-tabs {
+            display: flex;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 3px;
+            margin-bottom: 24px;
+            gap: 2px;
+        }
+        .form-tab {
+            flex: 1;
+            padding: 7px;
+            border: none;
+            background: none;
+            color: var(--muted);
+            font-size: 12.5px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .form-tab.active {
+            background: color-mix(in srgb, var(--blue) 16%, transparent);
+            color: var(--blue-hi);
+            font-weight: 600;
+        }
+
+        /* Form fields */
+        .f-group {
+            margin-bottom: 14px;
+        }
+        .f-label {
+            display: block;
+            font-size: 11.5px;
+            font-weight: 500;
+            color: #94A3B8;
+            margin-bottom: 5px;
+            letter-spacing: 0.1px;
+        }
+        .f-input {
+            width: 100%;
+            background: rgba(255,255,255,0.035);
+            border: 1px solid var(--border-2);
+            border-radius: 10px;
+            padding: 10px 13px;
+            font-size: 13px;
+            color: var(--text);
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+        }
+        .f-input::placeholder { color: #475569; }
+        .f-input:hover { background: rgba(255,255,255,0.05); }
+        .f-input:focus {
+            border-color: color-mix(in srgb, var(--blue) 60%, transparent);
+            background: rgba(255,255,255,0.05);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 18%, transparent);
+        }
+
+        .f-submit {
+            width: 100%;
+            padding: 11px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(180deg, var(--blue) 0%, var(--blue-d) 100%);
+            color: #fff;
+            font-size: 13.5px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 8px;
+            font-family: inherit;
+            letter-spacing: 0.005em;
+            transition: opacity 0.15s, transform 0.1s, box-shadow 0.2s;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.18),
+                0 6px 18px color-mix(in srgb, var(--blue) 35%, transparent);
+        }
+        .f-submit:hover   { opacity: 0.92; }
+        .f-submit:active  { transform: scale(0.99); }
+        .f-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .f-error {
+            color: #F87171;
+            font-size: 11.5px;
+            text-align: center;
+            min-height: 16px;
+            margin-bottom: 10px;
+        }
+
+        /* Bottom tagline */
+        .form-footer {
+            position: absolute;
+            bottom: 24px;
+            left: 0; right: 0;
+            text-align: center;
+            font-size: 10.5px;
+            color: #334155;
+        }
+
+        /* Slide transition between forms */
+        .form-body {
+            overflow: hidden;
+        }
+        .form-slide {
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+        .form-slide.hidden-form {
+            display: none;
+        }
+
+        /* Password field + eye toggle */
+        .pwd-wrap { position: relative; }
+        .pwd-wrap .f-input { padding-right: 38px; }
+        .pwd-toggle {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            padding: 2px 4px;
+            cursor: pointer;
+            color: #64748B;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: color 0.15s, background 0.15s;
+        }
+        .pwd-toggle:hover { color: var(--blue); background: rgba(59,130,246,0.08); }
+        .pwd-toggle svg { width: 16px; height: 16px; display: block; }
+
+        /* Invalid-credentials floating popup */
+        .auth-popup {
+            position: fixed;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-10px);
+            background: linear-gradient(135deg, #7F1D1D 0%, #991B1B 100%);
+            border: 1px solid #F87171;
+            color: #FEE2E2;
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 10px 30px rgba(239,68,68,0.35), 0 0 0 1px rgba(248,113,113,0.2);
+            z-index: 9999;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            max-width: 90vw;
+        }
+        .auth-popup.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+            pointer-events: auto;
+        }
+        .auth-popup .ap-icon {
+            width: 22px; height: 22px;
+            border-radius: 50%;
+            background: rgba(248,113,113,0.25);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        /* Security note */
+        .security-note {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            margin-top: 18px;
+            font-size: 10.5px;
+            color: #334155;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ── Invalid credentials popup ──────────────────────────────────── -->
+    <div class="auth-popup" id="auth-popup" role="alert" aria-live="assertive">
+        <span class="ap-icon">!</span>
+        <span id="auth-popup-msg">Invalid credentials</span>
+    </div>
+
+    <!-- ── Ticker strip ───────────────────────────────────────────────── -->
+    <div class="ticker-strip">
+        <div class="ticker-track" id="ticker-track">
+            <!-- Populated by JS, duplicated for infinite scroll -->
+        </div>
+    </div>
+
+    <!-- ── Main split ─────────────────────────────────────────────────── -->
+    <div class="landing-split">
+
+        <!-- Left: Hero panel -->
+        <div class="hero-panel">
+            <canvas id="price-canvas"></canvas>
+
+            <!-- Floating live-look metric badges -->
+            <div class="floating-metrics" id="floating-metrics"></div>
+
+            <div class="hero-content">
+                <!-- Brand -->
+                <div class="brand">
+                    <div class="brand-gem">NE</div>
+                    <span class="brand-name">NiftyEdge</span>
+                    <span class="brand-beta">BETA</span>
+                </div>
+
+                <!-- Eyebrow + Headline + sub -->
+                <div class="hero-eyebrow">Options Intelligence Platform · NIFTY</div>
+                <div class="hero-headline">
+                    <h1>Options intelligence,<br><span class="hl-accent">edge-forward.</span></h1>
+                    <p class="hero-sub">
+                        Real-time IV analytics, GEX regime detection, directional signals,
+                        and AI-scored strategy recommendations — all in one terminal built for NIFTY.
+                    </p>
+                    <div class="feature-list">
+                        <div class="feature-item">
+                            <div class="feature-dot fd-blue"></div>
+                            18-factor market analytics — IV rank, skew, butterfly, term structure &amp; more
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-dot fd-green"></div>
+                            Gamma exposure (GEX) regime — know if the market is pinned or trending
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-dot fd-amber"></div>
+                            Strategy builder scores and ranks setups against current market conditions
+                        </div>
+                    </div>
+                </div>
+                <!-- Live status row anchored to bottom of hero -->
+                <div class="hero-statusbar">
+                    <span class="sb-item"><span class="sb-dot"></span>Live · NSE feed</span>
+                    <span class="sb-item">NIFTY <span class="sb-val">24,312.50</span></span>
+                    <span class="sb-item">IV Rank <span class="sb-val">49.2%</span></span>
+                    <span class="sb-item">GEX <span class="sb-val">+0.58M</span></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Form panel -->
+        <div class="form-panel">
+            <div class="form-card">
+                <div class="form-card-header">
+                    <h2 id="form-heading">Welcome back</h2>
+                    <p id="form-subheading">Sign in to your NiftyEdge account</p>
+                </div>
+
+                <!-- Tab switcher -->
+                <div class="form-tabs">
+                    <button class="form-tab active" id="tab-login" onclick="switchTab('login')">Sign in</button>
+                    <button class="form-tab"        id="tab-signup" onclick="switchTab('signup')">Create account</button>
+                </div>
+
+                <div class="f-error" id="f-error"></div>
+
+                <!-- Login form -->
+                <div class="form-body">
+                    <form id="login-form" class="form-slide" onsubmit="handleLogin(event)">
+                        <div class="f-group">
+                            <label class="f-label">Email</label>
+                            <input type="email" id="login-email" class="f-input" placeholder="you@example.com" required autocomplete="email">
+                        </div>
+                        <div class="f-group">
+                            <label class="f-label">Password</label>
+                            <div class="pwd-wrap">
+                                <input type="password" id="login-password" class="f-input" placeholder="Enter password" required>
+                                <button type="button" class="pwd-toggle" data-target="login-password" aria-label="Show password" tabindex="-1"></button>
+                            </div>
+                        </div>
+                        <button type="submit" class="f-submit" id="login-btn">Sign In</button>
+                    </form>
+
+                    <!-- Signup form -->
+                    <form id="signup-form" class="form-slide hidden-form" onsubmit="handleSignup(event)">
+                        <div class="f-group">
+                            <label class="f-label">Name</label>
+                            <input type="text" id="signup-name" class="f-input" placeholder="Your name" required autocomplete="name">
+                        </div>
+                        <div class="f-group">
+                            <label class="f-label">Email</label>
+                            <input type="email" id="signup-email" class="f-input" placeholder="you@example.com" required autocomplete="email">
+                        </div>
+                        <div class="f-group">
+                            <label class="f-label">Password</label>
+                            <div class="pwd-wrap">
+                                <input type="password" id="signup-password" class="f-input" placeholder="Min 6 characters" required minlength="6"
+                                       oninput="checkPasswordMatch()">
+                                <button type="button" class="pwd-toggle" data-target="signup-password" aria-label="Show password" tabindex="-1"></button>
+                            </div>
+                        </div>
+                        <div class="f-group">
+                            <label class="f-label">Confirm Password</label>
+                            <div class="pwd-wrap">
+                                <input type="password" id="signup-confirm" class="f-input" placeholder="Re-enter password" required
+                                       oninput="checkPasswordMatch()" style="padding-right:62px">
+                                <span id="confirm-icon" style="position:absolute;right:38px;top:50%;transform:translateY(-50%);font-size:13px;pointer-events:none"></span>
+                                <button type="button" class="pwd-toggle" data-target="signup-confirm" aria-label="Show password" tabindex="-1"></button>
+                            </div>
+                        </div>
+                        <button type="submit" class="f-submit" id="signup-btn">Create Account</button>
+                    </form>
+                </div>
+
+                <div class="security-note">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    Secure connection · Data stays private
+                </div>
+            </div>
+
+            <div class="form-footer">NiftyEdge · For educational and personal use · Not SEBI registered</div>
+        </div>
+
+    </div>
+
+    <script src="../js/api.js"></script>
+    <script>
+        // ── Auth guard ────────────────────────────────────────────────────
+        if (API.getToken()) window.location.href = '/dashboard';
+
+        // ── Password eye toggles ──────────────────────────────────────────
+        const EYE_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+        const EYE_OFF  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a19.77 19.77 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 7 11 7a19.8 19.8 0 0 1-3.17 4.19"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+        document.querySelectorAll('.pwd-toggle').forEach(btn => {
+            btn.innerHTML = EYE_OPEN;
+            btn.addEventListener('click', () => {
+                const input = document.getElementById(btn.dataset.target);
+                if (!input) return;
+                const show = input.type === 'password';
+                input.type = show ? 'text' : 'password';
+                btn.innerHTML = show ? EYE_OFF : EYE_OPEN;
+                btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+            });
+        });
+
+        // ── Auth popup ─────────────────────────────────────────────────────
+        let _authPopupTimer = null;
+        function showAuthPopup(msg) {
+            const el = document.getElementById('auth-popup');
+            const m  = document.getElementById('auth-popup-msg');
+            if (!el || !m) return;
+            m.textContent = msg || 'Invalid credentials';
+            el.classList.add('show');
+            if (_authPopupTimer) clearTimeout(_authPopupTimer);
+            _authPopupTimer = setTimeout(() => el.classList.remove('show'), 5000);
+        }
+
+        // ── Tab switch ────────────────────────────────────────────────────
+        function switchTab(tab) {
+            const isLogin = tab === 'login';
+            document.getElementById('tab-login').classList.toggle('active', isLogin);
+            document.getElementById('tab-signup').classList.toggle('active', !isLogin);
+            document.getElementById('login-form').classList.toggle('hidden-form', !isLogin);
+            document.getElementById('signup-form').classList.toggle('hidden-form', isLogin);
+            document.getElementById('form-heading').textContent    = isLogin ? 'Welcome back'  : 'Get started';
+            document.getElementById('form-subheading').textContent = isLogin
+                ? 'Sign in to your NiftyEdge account'
+                : 'Create your free NiftyEdge account';
+            document.getElementById('f-error').textContent = '';
+        }
+
+        // ── Login ─────────────────────────────────────────────────────────
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('login-btn');
+            btn.disabled = true; btn.textContent = 'Signing in…';
+            document.getElementById('f-error').textContent = '';
+            try {
+                const resp = await API.login(
+                    document.getElementById('login-email').value,
+                    document.getElementById('login-password').value
+                );
+                if (resp.access_token) {
+                    API.saveAuth(resp);
+                    window.location.href = '/dashboard';
+                } else {
+                    const msg = resp.detail || 'Invalid credentials';
+                    document.getElementById('f-error').textContent = msg;
+                    showAuthPopup(msg);
+                }
+            } catch {
+                const msg = 'Connection error — please try again';
+                document.getElementById('f-error').textContent = msg;
+                showAuthPopup(msg);
+            }
+            btn.disabled = false; btn.textContent = 'Sign In';
+        }
+
+        // ── Password match check ──────────────────────────────────────────
+        function checkPasswordMatch() {
+            const pwd  = document.getElementById('signup-password').value;
+            const conf = document.getElementById('signup-confirm').value;
+            const icon = document.getElementById('confirm-icon');
+            if (!conf) { icon.textContent = ''; return; }
+            if (pwd === conf) {
+                icon.textContent = '✓';
+                icon.style.color = '#10B981';
+            } else {
+                icon.textContent = '✗';
+                icon.style.color = '#EF4444';
+            }
+        }
+
+        // ── Signup ────────────────────────────────────────────────────────
+        async function handleSignup(e) {
+            e.preventDefault();
+            const btn  = document.getElementById('signup-btn');
+            const pwd  = document.getElementById('signup-password').value;
+            const conf = document.getElementById('signup-confirm').value;
+
+            if (pwd !== conf) {
+                document.getElementById('f-error').textContent = 'Passwords do not match';
+                showAuthPopup('Passwords do not match');
+                return;
+            }
+            if (pwd.length < 6) {
+                document.getElementById('f-error').textContent = 'Password must be at least 6 characters';
+                showAuthPopup('Password must be at least 6 characters');
+                return;
+            }
+
+            btn.disabled = true; btn.textContent = 'Creating account…';
+            document.getElementById('f-error').textContent = '';
+            try {
+                const resp = await API.signup(
+                    document.getElementById('signup-email').value,
+                    document.getElementById('signup-name').value,
+                    pwd
+                );
+                if (resp.access_token) {
+                    API.saveAuth(resp);
+                    window.location.href = '/dashboard';
+                } else {
+                    const msg = resp.detail || 'Signup failed';
+                    document.getElementById('f-error').textContent = msg;
+                    showAuthPopup(msg);
+                }
+            } catch {
+                const msg = 'Connection error — please try again';
+                document.getElementById('f-error').textContent = msg;
+                showAuthPopup(msg);
+            }
+            btn.disabled = false; btn.textContent = 'Create Account';
+        }
+
+        // ── Ticker strip ──────────────────────────────────────────────────
+        const tickerData = [
+            { label: 'NIFTY', val: '24,312.50', chg: '+0.38%', cls: 't-up' },
+            { label: 'IV Rank', val: '49.2%', chg: 'Mid-range', cls: 't-neu' },
+            { label: 'PCR (OI)', val: '1.16', chg: 'Neutral', cls: 't-neu' },
+            { label: 'ATM IV', val: '16.58%', chg: 'Normal', cls: 't-neu' },
+            { label: 'VIX', val: '17.21', chg: '−0.4%', cls: 't-up' },
+            { label: 'GEX', val: '+0.58M', chg: 'Mean-rev', cls: 't-up' },
+            { label: 'Max Pain', val: '24,050', chg: '+304 dist', cls: 't-neu' },
+            { label: 'IV Skew', val: '+3.55%', chg: 'Put demand', cls: 't-down' },
+            { label: 'Straddle', val: '₹562', chg: '±2.31%', cls: 't-neu' },
+            { label: 'OI Supp.', val: '21,000', chg: 'PE wall', cls: 't-up' },
+            { label: 'OI Resist', val: '26,000', chg: 'CE wall', cls: 't-down' },
+            { label: 'Term Str.', val: 'Backwd.', chg: 'Near stress', cls: 't-down' },
+        ];
+
+        function buildTicker() {
+            const items = [...tickerData, ...tickerData]; // duplicate for seamless loop
+            return items.map(d => `
+                <div class="ticker-item">
+                    <span class="t-label">${d.label}</span>
+                    <span class="t-val ${d.cls}">${d.val}</span>
+                    <span class="t-chg ${d.cls}">${d.chg}</span>
+                </div>`).join('');
+        }
+        document.getElementById('ticker-track').innerHTML = buildTicker();
+
+        // Occasionally "tick" a random value for live feel
+        setInterval(() => {
+            const items = document.querySelectorAll('.ticker-item');
+            const target = items[Math.floor(Math.random() * (items.length / 2))];
+            if (!target) return;
+            const valEl = target.querySelector('.t-val');
+            if (!valEl) return;
+            valEl.style.transition = 'color 0.1s';
+            valEl.style.color = '#fff';
+            setTimeout(() => { valEl.style.color = ''; valEl.style.transition = ''; }, 300);
+        }, 1800);
+
+        // ── Price chart canvas ────────────────────────────────────────────
+        (function initPriceCanvas() {
+            const canvas = document.getElementById('price-canvas');
+            const ctx    = canvas.getContext('2d');
+
+            // Generate a realistic-looking noisy price series
+            let prices = [];
+            let base   = 24200;
+            for (let i = 0; i < 300; i++) {
+                base += (Math.random() - 0.485) * 14;
+                prices.push(base);
+            }
+
+            // MA smoothing helper
+            function ma(arr, n) {
+                return arr.map((_, i) => {
+                    const s = arr.slice(Math.max(0, i - n + 1), i + 1);
+                    return s.reduce((a, b) => a + b, 0) / s.length;
+                });
+            }
+
+            let hoverX = null;
+            canvas.addEventListener('mousemove', e => {
+                const r = canvas.getBoundingClientRect();
+                hoverX = (e.clientX - r.left) * (canvas.width / r.width);
+            });
+            canvas.addEventListener('mouseleave', () => { hoverX = null; });
+
+            let pulse = 0;
+            // Time-based smooth scroll — new point every ADVANCE_MS, but drawing
+            // interpolates the sub-frame offset so motion looks continuous even
+            // when the "tick rate" is slow. This is what kills chop.
+            const ADVANCE_MS = 900;
+            let lastAdvance = performance.now();
+
+            function draw(now) {
+                if (now == null) now = performance.now();
+                const W = canvas.offsetWidth;
+                const H = canvas.offsetHeight;
+                if (canvas.width !== W * devicePixelRatio) {
+                    canvas.width  = W * devicePixelRatio;
+                    canvas.height = H * devicePixelRatio;
+                }
+                const dpr = devicePixelRatio;
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+                ctx.clearRect(0, 0, W, H);
+
+                // Use last 121 prices so we can scroll a full step smoothly
+                const visible  = prices.slice(-121);
+                const smooth   = ma(visible, 14);
+                const pMin     = Math.min(...visible) - 50;
+                const pMax     = Math.max(...visible) + 50;
+                const pRange   = pMax - pMin;
+                const PAD      = { t: 30, b: 60, l: 0, r: 0 };
+                const cW = W - PAD.l - PAD.r;
+                const cH = H - PAD.t - PAD.b;
+
+                // Sub-frame scroll fraction (0..1): how far we are between two tick-adds.
+                const frac = Math.min(1, (now - lastAdvance) / ADVANCE_MS);
+                const xStep = cW / (visible.length - 1);
+                const xShift = -frac * xStep;
+                const toX = i  => PAD.l + (i / (visible.length - 1)) * cW + xShift;
+                const toY = p  => PAD.t + cH - ((p - pMin) / pRange) * cH;
+
+                // Dim grid lines
+                ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+                ctx.lineWidth   = 1;
+                for (let g = 0; g <= 4; g++) {
+                    const y = PAD.t + (g / 4) * cH;
+                    ctx.beginPath();
+                    ctx.moveTo(PAD.l, y); ctx.lineTo(W, y);
+                    ctx.stroke();
+                }
+
+                // Volume bars (simulated, very subtle)
+                for (let i = 0; i < visible.length; i++) {
+                    const x    = toX(i);
+                    const h    = 10 + Math.random() * 18;
+                    const up   = i === 0 || visible[i] >= visible[i - 1];
+                    ctx.fillStyle = up ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.10)';
+                    ctx.fillRect(x - 2, H - PAD.b - h, 4, h);
+                }
+
+                // Price line gradient fill
+                const grad = ctx.createLinearGradient(0, PAD.t, 0, PAD.t + cH);
+                grad.addColorStop(0,   'rgba(59,130,246,0.22)');
+                grad.addColorStop(0.6, 'rgba(59,130,246,0.04)');
+                grad.addColorStop(1,   'rgba(59,130,246,0)');
+
+                ctx.beginPath();
+                visible.forEach((p, i) => {
+                    i === 0 ? ctx.moveTo(toX(i), toY(p)) : ctx.lineTo(toX(i), toY(p));
+                });
+                ctx.lineTo(toX(visible.length - 1), PAD.t + cH);
+                ctx.lineTo(PAD.l, PAD.t + cH);
+                ctx.closePath();
+                ctx.fillStyle = grad;
+                ctx.fill();
+
+                // Price line
+                ctx.beginPath();
+                visible.forEach((p, i) => {
+                    i === 0 ? ctx.moveTo(toX(i), toY(p)) : ctx.lineTo(toX(i), toY(p));
+                });
+                ctx.strokeStyle = '#3B82F6';
+                ctx.lineWidth   = 1.8;
+                ctx.lineJoin    = 'round';
+                ctx.stroke();
+
+                // Moving average line
+                ctx.beginPath();
+                smooth.forEach((p, i) => {
+                    i === 0 ? ctx.moveTo(toX(i), toY(p)) : ctx.lineTo(toX(i), toY(p));
+                });
+                ctx.strokeStyle = 'rgba(251,191,36,0.45)';
+                ctx.lineWidth   = 1.2;
+                ctx.stroke();
+
+                // Live dot at end with pulse
+                pulse += 0.08;
+                const lp  = visible[visible.length - 1];
+                const lx  = toX(visible.length - 1);
+                const ly  = toY(lp);
+                const r   = 4 + Math.sin(pulse) * 1.5;
+
+                ctx.beginPath();
+                ctx.arc(lx, ly, r + 4, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(59,130,246,0.15)';
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(lx, ly, 4, 0, Math.PI * 2);
+                ctx.fillStyle = '#60A5FA';
+                ctx.shadowBlur  = 10;
+                ctx.shadowColor = '#3B82F6';
+                ctx.fill();
+                ctx.shadowBlur  = 0;
+
+                // Hover crosshair + price label
+                if (hoverX !== null) {
+                    const idx  = Math.round((hoverX / W) * (visible.length - 1));
+                    const clampIdx = Math.max(0, Math.min(visible.length - 1, idx));
+                    const hx   = toX(clampIdx);
+                    const hy   = toY(visible[clampIdx]);
+
+                    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+                    ctx.lineWidth   = 1;
+                    ctx.setLineDash([3, 3]);
+                    ctx.beginPath();
+                    ctx.moveTo(hx, PAD.t); ctx.lineTo(hx, PAD.t + cH);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(PAD.l, hy); ctx.lineTo(W, hy);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // Price tooltip
+                    const price   = visible[clampIdx].toFixed(0);
+                    const label   = `NIFTY  ${Number(price).toLocaleString('en-IN')}`;
+                    ctx.font      = '11px "SF Mono", monospace';
+                    const tw      = ctx.measureText(label).width;
+                    const tx      = Math.min(hx + 8, W - tw - 12);
+                    const ty      = Math.max(hy - 8, PAD.t + 14);
+
+                    ctx.fillStyle = 'rgba(13,21,38,0.85)';
+                    ctx.beginPath();
+                    ctx.roundRect(tx - 4, ty - 13, tw + 8, 18, 4);
+                    ctx.fill();
+                    ctx.fillStyle = '#E2E8F0';
+                    ctx.fillText(label, tx, ty);
+                }
+
+                // Advance only when a full step has been consumed — smooth sub-frame
+                // motion is already handled by `frac` above.
+                if (frac >= 1) {
+                    prices.push(prices[prices.length - 1] + (Math.random() - 0.485) * 4);
+                    if (prices.length > 500) prices.shift();
+                    lastAdvance = now;
+                }
+
+                requestAnimationFrame(draw);
+            }
+
+            requestAnimationFrame(draw);
+        })();
+
+        // ── Floating metric badges ────────────────────────────────────────
+        (function initFloatingMetrics() {
+            const metrics = [
+                { label: 'IV Rank', val: '49.2%', sub: '252d history', color: '#F59E0B', x: 14, y: 28, dur: 14 },
+                { label: 'GEX',     val: '+0.58M', sub: 'Mean-reverting', color: '#10B981', x: 52, y: 18, dur: 18 },
+                { label: 'PCR (OI)', val: '1.16', sub: 'Neutral lean', color: '#94A3B8', x: 72, y: 55, dur: 12 },
+                { label: 'VIX',     val: '17.21', sub: 'Elevated', color: '#F59E0B', x: 22, y: 68, dur: 16 },
+                { label: 'IV Skew', val: '+3.55%', sub: 'Put demand', color: '#EF4444', x: 62, y: 75, dur: 15 },
+                { label: 'Straddle', val: '₹562', sub: '±2.31%', color: '#3B82F6', x: 38, y: 48, dur: 17 },
+            ];
+
+            const container = document.getElementById('floating-metrics');
+            metrics.forEach(m => {
+                const el = document.createElement('div');
+                el.className = 'fm-badge';
+                el.style.cssText = `
+                    left: ${m.x}%;
+                    top:  ${m.y}%;
+                    animation-duration: ${m.dur}s;
+                    animation-delay: ${(Math.random() * -m.dur).toFixed(1)}s;
+                    opacity: 0.72;
+                `;
+                el.innerHTML = `
+                    <div class="fm-label">${m.label}</div>
+                    <div class="fm-val" style="color:${m.color}">${m.val}</div>
+                    <div class="fm-sub">${m.sub}</div>
+                `;
+                container.appendChild(el);
+
+                // Occasional "tick" update for live feel
+                setInterval(() => {
+                    const v = el.querySelector('.fm-val');
+                    v.style.transition = 'opacity 0.1s';
+                    v.style.opacity    = '0.3';
+                    setTimeout(() => { v.style.opacity = '1'; }, 120);
+                }, 3000 + Math.random() * 5000);
+            });
+        })();
+    </script>
+    <script src="../js/tweaks.js"></script>
+</body>
+</html>

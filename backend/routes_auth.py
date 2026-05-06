@@ -97,3 +97,41 @@ def update_settings(
     user.settings = settings
     db.commit()
     return {"message": "Settings updated", "settings": settings}
+
+
+class UpdateProfileRequest(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    current_password: str | None = None
+    new_password: str | None = None
+
+
+@router.put("/profile", response_model=UserResponse)
+def update_profile(
+    req: UpdateProfileRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update profile credentials. Email/password changes require current_password."""
+    sensitive = (req.email and req.email != user.email) or req.new_password
+    if sensitive:
+        if not req.current_password or not verify_password(req.current_password, user.password_hash):
+            raise HTTPException(status_code=403, detail="Current password is incorrect")
+
+    if req.name and req.name.strip():
+        user.name = req.name.strip()
+
+    if req.email and req.email.strip() and req.email != user.email:
+        clash = db.query(User).filter(User.email == req.email, User.id != user.id).first()
+        if clash:
+            raise HTTPException(status_code=400, detail="Email already in use")
+        user.email = req.email.strip()
+
+    if req.new_password:
+        if len(req.new_password) < 6:
+            raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+        user.password_hash = hash_password(req.new_password)
+
+    db.commit()
+    db.refresh(user)
+    return UserResponse(id=user.id, email=user.email, name=user.name)

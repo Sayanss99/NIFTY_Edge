@@ -140,12 +140,18 @@ def strike_patterns(
             ).order_by(MarketSnapshot.timestamp.desc()).first()
 
         spot_at_entry = snap.nifty_spot if snap else 0
-        distance = abs(t.strike - spot_at_entry) if spot_at_entry > 0 else 0
+        # Skip trades with no usable spot anchor — without it the "distance"
+        # field collapses to abs(strike - 0) ≈ 24000, which is the absolute
+        # strike value, not OTM distance. Including those points blew the
+        # axis scale on the histograms and scatter chart.
+        if spot_at_entry <= 0:
+            continue
+        distance = abs(t.strike - spot_at_entry)
 
         entry = {
             "strike": t.strike,
             "distance": round(distance),
-            "distance_pct": round(distance / spot_at_entry * 100, 1) if spot_at_entry else 0,
+            "distance_pct": round(distance / spot_at_entry * 100, 1),
             "pnl": round(pnl, 2),
             "win": pnl > 0,
             "entry_iv": t.entry_iv,

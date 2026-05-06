@@ -155,10 +155,12 @@ async def run_scheduler(ws_manager):
             import time as _time
             now_ts = _time.monotonic()
 
-            # ── News fetch — runs regardless of market status ──────────────
+            # ── News fetch — 24/7 cadence, no market-hour or active-window gate.
+            # The dashboard ticker and News Desk page consume this feed at all
+            # hours, so we let the poll fire on its own ~90s interval round
+            # the clock; the active-hour window has been removed.
             if (NEWS_DESK_ENABLED and
-                    now_ts - last_news_fetch_ts >= news_interval and
-                    NEWS_ACTIVE_HOUR_START <= datetime.now(IST).hour < NEWS_ACTIVE_HOUR_END):
+                    now_ts - last_news_fetch_ts >= news_interval):
                 last_news_fetch_ts = now_ts
                 db = SessionLocal()
                 try:
@@ -465,7 +467,7 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
         merge_sr_levels, compute_pivot_oi_sr,
         compute_risk_reversal, compute_tendency,
         compute_directional_signal, snapshot_oi, compute_max_pain,
-        select_trade_strike,
+        select_trade_strike, pick_active_expiry,
     )
 
     try:
@@ -477,19 +479,14 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
         print(f"[Scheduler] Chain fetch failed: {e}")
         return None
 
-    # Pick nearest *tradeable* expiry (DTE > 0). On expiry day, today's expiry
-    # has DTE=0 which collapses range math and makes the dashboard useless,
-    # so we roll to next week. Fall back to expiries[0] only if nothing else.
-    expiry = ""
-    for e in expiries or []:
-        try:
-            if days_to_expiry(str(e)) > 0:
-                expiry = str(e)
-                break
-        except Exception:
-            continue
-    if not expiry and expiries:
-        expiry = str(expiries[0])
+    # Pick the *active* expiry: nearest one with ≥ 2 trading days remaining.
+    # On expiry day OR the day before, the chain's IV/skew/RR readings are too
+    # degenerate to drive the dashboard / signal / tendency engines reliably,
+    # so we roll to the next series.  This rule (centralised in
+    # `pick_active_expiry`) is what every surface — dashboard, analytics,
+    # strategy builder — uses, so they never disagree on what "this expiry"
+    # means.
+    expiry = pick_active_expiry(expiries) or ""
     dte = days_to_expiry(expiry) if expiry else 0
 
     # If we rolled past the default nearest expiry, rebuild chain for the
@@ -869,6 +866,18 @@ def _expire_user_past_trades(db: Session, user_id: int) -> int:
             count += 1
 
     if count:
+        # Promote OPEN children of just-expired parents so they keep showing
+        # as standalone open positions (parity with the close-path behaviour
+        # in routes_trades).
+        expired_ids = [t.id for t in open_trades if t.status == TradeStatus.EXPIRED.value]
+        if expired_ids:
+            orphaned_children = db.query(Trade).filter(
+                Trade.user_id == user_id,
+                Trade.status == TradeStatus.OPEN.value,
+                Trade.parent_trade_id.in_(expired_ids),
+            ).all()
+            for child in orphaned_children:
+                child.parent_trade_id = None
         db.commit()
         print(f"[Scheduler] Auto-expired {count} trade(s) for user {user_id}")
 
@@ -949,6 +958,54 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
         chain_df = chain_by_expiry.get(trade_expiry, chain_df_default)
         trade_dte = days_to_expiry(trade_expiry) if trade_expiry else 30
 
+        # Futures hedges live outside the option chain — pull live LTP from
+        # the validated NSE futures feed and emit a position with proper MTM
+        # so the Positions page renders them alongside option legs without
+        # showing "—" everywhere.
+        if (trade.instrument_type or "OPT") == "FUT":
+            try:
+                from nse_futures import get_contract_by_expiry, NIFTY_LOT
+                contract = get_contract_by_expiry(trade.expiry_date)
+            except Exception:
+                contract = None
+            fut_lot = trade.lot_size_override or LOT_SIZE
+            if contract:
+                fut_ltp = contract["ltp"]
+                if trade.trade_type == "FUT_BUY":
+                    fut_pnl = (fut_ltp - trade.entry_premium) * trade.quantity * fut_lot
+                else:
+                    fut_pnl = (trade.entry_premium - fut_ltp) * trade.quantity * fut_lot
+                positions.append({
+                    "trade_id": trade.id,
+                    "trade_type": trade.trade_type,
+                    "instrument_type": "FUT",
+                    "strike": trade.strike,
+                    "expiry_date": trade.expiry_date,
+                    "entry_premium": trade.entry_premium,
+                    "quantity": trade.quantity,
+                    "lot_size": fut_lot,
+                    "current_ltp": fut_ltp,
+                    "current_iv": None,
+                    "current_delta": 1.0 if trade.trade_type == "FUT_BUY" else -1.0,
+                    "iv_change_pct": 0,
+                    "unrealized_pnl": round(fut_pnl, 2),
+                    "verified": contract.get("verified", True),
+                    "parent_trade_id": trade.parent_trade_id,
+                })
+            else:
+                positions.append({
+                    "trade_id": trade.id,
+                    "trade_type": trade.trade_type,
+                    "instrument_type": "FUT",
+                    "strike": trade.strike,
+                    "current_ltp": None,
+                    "current_iv": None,
+                    "current_delta": None,
+                    "unrealized_pnl": None,
+                    "parent_trade_id": trade.parent_trade_id,
+                })
+            continue
+
         opt_type = "CE" if "CE" in trade.trade_type else "PE"
         match = chain_df[(chain_df["Strike"] == trade.strike) & (chain_df["Type"] == opt_type)]
 
@@ -981,7 +1038,12 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
 
         risk = None
         hedge = None
-        if trade.parent_trade_id is None:
+        # Risk scoring (margin/assignment risk) only applies to SHORT options.
+        # Long options have defined risk = premium paid up-front; there is no
+        # margin block and no "hedge required" trigger to compute.
+        is_short = "SELL" in trade.trade_type
+        is_top_short = trade.parent_trade_id is None and is_short
+        if is_top_short:
             risk = compute_risk_score(
                 delta=current_delta,
                 entry_iv=trade.entry_iv,
@@ -1001,8 +1063,8 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
             else:
                 pe_risk_scores.append(risk["score"])
 
-            # Compute hedge suggestion when needed (only for SELL positions)
-            if risk.get("hedge_required") and "SELL" in trade.trade_type:
+            # Compute hedge suggestion when needed (already gated to SHORT above)
+            if risk.get("hedge_required"):
                 try:
                     hedge = compute_hedge_v2(
                         side=opt_type,
@@ -1024,6 +1086,12 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
                 except Exception as e:
                     print(f"[Scheduler] Hedge computation failed for trade {trade.id}: {e}")
 
+        # For long options, max loss is the premium paid (no margin, no assignment).
+        max_loss = (
+            round(trade.entry_premium * LOT_SIZE * trade.quantity, 2)
+            if not is_short else None
+        )
+
         positions.append({
             "trade_id": trade.id,
             "trade_type": trade.trade_type,
@@ -1042,6 +1110,7 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
             "unrealized_pnl": unrealized_pnl,
             "risk": risk,
             "hedge": hedge,
+            "max_loss": max_loss,        # only set for long options
             "parent_trade_id": trade.parent_trade_id,
         })
 

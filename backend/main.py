@@ -20,6 +20,7 @@ from routes_alerts import router as alerts_router
 from routes_suggestions import router as suggestions_router
 from routes_strategies import router as strategies_router
 from routes_news import router as news_router
+from routes_futures import router as futures_router
 
 
 @asynccontextmanager
@@ -45,6 +46,7 @@ app.include_router(alerts_router)
 app.include_router(suggestions_router)
 app.include_router(strategies_router)
 app.include_router(news_router)
+app.include_router(futures_router)
 
 
 # WebSocket endpoint
@@ -121,3 +123,8 @@ async def serve_strategy_builder():
 @app.get("/news-desk")
 async def serve_news_desk():
     return FileResponse("../frontend/pages/news_desk.html")
+
+
+@app.get("/futures")
+async def serve_futures():
+    return FileResponse("../frontend/pages/futures.html")

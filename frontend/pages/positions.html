@@ -354,6 +354,7 @@
 
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
+    <script src="/js/tweaks.js"></script>
     <script src="/js/ws.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Not authenticated');
@@ -568,6 +569,14 @@
 
         function renderPositionCard(trade, isHedge = false) {
             const live = livePositions[trade.id] || {};
+            // Futures get their own card layout — no Greeks, no risk meter,
+            // no roll/hedge wiring (futures roll is just open-and-close, and
+            // FnO risk is margin-blocked, not a 0-100 score). Pure mark-to-
+            // market view with a Close action.
+            if ((trade.instrument_type || live.instrument_type) === 'FUT'
+                || trade.trade_type === 'FUT_BUY' || trade.trade_type === 'FUT_SELL') {
+                return renderFuturesPositionCard(trade, live, isHedge);
+            }
             const currentLtp = live.current_ltp ?? trade.exit_price ?? '-';
             const currentIv = live.current_iv ?? trade.entry_iv;
             const currentDelta = live.current_delta ?? trade.entry_delta;
@@ -600,8 +609,8 @@
                         </div>
                         ${!isClosed ? `
                             <div style="display:flex;gap:6px;flex-wrap:wrap">
-                                ${!isHedge ? `<button class="btn btn-sm btn-secondary" onclick="openAddHedge(${trade.id}, '${trade.trade_type}', '${trade.expiry_date}')">Add Hedge</button>` : ''}
-                                <button class="btn btn-sm btn-secondary ${risk && risk.score >= 65 ? 'btn-roll-urgent' : risk && risk.score >= 50 ? 'btn-roll-attention' : ''}" onclick="openRollModal(${trade.id})" title="${risk && risk.score >= 65 ? 'Urgent: Consider rolling this position' : risk && risk.score >= 50 ? 'Risk rising — consider rolling' : 'Roll / Hedge options'}">&#8635; Roll</button>
+                                ${!isHedge ? `<button class="btn btn-sm btn-secondary" onclick="openAddHedge(${trade.id}, '${trade.trade_type}', '${trade.expiry_date}')">${isBuy ? 'Pair into Spread' : 'Add Hedge'}</button>` : ''}
+                                ${isSell ? `<button class="btn btn-sm btn-secondary ${risk && risk.score >= 65 ? 'btn-roll-urgent' : risk && risk.score >= 50 ? 'btn-roll-attention' : ''}" onclick="openRollModal(${trade.id})" title="${risk && risk.score >= 65 ? 'Urgent: Consider rolling this position' : risk && risk.score >= 50 ? 'Risk rising — consider rolling' : 'Roll / Hedge options'}">&#8635; Roll</button>` : ''}
                                 <button class="btn btn-sm btn-danger" onclick="openCloseModal(${trade.id})">Close</button>
                             </div>
                         ` : ''}
@@ -639,17 +648,119 @@
                     <div style="display:flex;align-items:center;justify-content:space-between">
                         <span style="font-size:11px;color:var(--text-muted)">${pnlLabel}</span>
                         <div style="display:flex;align-items:center;gap:8px">
-                            ${risk ? `<span class="badge ${risk.label === 'OK' ? 'badge-safe' : risk.label === 'WARNING' ? 'badge-warning' : 'badge-danger'}" style="font-size:10px">Risk: ${risk.score}</span>` : ''}
-                            ${risk && risk.hedge_required ? `<span class="badge badge-danger" style="font-size:10px;animation:pulse 1.5s infinite">${risk.hard_triggered ? 'HARD TRIGGER' : 'HEDGE REQ'}</span>` : ''}
+                            ${isSell && risk ? `<span class="badge ${risk.label === 'OK' ? 'badge-safe' : risk.label === 'WARNING' ? 'badge-warning' : 'badge-danger'}" style="font-size:10px">Risk: ${risk.score}</span>` : ''}
+                            ${isSell && risk && risk.hedge_required ? `<span class="badge badge-danger" style="font-size:10px;animation:pulse 1.5s infinite">${risk.hard_triggered ? 'HARD TRIGGER' : 'HEDGE REQ'}</span>` : ''}
+                            ${isBuy && live.max_loss != null ? `<span class="badge badge-neutral" style="font-size:10px" title="Long options have defined risk — premium paid is the worst case">Max loss: ${Utils.formatINR(live.max_loss)}</span>` : ''}
                             ${Utils.pnlHtml(unrealizedPnl)}
                         </div>
                     </div>
                     ${unrealizedPnl != null ? `<div class="pnl-bar ${unrealizedPnl >= 0 ? 'profit' : 'loss'}" style="width:${Math.min(Math.abs(unrealizedPnl) / 100, 100)}%"></div>` : ''}
-                    ${!isClosed && risk && risk.score >= 65 && !isHedge ? `<div class="roll-nudge roll-nudge-urgent">&#8635; Risk is elevated — rolling this position is recommended</div>` : ''}
-                    ${!isClosed && risk && risk.score >= 50 && risk.score < 65 && !isHedge ? `<div class="roll-nudge roll-nudge-attention">&#8635; Risk increasing — consider rolling before it escalates</div>` : ''}
-                    ${hedge ? renderHedgeSuggestion(hedge) : ''}
+                    ${isSell && !isClosed && risk && risk.score >= 65 && !isHedge ? `<div class="roll-nudge roll-nudge-urgent">&#8635; Risk is elevated — rolling this position is recommended</div>` : ''}
+                    ${isSell && !isClosed && risk && risk.score >= 50 && risk.score < 65 && !isHedge ? `<div class="roll-nudge roll-nudge-attention">&#8635; Risk increasing — consider rolling before it escalates</div>` : ''}
+                    ${isSell && hedge ? renderHedgeSuggestion(hedge) : ''}
                 </div>
             `;
+        }
+
+        // ── Futures position card (FnO) ────────────────────────────────
+        function renderFuturesPositionCard(trade, live, isHedge) {
+            const isLong   = trade.trade_type === 'FUT_BUY';
+            const sideTxt  = isLong ? 'LONG' : 'SHORT';
+            const sideCol  = isLong ? '#16A34A' : '#DC2626';
+            const sideBg   = isLong ? 'rgba(22,163,74,0.14)' : 'rgba(220,38,38,0.14)';
+            const isClosed = trade.status === 'CLOSED';
+            const lotSize  = live.lot_size || trade.lot_size_override || 65;
+            const qty      = (trade.quantity || 0) * lotSize;
+            const ltp      = live.current_ltp ?? trade.exit_price;
+            const entry    = trade.entry_premium;
+            const verifiedNote = (live.verified === false)
+                ? '<span class="badge badge-warning" style="font-size:9px" title="Live LTP failed sanity check; MTM may be stale">unverified quote</span>'
+                : '';
+
+            const mtm = (live.unrealized_pnl != null) ? live.unrealized_pnl : trade.realized_pnl;
+            const contractValue = (typeof ltp === 'number') ? Math.round(ltp * qty) : null;
+            // Same SPAN+Exposure split as the backend estimator
+            const marginEst = (typeof entry === 'number')
+                ? Math.round(entry * qty * 0.10) : null;
+            const moveImpact = (typeof ltp === 'number')
+                ? Math.round(qty * ltp * 0.01) : null;
+
+            const cardClass = isHedge ? 'hedge-card' : (isLong ? 'buy-card' : 'sell-card');
+            return `
+                <div class="position-card ${cardClass}" data-trade-id="${trade.id}">
+                    <div class="position-header">
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                            <span class="badge" style="background:${sideBg};color:${sideCol};border:1px solid ${sideCol}55;font-weight:700;letter-spacing:0.5px">FUT · ${sideTxt}</span>
+                            <span class="fw-700 font-mono" style="font-size:15px">NIFTY</span>
+                            <span class="text-muted font-mono" style="font-size:12px">${trade.expiry_date}</span>
+                            ${isHedge ? '<span class="badge badge-neutral" style="font-size:10px">HEDGE</span>' : ''}
+                            <span class="text-muted" style="font-size:11px">${trade.quantity} lot${trade.quantity > 1 ? 's' : ''} · ${qty.toLocaleString('en-IN')} units</span>
+                            ${verifiedNote}
+                            ${isClosed ? '<span class="badge badge-neutral">CLOSED</span>' : ''}
+                        </div>
+                        ${!isClosed ? `
+                            <div style="display:flex;gap:6px">
+                                <button class="btn btn-sm btn-danger" onclick="closeFuturesTrade(${trade.id})">Close at LTP</button>
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    <div class="position-metrics">
+                        <div class="position-metric">
+                            <div class="label">Entry</div>
+                            <div class="value">${entry != null ? Number(entry).toFixed(2) : '-'}</div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="label">Current LTP</div>
+                            <div class="value">${typeof ltp === 'number' ? ltp.toFixed(2) : '-'}</div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="label">Contract value</div>
+                            <div class="value">${contractValue != null ? Utils.formatINR(contractValue) : '-'}</div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="label">Margin (est.)</div>
+                            <div class="value">${marginEst != null ? Utils.formatINR(marginEst) : '-'}</div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="label">Lot size</div>
+                            <div class="value">${lotSize}</div>
+                        </div>
+                        <div class="position-metric">
+                            <div class="label">±1% move</div>
+                            <div class="value">${moveImpact != null ? '±' + Utils.formatINR(moveImpact) : '-'}</div>
+                        </div>
+                    </div>
+
+                    <div style="display:flex;align-items:center;justify-content:space-between">
+                        <span style="font-size:11px;color:var(--text-muted)">${isClosed ? 'Realized P&L' : 'Unrealized P&L'} · profit if LTP ${isLong ? '↑' : '↓'}</span>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            ${Utils.pnlHtml(mtm)}
+                        </div>
+                    </div>
+                    ${mtm != null ? `<div class="pnl-bar ${mtm >= 0 ? 'profit' : 'loss'}" style="width:${Math.min(Math.abs(mtm) / 100, 100)}%"></div>` : ''}
+                </div>
+            `;
+        }
+
+        async function closeFuturesTrade(id) {
+            const ok = await Utils.confirm(
+                'Close futures position?',
+                'This books out the position at the current live LTP. Realised P&L is locked in.',
+                { okLabel: 'Close at LTP', danger: true }
+            );
+            if (!ok) return;
+            try {
+                const r = await API.post('/api/futures/' + id + '/close');
+                if (r && r.detail) { Utils.toast(r.detail, 'error'); return; }
+                Utils.toast(
+                    'Position closed · realised P&L: ' + Utils.formatINR(r.realized_pnl || 0),
+                    (r.realized_pnl || 0) >= 0 ? 'success' : 'error'
+                );
+                if (typeof loadPositions === 'function') loadPositions();
+            } catch (e) {
+                Utils.toast('Close failed — try again', 'error');
+            }
         }
 
         function renderHedgeSuggestion(hedge) {
@@ -998,15 +1109,29 @@
             try {
                 const res = await API.post('/api/market/margin', body);
                 if (res.error) { Utils.toast(res.error, 'error'); return; }
-                document.getElementById('mr-span').textContent = Utils.formatINR(res.span);
-                document.getElementById('mr-exposure').textContent = Utils.formatINR(res.exposure);
-                document.getElementById('mr-total').textContent = Utils.formatINR(res.total_margin);
-                document.getElementById('mr-premium').textContent = Utils.formatINR(res.net_premium_credit);
-                document.getElementById('mr-effective').textContent = Utils.formatINR(res.effective_cost);
-                document.getElementById('mr-expiry-day').textContent = Utils.formatINR(res.expiry_day_margin);
-                document.getElementById('mr-per-lot').textContent = Utils.formatINR(res.margin_per_lot);
-                document.getElementById('mr-roi').textContent = (res.roi_on_margin ?? 0).toFixed(2) + '%';
-                document.getElementById('mr-note').textContent = res.span_note || '';
+                if (res.long_only) {
+                    // Long-only: there is no margin block. Show premium-debit summary
+                    // instead of pretending SPAN/Exposure are zero by coincidence.
+                    document.getElementById('mr-span').textContent = '—';
+                    document.getElementById('mr-exposure').textContent = '—';
+                    document.getElementById('mr-total').textContent = 'No margin';
+                    document.getElementById('mr-premium').textContent = Utils.formatINR(res.net_premium_credit);
+                    document.getElementById('mr-effective').textContent = Utils.formatINR(res.effective_cost);
+                    document.getElementById('mr-expiry-day').textContent = '—';
+                    document.getElementById('mr-per-lot').textContent = '—';
+                    document.getElementById('mr-roi').textContent = '—';
+                    document.getElementById('mr-note').textContent = res.note || res.span_note || '';
+                } else {
+                    document.getElementById('mr-span').textContent = Utils.formatINR(res.span);
+                    document.getElementById('mr-exposure').textContent = Utils.formatINR(res.exposure);
+                    document.getElementById('mr-total').textContent = Utils.formatINR(res.total_margin);
+                    document.getElementById('mr-premium').textContent = Utils.formatINR(res.net_premium_credit);
+                    document.getElementById('mr-effective').textContent = Utils.formatINR(res.effective_cost);
+                    document.getElementById('mr-expiry-day').textContent = Utils.formatINR(res.expiry_day_margin);
+                    document.getElementById('mr-per-lot').textContent = Utils.formatINR(res.margin_per_lot);
+                    document.getElementById('mr-roi').textContent = (res.roi_on_margin ?? 0).toFixed(2) + '%';
+                    document.getElementById('mr-note').textContent = res.span_note || '';
+                }
                 document.getElementById('margin-result').style.display = 'block';
             } catch (e) { Utils.toast('Calculation failed', 'error'); }
         }

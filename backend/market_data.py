@@ -9,7 +9,7 @@ import math
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pnsea import NSE
 from config import RISK_FREE_RATE, LOT_SIZE
 
@@ -66,6 +66,73 @@ def time_to_expiry(expiry_str: str) -> float:
 def days_to_expiry(expiry_str: str) -> int:
     expiry_dt = datetime.strptime(expiry_str, "%d-%b-%Y").date()
     return max((expiry_dt - date.today()).days, 0)
+
+
+def trading_days_to_expiry(expiry_str: str) -> int:
+    """Count *trading* days remaining until an expiry.
+
+    Excludes weekends and NSE holidays.  Returns 0 if expiry is today or past.
+    The current day is not counted (consistent with `days_to_expiry`).
+
+    This is the unit used by the "should we roll to next expiry" rule — a
+    Friday with Monday holiday + Tuesday expiry shows DTE=4 calendar days but
+    only 1 trading day, and option metrics on the chain become unreliable
+    just like they do on a normal Monday before a Tuesday expiry.
+    """
+    try:
+        expiry_dt = datetime.strptime(expiry_str, "%d-%b-%Y").date()
+    except Exception:
+        return 0
+    today = date.today()
+    if expiry_dt <= today:
+        return 0
+    # Lazy import keeps market_data module-level free of scheduler dependency.
+    try:
+        from scheduler import NSE_HOLIDAYS_2026 as _HOLIDAYS  # noqa
+    except Exception:
+        _HOLIDAYS = set()
+    count = 0
+    cur = today
+    while cur < expiry_dt:
+        cur = cur + timedelta(days=1)
+        if cur.weekday() >= 5:
+            continue
+        if cur.strftime("%Y-%m-%d") in _HOLIDAYS:
+            continue
+        count += 1
+    return count
+
+
+# Single source of truth for the "active default" expiry decision.
+# Rule (matches user-stated requirement):
+#   • If trading-days-to-expiry <= 1 → that expiry is too close to read
+#     reliable IV/skew/RR off the chain; roll to the next.
+#   • Falls back to the last expiry if every entry would otherwise be skipped.
+#
+# Used by scheduler, /compute-for-expiry callers, market-analytics, and
+# anywhere a "default" expiry is picked.  Keep this function the only place
+# that encodes the threshold so dashboard, analytics, and strategy builder
+# never disagree on what "this expiry" means.
+ACTIVE_EXPIRY_MIN_TDTE = 2   # need ≥ 2 trading days to call an expiry "active"
+
+
+def pick_active_expiry(expiries) -> str | None:
+    """Return the nearest expiry whose trading-days remaining is ≥ threshold.
+
+    `expiries` is the list returned by build_chain — strings or date-likes.
+    """
+    if not expiries:
+        return None
+    candidates = [str(e) for e in expiries]
+    for e in candidates:
+        try:
+            if trading_days_to_expiry(e) >= ACTIVE_EXPIRY_MIN_TDTE:
+                return e
+        except Exception:
+            continue
+    # Every expiry is either past or too close — fall back to the last one
+    # (latest available) so callers always get *something* to compute against.
+    return candidates[-1]
 
 
 # ── Option Chain Fetching ───────────────────────────────────────────────────

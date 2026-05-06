@@ -18,5 +18,7 @@ NEWS_TIER_HIGH             = 9
 NEWS_TIER_MEDIUM           = 5
 NEWS_TIER_LOW              = 2
 NEWS_POLL_CYCLE_MULTIPLIER = 6    # 6 × 15s = 90s
-NEWS_ACTIVE_HOUR_START     = 6    # 6 AM IST
-NEWS_ACTIVE_HOUR_END       = 23   # 11 PM IST
+# Kept for backwards compat with anything that still imports them, but the
+# news scheduler now ignores these — news polling is 24/7.
+NEWS_ACTIVE_HOUR_START     = 0
+NEWS_ACTIVE_HOUR_END       = 24

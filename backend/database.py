@@ -50,6 +50,12 @@ def _migrate_db():
     trade_cols = {r[1] for r in c.fetchall()}
     if "strategy_id" not in trade_cols:
         c.execute("ALTER TABLE trades ADD COLUMN strategy_id INTEGER REFERENCES strategies(id)")
+    # Futures-hedge support: classify each trade as OPT (default) vs FUT and
+    # allow the lot size to be overridden in case NSE bumps the NIFTY lot.
+    if "instrument_type" not in trade_cols:
+        c.execute("ALTER TABLE trades ADD COLUMN instrument_type TEXT NOT NULL DEFAULT 'OPT'")
+    if "lot_size_override" not in trade_cols:
+        c.execute("ALTER TABLE trades ADD COLUMN lot_size_override INTEGER")
 
     # Create strategies table if not exists
     c.execute("""

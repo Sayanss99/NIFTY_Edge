@@ -82,13 +82,26 @@ def get_latest_snapshot(db: Session = Depends(get_db), _=Depends(get_current_use
 
 @router.get("/expiries")
 def list_expiries(_=Depends(get_current_user)):
-    """Live list of available NIFTY expiries from NSE — works in market-closed hours too."""
-    from market_data import build_chain
+    """Live list of available NIFTY expiries from NSE — works in market-closed hours too.
+
+    Also returns `default_expiry` — the nearest expiry with ≥ 2 trading days
+    remaining, computed by the central `pick_active_expiry` helper.  The
+    frontend (dashboard, strategy builder, analytics) uses this field as the
+    single source of truth for "which expiry to default to", so all surfaces
+    agree on rollover (e.g. on Monday EOD with Tuesday expiry, or any Friday
+    EOD when Monday is an NSE holiday).
+    """
+    from market_data import build_chain, pick_active_expiry
     try:
         _, expiries, spot = build_chain("NIFTY")
-        return {"expiries": [str(e) for e in expiries], "spot": _py(spot)}
+        ex_strs = [str(e) for e in expiries]
+        return {
+            "expiries": ex_strs,
+            "default_expiry": pick_active_expiry(ex_strs),
+            "spot": _py(spot),
+        }
     except Exception as e:
-        return {"error": str(e), "expiries": []}
+        return {"error": str(e), "expiries": [], "default_expiry": None}
 
 
 @router.get("/compute-for-expiry")
@@ -494,6 +507,47 @@ def calculate_margin(
     ce_buys  = [l for l in legs if l.option_type == "CE" and l.action == "BUY"]
     pe_sells = [l for l in legs if l.option_type == "PE" and l.action == "SELL"]
     pe_buys  = [l for l in legs if l.option_type == "PE" and l.action == "BUY"]
+
+    # Long-only configurations do not block exchange margin.  Max risk is the
+    # premium paid; surface that explicitly so the user isn't left wondering
+    # whether the response is missing data.
+    has_any_sell = bool(ce_sells or pe_sells)
+    if not has_any_sell:
+        debit_breakdown = []
+        total_debit = 0.0
+        for leg in legs:
+            qty = leg.lots * qty_per_lot
+            ltp = get_ltp(leg.strike, leg.option_type)
+            cost = round(ltp * qty, 2)
+            total_debit += cost
+            debit_breakdown.append({
+                "label": f"{leg.option_type} BUY @ {leg.strike}",
+                "span": 0,
+                "buy_ltp": round(ltp, 2),
+                "sell_ltp": 0,
+                "premium_credit": -cost,   # negative = debit
+                "qty": qty,
+                "spread_width": 0,
+            })
+        return {
+            "spot": round(spot, 2),
+            "span": 0,
+            "span_note": "No SPAN/Exposure block — long options have no margin requirement.",
+            "exposure": 0,
+            "net_premium_credit": -round(total_debit, 2),
+            "total_margin": 0,
+            "effective_cost": round(total_debit, 2),  # cash outlay = premium paid
+            "expiry_day_margin": 0,
+            "margin_per_lot": 0,
+            "roi_on_margin": 0,
+            "breakdown": debit_breakdown,
+            "long_only": True,
+            "max_loss": round(total_debit, 2),
+            "note": (
+                f"Long-only position: max loss = premium paid (₹{round(total_debit, 2):,.0f}). "
+                f"No exchange margin block; profits are unbounded on calls / capped at strike on puts."
+            ),
+        }
 
     breakdown = []
     span_amounts = []
