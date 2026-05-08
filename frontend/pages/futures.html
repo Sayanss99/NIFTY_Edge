@@ -53,6 +53,143 @@
         .fut-card .fut-meta .k { color: var(--text-muted); }
         .fut-card .fut-meta .v { font-family: var(--font-mono); font-weight: 600; text-align: right; }
         .fut-card .fut-row { display: flex; justify-content: space-between; }
+        /* Corner-anchored Buy / Sell buttons. Bottom-left & bottom-right so
+           they don't overlap the source-pill / verified-pill at top corners.
+           Two distinct widths/colors for an unmistakable side cue. */
+        .fut-card { padding-bottom: 50px; }
+        .fut-trade-btn {
+            position: absolute;
+            bottom: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+            padding: 6px 14px;
+            border-radius: 8px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+            font-family: inherit;
+        }
+        .fut-trade-btn:hover { transform: translateY(-1px); filter: brightness(1.08); }
+        .fut-trade-btn:active { transform: translateY(0); }
+        .fut-trade-btn:disabled {
+            opacity: 0.4; cursor: not-allowed; transform: none;
+        }
+        .fut-trade-btn.buy {
+            left: 14px;
+            background: rgba(22,163,74,0.14);
+            color: var(--green);
+            border-color: rgba(22,163,74,0.4);
+            box-shadow: 0 0 0 1px rgba(22,163,74,0.06);
+        }
+        .fut-trade-btn.sell {
+            right: 14px;
+            background: rgba(220,38,38,0.14);
+            color: var(--red);
+            border-color: rgba(220,38,38,0.4);
+            box-shadow: 0 0 0 1px rgba(220,38,38,0.06);
+        }
+        /* ── Confirmation modal ─────────────────────────────────────── */
+        .fut-modal-backdrop {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.55);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .fut-modal-backdrop.open { display: flex; }
+        .fut-modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+            width: min(440px, 92vw);
+            padding: 24px 26px 20px;
+            position: relative;
+            animation: futModalIn 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        @keyframes futModalIn {
+            from { opacity: 0; transform: translateY(8px) scale(0.97); }
+            to   { opacity: 1; transform: translateY(0)   scale(1); }
+        }
+        .fut-modal-side {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.6px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .fut-modal-side.buy  { background: rgba(22,163,74,0.18); color: var(--green); border: 1px solid rgba(22,163,74,0.35); }
+        .fut-modal-side.sell { background: rgba(220,38,38,0.18); color: var(--red);   border: 1px solid rgba(220,38,38,0.35); }
+        .fut-modal-title {
+            font-size: 18px; font-weight: 700;
+            margin: 6px 0 4px; letter-spacing: -0.2px;
+        }
+        .fut-modal-sub {
+            font-size: 12px; color: var(--text-muted); margin-bottom: 18px;
+        }
+        .fut-modal-rows {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            row-gap: 10px;
+            column-gap: 16px;
+            font-size: 13px;
+            padding: 14px 16px;
+            background: var(--bg-secondary, rgba(255,255,255,0.03));
+            border: 1px solid var(--border-light);
+            border-radius: 10px;
+            margin-bottom: 16px;
+        }
+        .fut-modal-rows .k { color: var(--text-muted); }
+        .fut-modal-rows .v {
+            font-family: var(--font-mono);
+            font-weight: 600;
+            text-align: right;
+        }
+        .fut-modal-lots {
+            display: flex; align-items: center; gap: 10px;
+            margin-bottom: 14px;
+        }
+        .fut-modal-lots label {
+            font-size: 12px; color: var(--text-muted);
+            text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;
+        }
+        .fut-modal-lots input {
+            flex: 1;
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font: inherit;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .fut-modal-lots input:focus {
+            outline: none;
+            border-color: var(--primary, #2563EB);
+            box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+        }
+        .fut-modal-warn {
+            font-size: 11.5px;
+            color: var(--amber);
+            background: var(--amber-bg);
+            border: 1px solid rgba(217,119,6,0.3);
+            border-radius: 8px;
+            padding: 8px 10px;
+            margin-bottom: 14px;
+            line-height: 1.45;
+        }
+        .fut-modal-actions {
+            display: flex; justify-content: flex-end; gap: 10px;
+        }
         .verified-pill {
             position: absolute; top: 12px; right: 14px;
             font-size: 9px; font-weight: 700;
@@ -140,130 +277,6 @@
             text-align: center; padding: 40px 20px;
             color: var(--text-muted); font-size: 13px;
         }
-
-        /* Trade buttons — small, anchored to the bottom-right corner of each card.
-           Reserve a clear strip below the meta grid so the buttons never sit
-           on top of the last row's value. */
-        .fut-card { padding-bottom: 44px; }
-        .fut-trade-row {
-            position: absolute;
-            right: 12px;
-            bottom: 10px;
-            display: flex;
-            gap: 6px;
-            z-index: 2;
-        }
-        .fut-trade-row .btn-fut {
-            padding: 4px 11px;
-            border-radius: 999px;
-            border: none;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.4px;
-            cursor: pointer;
-            font-family: inherit;
-            transition: filter var(--motion-fast, 140ms), transform var(--motion-fast, 140ms);
-            color: #fff;
-            line-height: 1.2;
-        }
-        .fut-trade-row .btn-fut:hover  { filter: brightness(1.10); }
-        .fut-trade-row .btn-fut:active { transform: scale(0.94); }
-        .fut-trade-row .btn-fut.buy    { background: #16A34A; box-shadow: 0 2px 6px rgba(22,163,74,0.35); }
-        .fut-trade-row .btn-fut.sell   { background: #DC2626; box-shadow: 0 2px 6px rgba(220,38,38,0.35); }
-        .fut-trade-row .btn-fut:disabled { opacity: 0.5; cursor: not-allowed; filter: grayscale(0.4); }
-
-        /* Confirmation modal */
-        .ne-modal-overlay {
-            position: fixed; inset: 0;
-            background: rgba(7, 13, 26, 0.70);
-            backdrop-filter: blur(4px);
-            display: none;
-            align-items: center; justify-content: center;
-            z-index: 1000;
-        }
-        .ne-modal-overlay.show { display: flex; }
-        .ne-modal {
-            width: 460px;
-            max-width: calc(100vw - 32px);
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 22px;
-            box-shadow: 0 24px 64px rgba(0,0,0,0.40);
-            position: relative;
-        }
-        .ne-modal-title {
-            font-size: 16px; font-weight: 700;
-            margin-bottom: 4px;
-        }
-        .ne-modal-sub {
-            font-size: 12px;
-            color: var(--text-muted);
-            margin-bottom: 18px;
-        }
-        .ne-side-pill {
-            display: inline-block;
-            padding: 3px 10px;
-            border-radius: 999px;
-            font-size: 11px; font-weight: 700;
-            letter-spacing: 0.5px;
-            margin-left: 6px;
-        }
-        .ne-side-pill.buy  { background: rgba(22,163,74,0.16); color: #16A34A; border: 1px solid rgba(22,163,74,0.35); }
-        .ne-side-pill.sell { background: rgba(220,38,38,0.16); color: #DC2626; border: 1px solid rgba(220,38,38,0.35); }
-        .ne-modal-body {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px 16px;
-            font-size: 12px;
-            margin-bottom: 18px;
-        }
-        .ne-modal-body .k { color: var(--text-muted); }
-        .ne-modal-body .v { font-family: var(--font-mono); font-weight: 600; text-align: right; }
-        .ne-modal-body .full { grid-column: 1/-1; border-top: 1px dashed var(--border-light); padding-top: 8px; }
-        .ne-modal input[type=number] {
-            padding: 6px 10px;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            font-size: 12px;
-            font-family: var(--font-mono);
-            font-weight: 600;
-            background: var(--bg-card);
-            color: var(--text-primary);
-            width: 80px;
-            text-align: right;
-        }
-        .ne-modal input[type=number]:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(59,130,246,0.18);
-        }
-        .ne-modal-actions {
-            display: flex; gap: 10px;
-            justify-content: flex-end;
-        }
-        .ne-modal-actions .btn-cancel,
-        .ne-modal-actions .btn-confirm {
-            padding: 8px 18px;
-            border-radius: 10px;
-            font-size: 13px; font-weight: 700;
-            cursor: pointer; border: 1px solid var(--border);
-            background: var(--bg-card); color: var(--text-primary);
-            font-family: inherit;
-            transition: filter var(--motion-fast, 140ms);
-        }
-        .ne-modal-actions .btn-cancel:hover { background: var(--bg-secondary); }
-        .ne-modal-actions .btn-confirm.buy  { background: #16A34A; color: #fff; border-color: #16A34A; }
-        .ne-modal-actions .btn-confirm.sell { background: #DC2626; color: #fff; border-color: #DC2626; }
-        .ne-modal-actions .btn-confirm:hover { filter: brightness(1.06); }
-        .ne-modal-warn {
-            font-size: 11px; color: var(--amber);
-            background: var(--amber-bg);
-            border: 1px solid rgba(217,119,6,0.30);
-            border-radius: 8px;
-            padding: 8px 10px;
-            margin-bottom: 14px;
-        }
     </style>
 </head>
 <body>
@@ -341,54 +354,25 @@
         </div>
     </div>
 
-    <!-- ── Confirmation modal (Buy / Sell futures) ─────────────────────── -->
-    <div class="ne-modal-overlay" id="trade-modal">
-        <div class="ne-modal" role="dialog" aria-modal="true">
-            <div class="ne-modal-title">
-                Review order
-                <span class="ne-side-pill" id="tm-side-pill">BUY</span>
-            </div>
-            <div class="ne-modal-sub" id="tm-sub">NIFTY-FUT · expiry — · LTP —</div>
+    <!-- ── Futures trade confirmation modal ─────────────────────────── -->
+    <div class="fut-modal-backdrop" id="fut-modal-backdrop" onclick="closeTradeConfirm(event)">
+        <div class="fut-modal" onclick="event.stopPropagation()">
+            <span class="fut-modal-side" id="fm-side">BUY</span>
+            <div class="fut-modal-title" id="fm-title">Confirm trade</div>
+            <div class="fut-modal-sub" id="fm-sub">Review the details below before booking.</div>
 
-            <div class="ne-modal-body">
-                <div class="k">Side</div>
-                <div class="v" id="tm-side">—</div>
-                <div class="k">Expiry</div>
-                <div class="v" id="tm-expiry">—</div>
-                <div class="k">Live LTP</div>
-                <div class="v" id="tm-ltp">—</div>
-                <div class="k">Lot size</div>
-                <div class="v" id="tm-lotsize">—</div>
-                <div class="k">Lots</div>
-                <div class="v"><input type="number" id="tm-lots" min="1" max="999" value="1"></div>
-                <div class="k">Quantity (units)</div>
-                <div class="v" id="tm-qty">—</div>
-                <div class="full"></div>
-                <div class="k">Contract value</div>
-                <div class="v" id="tm-contract">—</div>
-                <div class="k">Margin blocked (est.)</div>
-                <div class="v" id="tm-margin">—</div>
-                <div class="k">Per-1 % move impact</div>
-                <div class="v" id="tm-impact">—</div>
+            <div class="fut-modal-rows" id="fm-rows"></div>
+
+            <div class="fut-modal-lots">
+                <label for="fm-lots">Lots</label>
+                <input type="number" id="fm-lots" min="1" step="1" value="1" oninput="recalcModalTotals()">
             </div>
 
-            <div class="ne-modal-warn" id="tm-warn" style="display:none"></div>
+            <div class="fut-modal-warn" id="fm-warn" style="display:none"></div>
 
-            <div class="ne-modal-actions">
-                <button class="btn-cancel"  id="tm-cancel"  type="button">Cancel</button>
-                <button class="btn-confirm buy" id="tm-confirm" type="button">Confirm Buy</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── Generic in-app confirmation modal (used by Close action) ─────── -->
-    <div class="ne-modal-overlay" id="confirm-modal">
-        <div class="ne-modal" role="dialog" aria-modal="true" style="width:380px">
-            <div class="ne-modal-title" id="cf-title">Confirm</div>
-            <div class="ne-modal-sub"   id="cf-body" style="margin-bottom:18px"></div>
-            <div class="ne-modal-actions">
-                <button class="btn-cancel"  id="cf-cancel"  type="button">Cancel</button>
-                <button class="btn-confirm" id="cf-confirm" type="button">Confirm</button>
+            <div class="fut-modal-actions">
+                <button class="btn btn-sm btn-secondary" onclick="closeTradeConfirm()">Cancel</button>
+                <button class="btn btn-sm btn-primary" id="fm-confirm" onclick="confirmTrade()">Confirm trade</button>
             </div>
         </div>
     </div>
@@ -396,6 +380,7 @@
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
+    <script src="/js/ne-live.js"></script>
     <script src="/js/ws.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Auth required');
@@ -459,6 +444,11 @@
                     ? '<span class="verified-pill ok">verified</span>'
                     : '<span class="verified-pill warn">unverified</span>';
                 const isSynth = c.source === 'pcp_synthetic';
+                // Buttons disabled when contract failed sanity check — backend
+                // refuses to book those anyway; surface the gate here so the
+                // user gets immediate feedback instead of an error toast.
+                const dis = c.verified ? '' : 'disabled title="Live LTP failed sanity check; cannot book."';
+                const exp = String(c.expiry_date).replace(/'/g, "&#39;");
                 return `
                 <div class="fut-card">
                     ${verif}
@@ -475,168 +465,119 @@
                         <div class="fut-row"><span class="k">Lot size</span><span class="v">${c.lot_size}</span></div>
                         <div class="fut-row"><span class="k">Margin / lot</span><span class="v">${Utils.formatINR(c.span_margin)}</span></div>
                     </div>
-                    <div class="fut-trade-row">
-                        <button class="btn-fut buy"  data-action="trade" data-expiry="${c.expiry_date}" data-side="BUY"  ${c.verified ? '' : 'disabled'}>BUY</button>
-                        <button class="btn-fut sell" data-action="trade" data-expiry="${c.expiry_date}" data-side="SELL" ${c.verified ? '' : 'disabled'}>SELL</button>
-                    </div>
+                    <button class="fut-trade-btn buy"  ${dis} onclick="openTradeConfirm('${exp}','BUY')">↑ Buy</button>
+                    <button class="fut-trade-btn sell" ${dis} onclick="openTradeConfirm('${exp}','SELL')">↓ Sell</button>
                 </div>`;
             }).join('');
         }
 
-        // ── Delegated click handler — works for cards rendered later too ──
-        // Inline `onclick=` was failing silently for some users (likely a
-        // cached page where the handler reference was stale). Binding once
-        // on the document with a data-action filter avoids that whole class
-        // of bug.
-        document.addEventListener('click', (e) => {
-            const t = e.target.closest('[data-action]');
-            if (!t) return;
-            const action = t.dataset.action;
-            if (action === 'trade') {
-                openTradeModal(t.dataset.expiry, t.dataset.side);
-            } else if (action === 'close-fut') {
-                closeFuturesPosition(parseInt(t.dataset.tradeId, 10));
+        // ── Confirmation modal flow ─────────────────────────────────
+        let _modalState = null;   // {expiry, side, contract}
+
+        function openTradeConfirm(expiry, side) {
+            const contract = (_futData?.contracts || []).find(c => String(c.expiry_date) === String(expiry));
+            if (!contract) {
+                Utils.toast('Contract no longer available — refresh and retry.', 'error');
+                return;
             }
-        });
+            _modalState = { expiry, side, contract };
 
-        // Wire modal buttons exactly once
-        document.getElementById('tm-cancel').addEventListener('click', closeTradeModal);
-        document.getElementById('tm-confirm').addEventListener('click', confirmTrade);
-        document.getElementById('trade-modal').addEventListener('click', (e) => {
-            if (e.target === e.currentTarget) closeTradeModal();
-        });
-        document.getElementById('tm-lots').addEventListener('input', recomputeTradeModal);
+            const sideEl = document.getElementById('fm-side');
+            sideEl.textContent = side;
+            sideEl.classList.toggle('buy',  side === 'BUY');
+            sideEl.classList.toggle('sell', side === 'SELL');
 
-        // ── Generic in-app confirm (replaces native browser confirm()) ────
-        let _confirmResolver = null;
-        function appConfirm(title, body, opts = {}) {
-            return new Promise(resolve => {
-                document.getElementById('cf-title').textContent = title || 'Confirm';
-                document.getElementById('cf-body').textContent  = body  || '';
-                const okBtn = document.getElementById('cf-confirm');
-                okBtn.textContent = opts.okLabel || 'Confirm';
-                okBtn.className = 'btn-confirm ' + (opts.danger ? 'sell' : 'buy');
-                document.getElementById('confirm-modal').classList.add('show');
-                _confirmResolver = resolve;
-            });
-        }
-        function _resolveConfirm(value) {
-            document.getElementById('confirm-modal').classList.remove('show');
-            const r = _confirmResolver;
-            _confirmResolver = null;
-            if (r) r(value);
-        }
-        document.getElementById('cf-cancel').addEventListener('click', () => _resolveConfirm(false));
-        document.getElementById('cf-confirm').addEventListener('click', () => _resolveConfirm(true));
-        document.getElementById('confirm-modal').addEventListener('click', (e) => {
-            if (e.target === e.currentTarget) _resolveConfirm(false);
-        });
-
-        // ── Trade modal ───────────────────────────────────────────────────
-        let _modalContract = null;
-        let _modalSide = 'BUY';
-
-        function openTradeModal(expiry, side) {
-            const contract = (_futData?.contracts || []).find(c => c.expiry_date === expiry);
-            if (!contract) { Utils.toast('Contract no longer available — refresh', 'warning'); return; }
-            _modalContract = contract;
-            _modalSide = side;
-
-            const modal = document.getElementById('trade-modal');
-            const pill  = document.getElementById('tm-side-pill');
-            pill.textContent = side;
-            pill.className   = 'ne-side-pill ' + (side === 'BUY' ? 'buy' : 'sell');
-
-            document.getElementById('tm-sub').textContent =
-                `NIFTY-FUT · ${contract.expiry_date} · LTP ${Utils.formatNum(contract.ltp, 2)}`;
-            document.getElementById('tm-side').innerHTML =
+            document.getElementById('fm-title').textContent =
+                `${side === 'BUY' ? 'Long' : 'Short'} NIFTY-FUT · ${expiry}`;
+            document.getElementById('fm-sub').textContent =
                 side === 'BUY'
-                    ? '<span style="color:#16A34A">LONG (Buy)</span>'
-                    : '<span style="color:#DC2626">SHORT (Sell)</span>';
-            document.getElementById('tm-expiry').textContent  = contract.expiry_date;
-            document.getElementById('tm-ltp').textContent     = Utils.formatNum(contract.ltp, 2);
-            document.getElementById('tm-lotsize').textContent = contract.lot_size;
-            document.getElementById('tm-lots').value = 1;
-            recomputeTradeModal();
+                    ? 'Profits if NIFTY rises before expiry. Loss if it falls.'
+                    : 'Profits if NIFTY falls before expiry. Loss if it rises.';
 
-            const confirmBtn = document.getElementById('tm-confirm');
-            confirmBtn.textContent = 'Confirm ' + (side === 'BUY' ? 'Buy' : 'Sell');
-            confirmBtn.className   = 'btn-confirm ' + (side === 'BUY' ? 'buy' : 'sell');
+            document.getElementById('fm-lots').value = '1';
 
-            // Synth-pricing notice (PCP) — order books with PCP forward, not live
-            const warn = document.getElementById('tm-warn');
-            if (contract.source === 'pcp_synthetic') {
-                warn.innerHTML = '⚠ Pricing derived from put-call parity (NSE futures feed is empty — usually off-market hours). Entry will book at the synthetic forward price; live LTP may diverge once market opens.';
-                warn.style.display = 'block';
+            // Warning banner for unverified or synthetic contracts. Backend
+            // refuses unverified anyway, but surface synthetic-source so the
+            // user knows they're booking against a PCP-derived quote.
+            const warnEl = document.getElementById('fm-warn');
+            const warnings = [];
+            if (!contract.verified) warnings.push('Contract failed live-LTP sanity check.');
+            if (contract.source === 'pcp_synthetic')
+                warnings.push('Quote is PCP-derived synthetic; treat as indicative.');
+            if (warnings.length) {
+                warnEl.style.display = 'block';
+                warnEl.innerHTML = '<strong>Heads up:</strong> ' + warnings.join(' ');
             } else {
-                warn.style.display = 'none';
+                warnEl.style.display = 'none';
             }
 
-            modal.classList.add('show');
-            document.getElementById('tm-lots').focus();
+            document.getElementById('fm-confirm').disabled = !contract.verified;
+
+            recalcModalTotals();
+            document.getElementById('fut-modal-backdrop').classList.add('open');
         }
 
-        function closeTradeModal() {
-            document.getElementById('trade-modal').classList.remove('show');
-            _modalContract = null;
+        function recalcModalTotals() {
+            if (!_modalState) return;
+            const c = _modalState.contract;
+            const lots = Math.max(1, parseInt(document.getElementById('fm-lots').value, 10) || 1);
+            const qty = lots * c.lot_size;
+            const contractValue = c.ltp * qty;
+            const marginEst = (c.span_margin || 0) * lots;
+            // Approx P&L for ±50 pts move so the user can sanity-check the
+            // size before clicking confirm.
+            const pl50 = 50 * qty;
+            const sign = _modalState.side === 'BUY' ? '+' : '−';
+            const oppSign = _modalState.side === 'BUY' ? '−' : '+';
+
+            document.getElementById('fm-rows').innerHTML = `
+                <div class="k">Side</div><div class="v" style="color:${_modalState.side === 'BUY' ? 'var(--green)' : 'var(--red)'}">${_modalState.side}</div>
+                <div class="k">Expiry</div><div class="v">${c.expiry_date}</div>
+                <div class="k">Entry (LTP)</div><div class="v">${Utils.formatNum(c.ltp, 2)}</div>
+                <div class="k">Lot size</div><div class="v">${c.lot_size}</div>
+                <div class="k">Lots × units</div><div class="v">${lots} × ${c.lot_size} = ${qty}</div>
+                <div class="k">Contract value</div><div class="v">${Utils.formatINR(contractValue)}</div>
+                <div class="k">Margin (est.)</div><div class="v">${Utils.formatINR(marginEst)}</div>
+                <div class="k">P&amp;L per ±50 pts</div><div class="v">${sign}${Utils.formatINR(pl50)} / ${oppSign}${Utils.formatINR(pl50)}</div>
+            `;
         }
 
-        function recomputeTradeModal() {
-            if (!_modalContract) return;
-            const lotsInput = document.getElementById('tm-lots');
-            let lots = parseInt(lotsInput.value) || 0;
-            if (lots < 1) { lots = 1; lotsInput.value = 1; }
-            const lotSize = _modalContract.lot_size;
-            const qty = lots * lotSize;
-            const ltp = _modalContract.ltp;
-            const contractValue = ltp * qty;
-            // Same SPAN+Exposure split the backend uses (8.5% + 1.5% = 10%)
-            const margin = contractValue * 0.10;
-            // Per-1% move = qty × (ltp × 0.01) — i.e. how much rupees you make/lose
-            // for a 1% move in NIFTY futures. Direction-agnostic absolute value.
-            const impact = qty * ltp * 0.01;
-
-            document.getElementById('tm-qty').textContent      = qty.toLocaleString('en-IN') + ' units';
-            document.getElementById('tm-contract').textContent = '₹' + Math.round(contractValue).toLocaleString('en-IN');
-            document.getElementById('tm-margin').textContent   = '₹' + Math.round(margin).toLocaleString('en-IN');
-            document.getElementById('tm-impact').textContent   = '±₹' + Math.round(impact).toLocaleString('en-IN');
+        function closeTradeConfirm(ev) {
+            // Allow click-outside-to-close without bubbling from inner content
+            if (ev && ev.target && ev.target.id !== 'fut-modal-backdrop' && ev.type === 'click') return;
+            document.getElementById('fut-modal-backdrop').classList.remove('open');
+            _modalState = null;
         }
 
         async function confirmTrade() {
-            if (!_modalContract) return;
-            const lots = parseInt(document.getElementById('tm-lots').value) || 0;
-            if (lots < 1) { Utils.toast('Lots must be ≥ 1', 'warning'); return; }
-
-            const btn = document.getElementById('tm-confirm');
+            if (!_modalState) return;
+            const lots = Math.max(1, parseInt(document.getElementById('fm-lots').value, 10) || 1);
+            const btn = document.getElementById('fm-confirm');
             btn.disabled = true;
-            const origLabel = btn.textContent;
-            btn.textContent = 'Placing…';
+            btn.textContent = 'Booking…';
             try {
                 const r = await API.post('/api/futures/place', {
-                    expiry_date: _modalContract.expiry_date,
-                    side: _modalSide,
+                    expiry_date: _modalState.expiry,
+                    side: _modalState.side,
                     lots,
                 });
-                if (r && r.detail) {
-                    Utils.toast(r.detail, 'error');
-                    btn.disabled = false; btn.textContent = origLabel;
-                    return;
-                }
-                Utils.toast(`${_modalSide} ${lots} lot${lots > 1 ? 's' : ''} of ${_modalContract.expiry_date} @ ${Utils.formatNum(r.entry_price, 2)} placed`, 'success');
-                closeTradeModal();
+                if (r && r.detail) { Utils.toast(r.detail, 'error'); btn.disabled = false; btn.textContent = 'Confirm trade'; return; }
+                Utils.toast(
+                    `${_modalState.side} ${lots} lot${lots > 1 ? 's' : ''} of ${_modalState.expiry} booked @ ${Utils.formatNum(r.entry_price, 2)}`,
+                    'success'
+                );
+                closeTradeConfirm();
                 loadFutures(true);
             } catch (e) {
-                Utils.toast('Order failed — try again', 'error');
-                btn.disabled = false; btn.textContent = origLabel;
+                Utils.toast('Trade failed: ' + (e.message || 'unknown error'), 'error');
+                btn.disabled = false;
+                btn.textContent = 'Confirm trade';
             }
         }
 
-        // Esc to close, Enter to confirm
+        // Esc key closes modal
         document.addEventListener('keydown', (e) => {
-            const modal = document.getElementById('trade-modal');
-            if (!modal || !modal.classList.contains('show')) return;
-            if (e.key === 'Escape') closeTradeModal();
-            if (e.key === 'Enter')  confirmTrade();
+            if (e.key === 'Escape') closeTradeConfirm();
         });
 
         function renderPositions(p) {
@@ -668,7 +609,7 @@
                     <td>${Utils.formatINR(t.contract_value)}</td>
                     <td>${Utils.formatINR(t.margin_blocked)}</td>
                     <td class="${pnlCol}">${Utils.formatINR(t.unrealized_pnl)}</td>
-                    <td><button class="btn btn-sm btn-danger" data-action="close-fut" data-trade-id="${t.trade_id}">Close</button></td>
+                    <td><button class="btn btn-sm btn-danger" onclick="closeFuturesPosition(${t.trade_id})">Close</button></td>
                 </tr>`;
             }).join('');
 
@@ -681,12 +622,7 @@
         }
 
         async function closeFuturesPosition(id) {
-            const ok = await appConfirm(
-                'Close futures position?',
-                'This books the position out at the current live LTP. Realised P&L will be locked in.',
-                { okLabel: 'Close at LTP', danger: true }
-            );
-            if (!ok) return;
+            if (!confirm('Close this futures position at the current LTP?')) return;
             const r = await API.post('/api/futures/' + id + '/close');
             if (r && r.detail) { Utils.toast(r.detail, 'error'); return; }
             Utils.toast('Position closed · realised P&L: ' + Utils.formatINR(r.realized_pnl || 0),

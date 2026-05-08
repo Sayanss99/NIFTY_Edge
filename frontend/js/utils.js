@@ -79,10 +79,8 @@ const Utils = {
         const map = {
             'CE_SELL': 'badge-ce-sell',
             'PE_SELL': 'badge-pe-sell',
-            'CE_BUY':  'badge-ce-buy',
-            'PE_BUY':  'badge-pe-buy',
-            'FUT_BUY': 'badge-safe',
-            'FUT_SELL':'badge-danger',
+            'CE_BUY': 'badge-ce-buy',
+            'PE_BUY': 'badge-pe-buy',
         };
         return map[type] || 'badge-neutral';
     },
@@ -384,27 +382,18 @@ const Utils = {
 
         this._injectProfileCardStyles();
 
-        this._injectHeaderSpotStyles();
-
         return `
             <div class="header-left">
                 <div class="header-icon" style="background:${cfg.color}">${cfg.icon}</div>
                 <span class="header-title">${title}</span>
-                <span class="refresh-info" id="refresh-info" title="Last data tick (IST)">Connecting…</span>
             </div>
             <div class="header-right">
-                <!-- Live NIFTY CMP chip — populated by initHeader() and live-updated
-                     via the existing market_update WS event. -->
-                <div class="ne-spot-chip" id="ne-spot-chip" title="NIFTY 50 · live spot">
-                    <span class="ne-spot-label">NIFTY</span>
-                    <span class="ne-spot-value font-mono" id="ne-spot-value">—</span>
-                    <span class="ne-spot-change" id="ne-spot-change"></span>
-                </div>
                 <select id="expiry-selector" class="expiry-selector">
                     ${expiries.length ? expiries.map(e =>
                         `<option value="${e}">${e}</option>`
                     ).join('') : '<option value="">Loading...</option>'}
                 </select>
+                <span class="refresh-info" id="refresh-info">Connecting...</span>
                 <a href="/alerts" class="notification-bell" id="notification-bell" title="Alerts" style="position:relative;text-decoration:none;font-size:18px;color:#6B7280;margin:0 8px;cursor:pointer">
                     &#128276;
                     <span id="alert-badge" style="display:none;position:absolute;top:-4px;right:-6px;background:#DC2626;color:#fff;font-size:9px;font-weight:700;border-radius:50%;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px"></span>
@@ -485,117 +474,10 @@ const Utils = {
         if (typeof ts === 'string' && !/Z|[+-]\d{2}:?\d{2}$/.test(ts)) ts = ts + 'Z';
         const d = new Date(ts);
         if (isNaN(d.getTime())) return;
-        // Compact form on the left of the header — `12:24:25 PM IST` reads
-        // cleaner than the older "Last: …" prefix and saves horizontal space
-        // alongside the page title.
-        el.textContent = d.toLocaleTimeString('en-IN', {
+        el.textContent = `Last: ${d.toLocaleTimeString('en-IN', {
             hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
             timeZone: 'Asia/Kolkata',
-        }) + ' IST';
-    },
-
-    /** Update the live NIFTY CMP chip in the header (right side).
-     *  Accepts any payload that carries `nifty_spot` + `nifty_change` +
-     *  `nifty_change_pct` — the WS market_update push, the market_status
-     *  fallback, and the snapshot endpoint all share that shape.
-     */
-    updateHeaderSpot(data) {
-        if (!data) return;
-        const valEl = document.getElementById('ne-spot-value');
-        const chgEl = document.getElementById('ne-spot-change');
-        const chip  = document.getElementById('ne-spot-chip');
-        if (!valEl || !chgEl || !chip) return;
-        const spot = data.nifty_spot;
-        if (typeof spot !== 'number' || !isFinite(spot)) return;
-        valEl.textContent = spot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const chg = data.nifty_change;
-        const pct = data.nifty_change_pct;
-        if (typeof chg === 'number' && typeof pct === 'number') {
-            const sign = chg >= 0 ? '+' : '';
-            chgEl.textContent = `${sign}${chg.toFixed(2)} (${sign}${pct.toFixed(2)}%)`;
-            chip.classList.toggle('up',   chg > 0);
-            chip.classList.toggle('down', chg < 0);
-            chip.classList.toggle('flat', chg === 0);
-        } else {
-            chgEl.textContent = '';
-            chip.classList.remove('up', 'down', 'flat');
-        }
-    },
-
-    /** Inject the header CMP-chip styles once. */
-    _injectHeaderSpotStyles() {
-        if (document.getElementById('ne-spot-style')) return;
-        const s = document.createElement('style');
-        s.id = 'ne-spot-style';
-        s.textContent = `
-            .header-left .refresh-info {
-                margin-left: 10px;
-                padding: 3px 9px;
-                border-radius: 999px;
-                background: var(--bg-secondary);
-                color: var(--text-muted);
-                font-size: 11px;
-                font-family: var(--font-mono, 'JetBrains Mono', monospace);
-                font-weight: 600;
-                letter-spacing: 0.2px;
-                white-space: nowrap;
-            }
-            .ne-spot-chip {
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                padding: 5px 12px 5px 10px;
-                border-radius: 999px;
-                background: linear-gradient(135deg, rgba(37,99,235,0.12) 0%, rgba(99,102,241,0.10) 100%);
-                border: 1px solid rgba(37,99,235,0.28);
-                box-shadow: 0 2px 8px rgba(37,99,235,0.10);
-                line-height: 1;
-                transition: border-color 220ms, box-shadow 220ms, background 220ms;
-            }
-            .ne-spot-chip .ne-spot-label {
-                font-size: 10px;
-                font-weight: 700;
-                letter-spacing: 0.6px;
-                color: var(--primary, #2563EB);
-                text-transform: uppercase;
-            }
-            .ne-spot-chip .ne-spot-value {
-                font-size: 14px;
-                font-weight: 700;
-                color: var(--text-primary);
-                font-family: var(--font-mono, 'JetBrains Mono', monospace);
-                letter-spacing: -0.2px;
-            }
-            .ne-spot-chip .ne-spot-change {
-                font-size: 11px;
-                font-weight: 600;
-                font-family: var(--font-mono, 'JetBrains Mono', monospace);
-                color: var(--text-muted);
-            }
-            .ne-spot-chip.up   { border-color: rgba(22,163,74,0.40);  box-shadow: 0 2px 12px rgba(22,163,74,0.18);  background: linear-gradient(135deg, rgba(22,163,74,0.14) 0%, rgba(34,197,94,0.10) 100%); }
-            .ne-spot-chip.up   .ne-spot-label  { color: var(--green, #16A34A); }
-            .ne-spot-chip.up   .ne-spot-change { color: var(--green, #16A34A); }
-            .ne-spot-chip.down { border-color: rgba(220,38,38,0.40);  box-shadow: 0 2px 12px rgba(220,38,38,0.18);  background: linear-gradient(135deg, rgba(220,38,38,0.14) 0%, rgba(239,68,68,0.10) 100%); }
-            .ne-spot-chip.down .ne-spot-label  { color: var(--red, #DC2626); }
-            .ne-spot-chip.down .ne-spot-change { color: var(--red, #DC2626); }
-            [data-theme="dark"] .ne-spot-chip {
-                background: linear-gradient(135deg, rgba(59,130,246,0.16) 0%, rgba(99,102,241,0.12) 100%);
-                border-color: rgba(96,165,250,0.35);
-            }
-            [data-theme="dark"] .ne-spot-chip.up {
-                background: linear-gradient(135deg, rgba(22,163,74,0.22) 0%, rgba(34,197,94,0.14) 100%);
-                border-color: rgba(74,222,128,0.45);
-            }
-            [data-theme="dark"] .ne-spot-chip.down {
-                background: linear-gradient(135deg, rgba(220,38,38,0.22) 0%, rgba(248,113,113,0.14) 100%);
-                border-color: rgba(248,113,113,0.45);
-            }
-            @media (max-width: 720px) {
-                .ne-spot-chip .ne-spot-change { display: none; }
-                .header-left .refresh-info    { display: none; }
-            }
-        `;
-        document.head.appendChild(s);
+        })} IST`;
     },
 
     /** localStorage key for persisted expiry selection */
@@ -748,25 +630,13 @@ const Utils = {
             }
         } catch (e) {}
 
-        // Use snapshot for refresh-info timestamp + initial NIFTY CMP chip.
+        // Use snapshot only for refresh-info timestamp
         try {
             const snap = await API.getSnapshot();
-            if (snap && snap.data) {
-                if (snap.data.timestamp) this.updateRefreshInfo(snap.data.timestamp);
-                this.updateHeaderSpot(snap.data);
+            if (snap && snap.data && snap.data.timestamp) {
+                this.updateRefreshInfo(snap.data.timestamp);
             }
         } catch (e) {}
-
-        // Wire the NIFTY CMP chip to live ticks. We bind once per page; the
-        // listener is idempotent because WS.on stacks handlers and the
-        // module-level guard prevents duplicate wiring across re-init.
-        if (typeof WS !== 'undefined' && !this._spotListenerBound) {
-            this._spotListenerBound = true;
-            WS.on('market_update', (data) => this.updateHeaderSpot(data));
-            WS.on('market_status', (data) => {
-                if (data && data.last_snapshot) this.updateHeaderSpot(data.last_snapshot);
-            });
-        }
 
         // Load unread alert count for bell badge
         try {
@@ -895,103 +765,6 @@ const Utils = {
         void bell.offsetWidth;
         bell.classList.add('ne-bell-shake');
         setTimeout(() => bell.classList.remove('ne-bell-shake'), 1000);
-    },
-
-    /** In-app confirmation modal (replaces native confirm()).
-     *  Returns a Promise<boolean>. Renders a small dialog identical in style
-     *  to the futures order modal — works on every page that uses utils.js.
-     *  Usage:  if (await Utils.confirm('Close position?', 'Books out at LTP', {okLabel:'Close', danger:true})) { ... }
-     */
-    confirm(title, body, opts = {}) {
-        this._injectConfirmModal();
-        return new Promise(resolve => {
-            const overlay = document.getElementById('ne-confirm-modal');
-            const okBtn   = document.getElementById('ne-confirm-ok');
-            const cxBtn   = document.getElementById('ne-confirm-cancel');
-            document.getElementById('ne-confirm-title').textContent = title || 'Confirm';
-            document.getElementById('ne-confirm-body').textContent  = body  || '';
-            okBtn.textContent = opts.okLabel || 'Confirm';
-            okBtn.className   = 'ne-cf-ok ' + (opts.danger ? 'is-danger' : '');
-            overlay.classList.add('show');
-            // Trap a single resolution; replace handlers on each open
-            const cleanup = (val) => {
-                overlay.classList.remove('show');
-                okBtn.onclick = null;
-                cxBtn.onclick = null;
-                overlay.onclick = null;
-                resolve(val);
-            };
-            okBtn.onclick = () => cleanup(true);
-            cxBtn.onclick = () => cleanup(false);
-            overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
-        });
-    },
-
-    _injectConfirmModal() {
-        if (document.getElementById('ne-confirm-modal')) return;
-        if (!document.getElementById('ne-confirm-style')) {
-            const s = document.createElement('style');
-            s.id = 'ne-confirm-style';
-            s.textContent = `
-                #ne-confirm-modal {
-                    position: fixed; inset: 0;
-                    background: rgba(7, 13, 26, 0.70);
-                    backdrop-filter: blur(4px);
-                    display: none;
-                    align-items: center; justify-content: center;
-                    z-index: 10000;
-                }
-                #ne-confirm-modal.show { display: flex; }
-                #ne-confirm-modal .ne-cf-card {
-                    width: 380px; max-width: calc(100vw - 32px);
-                    background: var(--bg-card);
-                    border: 1px solid var(--border);
-                    border-radius: 16px;
-                    padding: 22px;
-                    box-shadow: 0 24px 64px rgba(0,0,0,0.40);
-                }
-                #ne-confirm-modal .ne-cf-title {
-                    font-size: 16px; font-weight: 700; color: var(--text-primary);
-                    margin-bottom: 6px;
-                }
-                #ne-confirm-modal .ne-cf-body {
-                    font-size: 13px; color: var(--text-secondary);
-                    margin-bottom: 18px; line-height: 1.5;
-                }
-                #ne-confirm-modal .ne-cf-actions {
-                    display: flex; gap: 10px; justify-content: flex-end;
-                }
-                #ne-confirm-modal button {
-                    padding: 8px 18px; border-radius: 10px;
-                    font-size: 13px; font-weight: 700;
-                    cursor: pointer; border: 1px solid var(--border);
-                    background: var(--bg-card); color: var(--text-primary);
-                    font-family: inherit;
-                    transition: filter 140ms;
-                }
-                #ne-confirm-modal button:hover { filter: brightness(1.06); }
-                #ne-confirm-modal .ne-cf-ok {
-                    background: var(--primary, #2563EB); color: #fff; border-color: var(--primary, #2563EB);
-                }
-                #ne-confirm-modal .ne-cf-ok.is-danger {
-                    background: #DC2626; border-color: #DC2626;
-                }
-            `;
-            document.head.appendChild(s);
-        }
-        const m = document.createElement('div');
-        m.id = 'ne-confirm-modal';
-        m.innerHTML = `
-            <div class="ne-cf-card" role="dialog" aria-modal="true">
-                <div class="ne-cf-title" id="ne-confirm-title">Confirm</div>
-                <div class="ne-cf-body"  id="ne-confirm-body"></div>
-                <div class="ne-cf-actions">
-                    <button id="ne-confirm-cancel">Cancel</button>
-                    <button id="ne-confirm-ok" class="ne-cf-ok">Confirm</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(m);
     },
 
     /** Toggle dark mode */

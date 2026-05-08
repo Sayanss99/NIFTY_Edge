@@ -739,7 +739,7 @@ def get_roll_scenarios(
             "rationale": (
                 f"Current position delta: {round(net_delta, 2)}. "
                 f"{futures_action} {futures_lots} futures lot(s) to neutralize delta. "
-                f"Est. margin: ₹{Utils_format(hedge_margin)}. "
+                f"Est. margin: ₹{int(hedge_margin):,}. "
                 f"Option position stays intact — only delta risk is hedged. Adds basis risk."
             ),
             "recommendation_score": score_c,

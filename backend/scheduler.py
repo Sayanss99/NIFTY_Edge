@@ -510,7 +510,19 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
     default_offset = 50  # default VIX offset %
     ranges = calculate_ranges(spot, vix, dte, vix_offset_pct=default_offset)
     rr = compute_risk_reversal(chain_df)
-    tendency_data = compute_tendency(rr["rr_value"], vix, vix_change_pct)
+    # Compute RR z-score so the broadcast tendency uses the same definition as
+    # the Strategy Builder & Dashboard verdict.  Without this the WS push (15s
+    # cadence) would overwrite the Skew card with the absolute-fallback label
+    # ("Flat") and contradict the verdict-driven label ("Bullish Skew").
+    rr_zscore = None
+    try:
+        from routes_strategies import _compute_rr_zscore
+        rr_zscore = _compute_rr_zscore(db, rr.get("rr_value", 0) or 0)
+    except Exception:
+        rr_zscore = None
+    tendency_data = compute_tendency(
+        rr["rr_value"], vix, vix_change_pct, rr_zscore=rr_zscore,
+    )
 
     # 8-factor directional signal
     vix_data_full = vix_data if vix_data else None

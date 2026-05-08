@@ -76,6 +76,103 @@
             grid-template-columns: 1fr 1fr;
             gap: 16px;
         }
+        /* Inline header row: title left, dropdown right.  Used by the new
+           Profit vs Loss pie so the window selector sits flush with the
+           card title without breaking the existing .chart-title layout. */
+        .chart-header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 4px;
+        }
+        .chart-header-row .chart-title { margin-bottom: 0; }
+        /* Pie window selector — visibly bordered pill so the affordance is
+           obvious. Subtle native chevron via background-image keeps the
+           shape integrated with the rest of the form-control palette. */
+        .pie-window-select {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            font: inherit;
+            font-size: 11.5px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            color: var(--text-primary);
+            background-color: var(--bg-card);
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1 1.5l5 5 5-5' fill='none' stroke='%239CA3AF' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+            background-repeat: no-repeat;
+            background-position: right 9px center;
+            background-size: 10px 7px;
+            border: 1.5px solid var(--border);
+            border-radius: 7px;
+            padding: 6px 28px 6px 12px;
+            cursor: pointer;
+            transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+        }
+        .pie-window-select:hover {
+            border-color: var(--primary, #2563EB);
+            background-color: var(--bg-secondary);
+        }
+        .pie-window-select:focus {
+            outline: none;
+            border-color: var(--primary, #2563EB);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary, #2563EB) 18%, transparent);
+        }
+        /* Pie chart layout — canvas left, count/amount legend right. */
+        .pie-wrap {
+            position: relative;
+            display: grid;
+            grid-template-columns: minmax(200px, 1fr) minmax(160px, 200px);
+            gap: 18px;
+            align-items: center;
+            padding: 6px 0;
+        }
+        .pie-wrap canvas {
+            display: block;
+            width: 100%;
+            height: 220px;
+            cursor: crosshair;
+        }
+        .pie-legend { display: flex; flex-direction: column; gap: 12px; }
+        .pie-legend-item {
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 8px 10px;
+            background: var(--bg-card);
+        }
+        .pie-legend-item .row {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 8px;
+        }
+        .pie-legend-item .swatch {
+            width: 9px; height: 9px; border-radius: 2px;
+            display: inline-block; margin-right: 6px;
+            vertical-align: middle;
+        }
+        .pie-legend-item .lbl {
+            font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+            color: var(--text-muted); font-weight: 700;
+        }
+        .pie-legend-item .amt {
+            font-family: var(--font-mono); font-weight: 700; font-size: 13px;
+        }
+        .pie-legend-item .sub {
+            font-size: 10.5px; color: var(--text-muted);
+            margin-top: 4px; font-family: var(--font-mono);
+        }
+        .pie-legend-item.profit .amt { color: var(--green); }
+        .pie-legend-item.loss   .amt { color: var(--red); }
+        .pie-empty {
+            grid-column: 1 / -1;
+            text-align: center;
+            color: var(--text-muted);
+            padding: 36px 12px;
+            font-size: 12px;
+        }
+        @media (max-width: 720px) {
+            .pie-wrap { grid-template-columns: 1fr; }
+        }
         .time-filter {
             display: flex;
             align-items: center;
@@ -241,15 +338,37 @@
 
                     <div class="chart-row">
                         <div class="chart-container">
-                            <div class="chart-title">P&L by Expiry <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover bars)</span></div>
-                            <div class="chart-wrap">
-                                <canvas id="expiry-chart" height="200"></canvas>
-                                <div class="chart-tooltip" id="expiry-tip"></div>
+                            <div class="chart-header-row">
+                                <div class="chart-title">Profit vs Loss</div>
+                                <select id="pie-window"
+                                        class="pie-window-select"
+                                        onchange="renderProfitLossPie()"
+                                        title="Window for win/loss breakdown">
+                                    <option value="7">Last week</option>
+                                    <option value="30">Last month</option>
+                                    <option value="90" selected>Last 3 months</option>
+                                    <option value="180">Last 6 months</option>
+                                    <option value="0">All time</option>
+                                </select>
+                            </div>
+                            <div class="chart-subtitle">Wins vs losses for the selected window — slice arc reflects total ₹ contribution per side, count + average sit in the legend.</div>
+                            <div class="pie-wrap">
+                                <canvas id="pie-chart" height="220"></canvas>
+                                <div class="chart-tooltip" id="pie-tip"></div>
+                                <div id="pie-legend" class="pie-legend"></div>
                             </div>
                         </div>
                         <div class="chart-container">
                             <div class="chart-title">Monthly Performance</div>
                             <div id="monthly-heatmap" class="monthly-grid"></div>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">P&L by Expiry <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover bars)</span></div>
+                        <div class="chart-wrap">
+                            <canvas id="expiry-chart" height="200"></canvas>
+                            <div class="chart-tooltip" id="expiry-tip"></div>
                         </div>
                     </div>
                 </div>
@@ -258,7 +377,7 @@
                 <div id="tab-patterns" class="tab-content">
                     <div class="chart-row">
                         <div class="chart-container">
-                            <div class="chart-title">CE Strike Distance (OTM pts)</div>
+                            <div class="chart-title">CE Strike Distance (OTM pts) <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover bars)</span></div>
                             <div class="chart-subtitle">How far OTM your <b>sold CE</b> strikes sat at entry, bucketed every 200 pts. Lighter bar = all trades in bucket; solid overlay = winners. Read it as: <i>do calls placed further OTM win more often?</i></div>
                             <div class="chart-wrap">
                                 <canvas id="ce-dist-chart" height="200"></canvas>
@@ -266,7 +385,7 @@
                             </div>
                         </div>
                         <div class="chart-container">
-                            <div class="chart-title">PE Strike Distance (OTM pts)</div>
+                            <div class="chart-title">PE Strike Distance (OTM pts) <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover bars)</span></div>
                             <div class="chart-subtitle">Same idea for <b>sold PE</b> strikes. Use this to spot the distance band where your puts actually survive — your historical "safe cushion" on the downside.</div>
                             <div class="chart-wrap">
                                 <canvas id="pe-dist-chart" height="200"></canvas>
@@ -276,38 +395,11 @@
                     </div>
 
                     <div class="chart-container">
-                        <div class="chart-title">Strike Distance vs P&L</div>
+                        <div class="chart-title">Strike Distance vs P&L <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover points)</span></div>
                         <div class="chart-subtitle">Each mark is one closed option leg. X-axis = OTM distance at entry, Y-axis = realised P&L. Circles are CE, squares are PE; green = winner. Clusters in the top-right mean "far OTM worked"; losses near the left mean strikes were too close to spot.</div>
                         <div class="chart-wrap">
                             <canvas id="scatter-chart" height="220"></canvas>
                             <div class="chart-tooltip" id="scatter-tip"></div>
-                            <!-- Corner zoom slider — interpolates between cluster view (top, +)
-                                 and full-extent view (bottom, −). The axis with the farthest
-                                 outliers expands the most as you zoom out, because the window
-                                 lerps from cluster bounds to the per-axis raw extent. -->
-                            <div id="scatter-zoom" style="display:none;position:absolute;top:8px;right:8px;
-                                 background:var(--bg-card,#fff);border:1px solid var(--border,#E5E7EB);
-                                 border-radius:8px;padding:6px 5px 5px;
-                                 box-shadow:0 2px 8px rgba(0,0,0,0.08);
-                                 flex-direction:column;align-items:center;gap:4px;
-                                 z-index:5;user-select:none">
-                                <span style="font-size:10px;font-weight:700;color:var(--text-muted);line-height:1"
-                                      title="Cluster view">＋</span>
-                                <input type="range" id="scatter-zoom-input" min="0" max="1000" value="1000" step="1"
-                                       orient="vertical"
-                                       title="Zoom: top = cluster, bottom = include outliers"
-                                       style="appearance:slider-vertical;-webkit-appearance:slider-vertical;
-                                              writing-mode:vertical-lr;
-                                              width:18px;height:84px;margin:0;padding:0;
-                                              accent-color:var(--primary,#2563EB);cursor:ns-resize">
-                                <span style="font-size:11px;font-weight:700;color:var(--text-muted);line-height:1"
-                                      title="Full extent (all outliers)">−</span>
-                                <span id="scatter-zoom-pct"
-                                      style="font-size:9px;font-family:JetBrains Mono,monospace;
-                                             font-weight:700;color:var(--primary,#2563EB);
-                                             background:var(--bg-subtle,rgba(37,99,235,0.08));
-                                             border-radius:4px;padding:1px 4px;min-width:28px;text-align:center">0%</span>
-                            </div>
                         </div>
                     </div>
 
@@ -393,6 +485,7 @@
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
+    <script src="/js/ne-live.js"></script>
     <script src="/js/ws.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Auth required');
@@ -456,6 +549,7 @@
             drawPnlCurve(data.cumulative_pnl);
             drawExpiryBars(data.expiry_pnl);
             renderMonthlyHeatmap(data.monthly_pnl);
+            renderProfitLossPie();
             // Seed the time-filter note so the user understands the default view
             setTimeFilter(0);
         }
@@ -495,7 +589,189 @@
         }
 
         // Hover-state cache, so mousemove can translate pixels → data without re-reading the canvas.
-        const _hoverState = { pnl: null, expiry: null, ce: null, pe: null, scatter: null, signal: null };
+        const _hoverState = { pnl: null, expiry: null, ce: null, pe: null, scatter: null, signal: null, pie: null };
+
+        // ── Profit vs Loss pie ─────────────────────────────────────────
+        // Derives per-trade P&L from cumulative_pnl deltas — no new endpoint
+        // needed.  Each cumulative_pnl point represents one closed-trade
+        // event; delta_i = points[i].pnl - points[i-1].pnl is that trade's
+        // realised P&L on its dated row.  The dropdown filters by date
+        // window (in days) before splitting wins / losses.
+        function _perTradePnl() {
+            const pts = (perfData && perfData.cumulative_pnl) || [];
+            if (!pts.length) return [];
+            const out = [];
+            let prev = 0;
+            for (const p of pts) {
+                const cur = Number(p.pnl) || 0;
+                out.push({ date: p.date, pnl: cur - prev });
+                prev = cur;
+            }
+            return out;
+        }
+
+        function renderProfitLossPie() {
+            const sel  = document.getElementById('pie-window');
+            const days = sel ? parseInt(sel.value, 10) : 0;
+            let trades = _perTradePnl();
+            if (days > 0) {
+                const cutoff = new Date();
+                cutoff.setDate(cutoff.getDate() - days);
+                trades = trades.filter(t => new Date(t.date) >= cutoff);
+            }
+            // A "scratch" trade (delta = 0, vanishingly rare) shouldn't
+            // distort either side; skip these from both count and amount.
+            trades = trades.filter(t => Math.abs(t.pnl) > 1e-6);
+
+            const wins   = trades.filter(t => t.pnl > 0);
+            const losses = trades.filter(t => t.pnl < 0);
+            const winSum  = wins.reduce((s, t) => s + t.pnl, 0);
+            const lossSum = losses.reduce((s, t) => s + Math.abs(t.pnl), 0);
+
+            _drawPie(winSum, lossSum, wins.length, losses.length);
+            _drawPieLegend(winSum, lossSum, wins, losses);
+        }
+
+        function _drawPie(winSum, lossSum, winN, lossN) {
+            const canvas = document.getElementById('pie-chart');
+            if (!canvas) return;
+            const ctx  = canvas.getContext('2d');
+            const dpr  = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width  = rect.width * dpr;
+            canvas.height = 220 * dpr;
+            ctx.scale(dpr, dpr);
+            const W = rect.width, H = 220;
+            ctx.clearRect(0, 0, W, H);
+
+            // Resolve theme tokens to actual colors so the canvas can use
+            // them — getComputedStyle lookup matches whatever theme is active.
+            const cs = getComputedStyle(document.documentElement);
+            const greenC = (cs.getPropertyValue('--green') || '#16A34A').trim();
+            const redC   = (cs.getPropertyValue('--red')   || '#DC2626').trim();
+            const muted  = (cs.getPropertyValue('--text-muted') || '#9CA3AF').trim();
+            const primary = (cs.getPropertyValue('--text-primary') || '#1F2937').trim();
+
+            const cx = W / 2;
+            const cy = H / 2;
+            const rOuter = Math.min(W, H) / 2 - 8;
+            const rInner = rOuter * 0.62;     // donut hole — leaves room for centre KPI
+
+            const total = winSum + lossSum;
+            if (total <= 0) {
+                ctx.fillStyle = muted;
+                ctx.font = '12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('No closed trades in this window', cx, cy);
+                _hoverState.pie = null;
+                return;
+            }
+
+            // Slice geometry — start at -π/2 (12 o'clock) and sweep clockwise.
+            const winFrac  = winSum  / total;
+            const lossFrac = lossSum / total;
+            const startA = -Math.PI / 2;
+            const winEnd  = startA + winFrac * Math.PI * 2;
+            const lossEnd = winEnd + lossFrac * Math.PI * 2;
+
+            function drawSlice(a0, a1, color, labelInside) {
+                ctx.beginPath();
+                ctx.moveTo(cx + Math.cos(a0) * rInner, cy + Math.sin(a0) * rInner);
+                ctx.arc(cx, cy, rOuter, a0, a1);
+                ctx.arc(cx, cy, rInner, a1, a0, true);
+                ctx.closePath();
+                ctx.fillStyle = color;
+                ctx.fill();
+                // Subtle inner edge so the donut hole reads cleanly against the card bg
+                ctx.strokeStyle = (cs.getPropertyValue('--bg-card') || '#FFFFFF').trim();
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                // Slice label sits at the slice midpoint outside arc — only when
+                // the slice is large enough to host it without crowding.
+                const sweep = a1 - a0;
+                if (sweep > 0.35 && labelInside) {
+                    const midA = (a0 + a1) / 2;
+                    const lr = (rInner + rOuter) / 2;
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '700 11px JetBrains Mono, monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(labelInside, cx + Math.cos(midA) * lr, cy + Math.sin(midA) * lr);
+                }
+            }
+            const winPctTxt  = (winFrac  * 100).toFixed(0) + '%';
+            const lossPctTxt = (lossFrac * 100).toFixed(0) + '%';
+            drawSlice(startA, winEnd,  greenC, winFrac  > 0.10 ? winPctTxt  : null);
+            drawSlice(winEnd, lossEnd, redC,   lossFrac > 0.10 ? lossPctTxt : null);
+
+            // Centre KPI: net P&L + win rate
+            const net = winSum - lossSum;
+            const totalN = winN + lossN;
+            const winRate = totalN ? (winN / totalN * 100) : 0;
+            ctx.fillStyle = muted;
+            ctx.font = '600 9px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('NET P&L', cx, cy - 22);
+            ctx.fillStyle = net >= 0 ? greenC : redC;
+            ctx.font = '700 18px JetBrains Mono, monospace';
+            ctx.fillText((net >= 0 ? '+' : '−') + Utils.formatINR(Math.abs(net)).replace(/^[+\-]/, ''), cx, cy - 4);
+            ctx.fillStyle = primary;
+            ctx.font = '700 12px JetBrains Mono, monospace';
+            ctx.fillText(winRate.toFixed(0) + '% win rate', cx, cy + 16);
+            ctx.fillStyle = muted;
+            ctx.font = '500 9.5px sans-serif';
+            ctx.fillText(totalN + ' trade' + (totalN === 1 ? '' : 's'), cx, cy + 30);
+
+            _hoverState.pie = {
+                cx, cy, rInner, rOuter,
+                slices: [
+                    { kind: 'profit', a0: startA, a1: winEnd,  count: winN,  total: winSum,  pct: winFrac  },
+                    { kind: 'loss',   a0: winEnd, a1: lossEnd, count: lossN, total: lossSum, pct: lossFrac },
+                ],
+            };
+        }
+
+        function _drawPieLegend(winSum, lossSum, wins, losses) {
+            const el = document.getElementById('pie-legend');
+            if (!el) return;
+            const totalN = wins.length + losses.length;
+            if (!totalN) {
+                el.innerHTML = '<div class="pie-empty">Pick a wider window to see win/loss breakdown.</div>';
+                return;
+            }
+            const avgWin  = wins.length   ? winSum  / wins.length   : 0;
+            const avgLoss = losses.length ? lossSum / losses.length : 0;
+            // expectancy = winRate * avgWin - lossRate * avgLoss → per-trade edge in ₹
+            const winRate  = wins.length / totalN;
+            const lossRate = losses.length / totalN;
+            const expectancy = winRate * avgWin - lossRate * avgLoss;
+            const expCol = expectancy >= 0 ? 'var(--green)' : 'var(--red)';
+
+            el.innerHTML = `
+                <div class="pie-legend-item profit">
+                    <div class="row">
+                        <span class="lbl"><span class="swatch" style="background:var(--green)"></span>Profit</span>
+                        <span class="amt">+${Utils.formatINR(winSum).replace(/^[+\-]/, '')}</span>
+                    </div>
+                    <div class="sub">${wins.length} trade${wins.length === 1 ? '' : 's'} · avg +${Utils.formatINR(avgWin).replace(/^[+\-]/, '')}</div>
+                </div>
+                <div class="pie-legend-item loss">
+                    <div class="row">
+                        <span class="lbl"><span class="swatch" style="background:var(--red)"></span>Loss</span>
+                        <span class="amt">−${Utils.formatINR(lossSum).replace(/^[+\-]/, '')}</span>
+                    </div>
+                    <div class="sub">${losses.length} trade${losses.length === 1 ? '' : 's'} · avg −${Utils.formatINR(avgLoss).replace(/^[+\-]/, '')}</div>
+                </div>
+                <div class="pie-legend-item">
+                    <div class="row">
+                        <span class="lbl">Expectancy / trade</span>
+                        <span class="amt" style="color:${expCol}">${expectancy >= 0 ? '+' : '−'}${Utils.formatINR(Math.abs(expectancy)).replace(/^[+\-]/, '')}</span>
+                    </div>
+                    <div class="sub">winRate × avgWin − lossRate × avgLoss</div>
+                </div>
+            `;
+        }
 
         // ── Cumulative P&L chart ──────────────────────────────────────
         function drawPnlCurve(points) {
@@ -718,15 +994,11 @@
                         const total = s.buckets[i];
                         const wins = s.winBuckets[i];
                         const wr = total ? Math.round((wins / total) * 100) : 0;
-                        const isOverflow = s.hasOverflow && i === s.bucketCount - 1;
                         const lo = i * s.bucketSize;
                         const hi = lo + s.bucketSize;
                         const sideLabel = side === 'ce' ? 'CE' : 'PE';
-                        const range = isOverflow
-                            ? `≥${s.visMax} pts (max ${s.overflowMax})`
-                            : `${lo}–${hi} pts OTM`;
                         return `
-                            <div class="t-label">${sideLabel} · ${range}</div>
+                            <div class="t-label">${sideLabel} · ${lo}–${hi} pts OTM</div>
                             <div>${total} trade${total > 1 ? 's' : ''} · ${wins} win${wins === 1 ? '' : 's'}</div>
                             <div>Win rate: <span style="color:${wr >= 50 ? '#16A34A' : '#DC2626'};font-weight:700">${wr}%</span></div>
                         `;
@@ -738,10 +1010,42 @@
         _bindHover('ce-dist-chart', 'ce-dist-tip', _distHover('ce'));
         _bindHover('pe-dist-chart', 'pe-dist-tip', _distHover('pe'));
 
+        // Pie hover — locate the slice under the cursor by polar coords.
+        // Returns the legend-equivalent breakdown when over a slice ring,
+        // null otherwise (so the tooltip auto-hides over the donut hole).
+        _bindHover('pie-chart', 'pie-tip', (x, y) => {
+            const s = _hoverState.pie;
+            if (!s) return null;
+            const dx = x - s.cx, dy = y - s.cy;
+            const r  = Math.sqrt(dx * dx + dy * dy);
+            if (r < s.rInner || r > s.rOuter) return null;
+            // atan2 gives (-π, π]; normalise so our slice arc range
+            // (start at -π/2) is contiguous: shift by +π/2 then mod 2π.
+            let ang = Math.atan2(dy, dx);
+            const norm = (ang + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2);
+            for (const sl of s.slices) {
+                const a0 = (sl.a0 + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2);
+                const a1 = a0 + (sl.a1 - sl.a0);
+                if (norm >= a0 && norm <= a1) {
+                    const isProfit = sl.kind === 'profit';
+                    const col = isProfit ? '#16A34A' : '#DC2626';
+                    const sign = isProfit ? '+' : '−';
+                    const avg = sl.count ? sl.total / sl.count : 0;
+                    return `
+                        <div class="t-label">${isProfit ? 'Profit slice' : 'Loss slice'} · ${(sl.pct * 100).toFixed(1)}%</div>
+                        <div>${sl.count} trade${sl.count === 1 ? '' : 's'}</div>
+                        <div>Total: <span style="color:${col};font-weight:700">${sign}${Utils.formatINR(sl.total).replace(/^[+\-]/, '')}</span></div>
+                        <div>Avg / trade: <span style="color:${col};font-weight:700">${sign}${Utils.formatINR(avg).replace(/^[+\-]/, '')}</span></div>
+                    `;
+                }
+            }
+            return null;
+        });
+
         _bindHover('scatter-chart', 'scatter-tip', (x, y) => {
             const s = _hoverState.scatter;
             if (!s) return null;
-            let best = null, bestDist = 14;
+            let best = null, bestDist = 12;
             for (const p of s.plotted) {
                 const dx = p.x - x, dy = p.y - y;
                 const d = Math.sqrt(dx*dx + dy*dy);
@@ -750,14 +1054,10 @@
             if (!best) return null;
             const d = best.d;
             const color = d.pnl >= 0 ? '#16A34A' : '#DC2626';
-            const outlierTag = best.clipped
-                ? '<div style="font-size:10px;color:#9CA3AF;margin-top:2px">⚠ Outlier — pinned to chart edge</div>'
-                : '';
             return `
                 <div class="t-label">${best.side} · ${d.strike || ''} ${d.expiry ? '· ' + d.expiry : ''}</div>
                 <div>Distance: ${Math.round(d.distance)} pts OTM</div>
                 <div>P&L: <span style="color:${color};font-weight:700">${Utils.formatINR(d.pnl)}</span> · ${d.win ? 'Win' : 'Loss'}</div>
-                ${outlierTag}
             `;
         });
 
@@ -836,152 +1136,53 @@
                 return;
             }
 
-            // Bucket size auto-scales: target ~8-10 buckets across the visible
-            // range, rounded to a clean step. The visible ceiling clips the
-            // upper edge so a far-OTM outlier doesn't squish the meaningful
-            // bars into the left margin. We use min(p95, median × 6) so that
-            // when the bulk of trades cluster near 0 with a few extreme tails
-            // (typical for PE), the percentile alone doesn't get dragged out
-            // to the outlier itself. Outliers beyond the ceiling are summed
-            // into a final "≥X" overflow bucket so they stay visible.
-            const dists = distances.map(d => d.distance).sort((a, b) => a - b);
-            const p = (q) => dists.length ? dists[Math.min(dists.length - 1, Math.floor(dists.length * q))] : 0;
-            const p95     = p(0.95);
-            const median  = p(0.50);
-            const tailCap = median > 0 ? median * 6 : Infinity;
-            const ceiling = Math.max(Math.min(p95, tailCap), 100);
-            // Snap visMax to a "nice" rounded ceiling so bucket math stays integer
-            const niceCeil = (v) => {
-                const pow = Math.pow(10, Math.floor(Math.log10(v)));
-                const m = v / pow;
-                const snap = m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10;
-                return snap * pow;
-            };
-            const visMax = niceCeil(ceiling);
-            const targetBuckets = 8;
-            const rawStep = visMax / targetBuckets;
-            // Snap step to a "nice" integer value across a wide range so we never
-            // fall back to a fractional bucketSize (which produced labels like
-            // "2008.333…" that overlapped each other).
-            const niceSteps = [10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000];
-            let bucketSize = niceSteps.find(s => s >= rawStep);
-            if (!bucketSize) {
-                // For very large ranges, snap up to the next 1-2-5 × 10^k
-                bucketSize = niceCeil(rawStep);
-            }
-            const visBuckets = Math.max(1, Math.ceil(visMax / bucketSize));
-            const buckets    = Array(visBuckets + 1).fill(0);   // last = overflow
-            const winBuckets = Array(visBuckets + 1).fill(0);
-            let overflowMax = 0;
+            // Histogram: bucket by 200pt intervals
+            const bucketSize = 200;
+            const maxDist = Math.max(...distances.map(d => d.distance));
+            const bucketCount = Math.ceil(maxDist / bucketSize) + 1;
+            const buckets = Array(bucketCount).fill(0);
+            const winBuckets = Array(bucketCount).fill(0);
 
             for (const d of distances) {
-                if (d.distance >= visMax) {
-                    buckets[visBuckets]++;
-                    if (d.win) winBuckets[visBuckets]++;
-                    overflowMax = Math.max(overflowMax, d.distance);
-                } else {
-                    const idx = Math.min(visBuckets - 1, Math.floor(d.distance / bucketSize));
-                    buckets[idx]++;
-                    if (d.win) winBuckets[idx]++;
-                }
+                const idx = Math.floor(d.distance / bucketSize);
+                buckets[idx]++;
+                if (d.win) winBuckets[idx]++;
             }
-            // Drop the overflow slot if no outliers landed in it
-            const hasOverflow = buckets[visBuckets] > 0;
-            const totalBuckets = hasOverflow ? visBuckets + 1 : visBuckets;
 
-            const pad = { top: 14, right: 14, bottom: 36, left: 34 };
+            const pad = { top: 10, right: 10, bottom: 30, left: 30 };
             const cW = W - pad.left - pad.right;
             const cH = H - pad.top - pad.bottom;
-            const maxCount = Math.max(...buckets.slice(0, totalBuckets), 1);
-            const barW = Math.max(8, Math.min(36, cW / totalBuckets - 6));
-            const gap  = (cW - barW * totalBuckets) / (totalBuckets + 1);
-            // Estimate the widest x-axis label and skip alternate labels if
-            // the slot per bucket is too narrow to fit them side-by-side.
-            const widestLabel = Math.max(
-                String(Math.round((visBuckets - 1) * bucketSize)).length,
-                hasOverflow ? String(`≥${Math.round(visMax)}`).length : 0
-            );
-            const labelPxNeeded = widestLabel * 6 + 6;   // ~6px per char + padding
-            const labelStride = Math.max(1, Math.ceil(labelPxNeeded / (barW + gap)));
+            const maxCount = Math.max(...buckets, 1);
+            const barW = Math.min(30, cW / bucketCount - 2);
+            const gap = (cW - barW * bucketCount) / (bucketCount + 1);
 
-            // Y-axis tick (count) — minimal, just min/max
-            ctx.fillStyle = '#6B7280';
-            ctx.font = '9px JetBrains Mono, monospace';
-            ctx.textAlign = 'right';
-            ctx.fillText(maxCount.toString(), pad.left - 4, pad.top + 8);
-
-            for (let i = 0; i < totalBuckets; i++) {
+            for (let i = 0; i < bucketCount; i++) {
+                if (buckets[i] === 0) continue;
                 const x = pad.left + gap + i * (barW + gap);
-                const isOverflow = (i === visBuckets) && hasOverflow;
+                const barH = (buckets[i] / maxCount) * cH;
+                const y = pad.top + cH - barH;
 
-                if (buckets[i] > 0) {
-                    const barH = (buckets[i] / maxCount) * cH;
-                    const y = pad.top + cH - barH;
-                    // Total bar
-                    ctx.fillStyle = isOverflow ? '#9CA3AF55' : color + '40';
-                    ctx.fillRect(x, y, barW, barH);
-                    // Win portion
-                    const winH = (winBuckets[i] / maxCount) * cH;
-                    ctx.fillStyle = isOverflow ? '#9CA3AF' : color;
-                    ctx.fillRect(x, pad.top + cH - winH, barW, winH);
-                    // Count label above bar (only when bar is tall enough)
-                    if (barH > 14) {
-                        ctx.fillStyle = '#9CA3AF';
-                        ctx.font = '9px JetBrains Mono, monospace';
-                        ctx.textAlign = 'center';
-                        ctx.fillText(buckets[i].toString(), x + barW / 2, y - 2);
-                    }
-                }
+                // Total bar
+                ctx.fillStyle = color + '40';
+                ctx.fillRect(x, y, barW, barH);
+                // Win portion
+                const winH = (winBuckets[i] / maxCount) * cH;
+                ctx.fillStyle = color;
+                ctx.fillRect(x, pad.top + cH - winH, barW, winH);
 
-                // X-axis label — skip alternate labels when bars are narrow so
-                // labels never collide. Always draw the overflow bucket label
-                // and the first/last bucket so the range is unambiguous.
-                const showLabel = isOverflow || i === 0 || i === totalBuckets - 1
-                                  || (i % labelStride === 0);
-                if (showLabel) {
-                    ctx.fillStyle = '#6B7280';
-                    ctx.font = '9px JetBrains Mono, monospace';
-                    ctx.textAlign = 'center';
-                    const label = isOverflow
-                        ? `≥${Math.round(visMax)}`
-                        : Math.round(i * bucketSize).toString();
-                    ctx.fillText(label, x + barW / 2, H - 18);
-                }
+                // Label
+                ctx.fillStyle = '#6B7280';
+                ctx.font = '9px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${i * bucketSize}`, x + barW/2, H - 8);
             }
 
-            // X-axis title with overflow callout
-            ctx.fillStyle = '#9CA3AF';
-            ctx.font = '9px sans-serif';
-            ctx.textAlign = 'center';
-            const overflowNote = hasOverflow
-                ? ` · ${buckets[visBuckets]} outlier${buckets[visBuckets] > 1 ? 's' : ''} (max ${overflowMax}pts)`
-                : '';
-            ctx.fillText('OTM distance (pts)' + overflowNote, pad.left + cW / 2, H - 4);
-
             const side = canvasId === 'ce-dist-chart' ? 'ce' : 'pe';
-            _hoverState[side] = {
-                buckets, winBuckets, bucketSize, bucketCount: totalBuckets,
-                pad, barW, gap, cH, W, H, maxCount, visMax, hasOverflow, overflowMax,
-            };
+            _hoverState[side] = { buckets, winBuckets, bucketSize, bucketCount, pad, barW, gap, cH, W, H, maxCount };
         }
 
         // ── Scatter chart ─────────────────────────────────────────────
-        // The last dataset is cached so the corner zoom slider can re-render
-        // without re-fetching analytics — the slider only changes the visible
-        // viewport. zoomFrac=0 → cluster view (current default), 1 → full
-        // extent (all outliers visible). X and Y axes each lerp between their
-        // cluster bounds and their raw extent independently, so the axis with
-        // farther outliers expands more per unit of zoom — exactly what the
-        // user wants.
-        let _scatterLastData = null;
-        let _scatterZoomFrac = 0;
-
         function drawScatterChart(data) {
-            _scatterLastData = data;
-            _drawScatterChartInternal(data, _scatterZoomFrac);
-        }
-
-        function _drawScatterChartInternal(data, zoomFrac) {
             const canvas = document.getElementById('scatter-chart');
             const ctx = canvas.getContext('2d');
             const dpr = window.devicePixelRatio || 1;
@@ -1001,264 +1202,85 @@
                 return;
             }
 
-            const pad = { top: 18, right: 28, bottom: 38, left: 68 };
+            const pad = { top: 15, right: 20, bottom: 30, left: 60 };
             const cW = W - pad.left - pad.right;
             const cH = H - pad.top - pad.bottom;
 
-            // Percentile-clip the X axis so a single far-OTM outlier doesn't
-            // crush the meaningful clusters into the left margin. We use
-            // min(p95, median × 6) so that when the bulk of trades cluster
-            // near 0 with a few extreme tails, the percentile alone doesn't
-            // get dragged out to the outlier itself. Outliers are still
-            // plotted, but pinned to the chart edge with a small "outlier
-            // sentinel" ring so the user can see they exist without losing
-            // resolution on the bulk of the data.
-            const dists = all.map(d => d.distance).sort((a,b) => a-b);
-            const pnls  = all.map(d => d.pnl).sort((a,b) => a-b);
-            const q = (arr, p) => arr.length ? arr[Math.min(arr.length - 1, Math.floor(arr.length * p))] : 0;
-            const xMedian   = q(dists, 0.50);
-            const xTailCap  = xMedian > 0 ? xMedian * 6 : Infinity;
-            const xClip     = Math.max(Math.min(q(dists, 0.95), xTailCap), 100);
-            const yLo   = Math.min(q(pnls, 0.02), 0);
-            const yHi   = Math.max(q(pnls, 0.98), 0);
-            const minP  = yLo;
-            const maxP  = yHi;
-            const rangeP = (maxP - minP) || 1;
-            const xMaxRaw = dists[dists.length - 1] || xClip;
-            const yMaxRaw = pnls[pnls.length - 1]   || yHi;
-            const yMinRaw = pnls[0]                  || yLo;
-            const hasXOutliers = xMaxRaw > xClip;
-            const hasYOutliers = yMaxRaw > yHi || yMinRaw < yLo;
+            const maxDist = Math.max(...all.map(d => d.distance), 100);
+            const pnls = all.map(d => d.pnl);
+            const minP = Math.min(0, ...pnls);
+            const maxP = Math.max(0, ...pnls);
+            const rangeP = maxP - minP || 1;
 
-            // If the bulk is heavily concentrated (max/median > 5), apply a
-            // square-root scale on X so the dense cluster spreads out instead
-            // of stacking on the left edge. The transform is monotonic so all
-            // ordering relationships are preserved; only the visual spacing
-            // changes. We surface this via a "·  √-scale" tag on the X-axis
-            // title so the user knows the axis is non-linear.
-            const sqrtScale = (xMedian > 0) && (xClip / Math.max(xMedian, 1) > 5);
-            const xfwd = sqrtScale ? Math.sqrt : (v) => v;
-            const xClipT = xfwd(xClip);
-
-            // ── Zoom viewport ───────────────────────────────────────────
-            // Per-axis lerp between cluster bounds and raw extent. zoomFrac=0
-            // shows the dense cluster (current default behaviour); zoomFrac=1
-            // shows everything. The lerp is *per axis*, so if X has a 24×
-            // outlier and Y only a 1.2× outlier, the X view expands 24× while
-            // the Y view barely moves — exactly the asymmetric zoom-out the
-            // user asked for. Axes that already contain their full data
-            // (no outliers) stay rock-steady regardless of the slider.
-            const zf = Math.max(0, Math.min(1, zoomFrac));
-            const xViewLo  = 0;
-            const xViewHi  = xClip + (xMaxRaw - xClip) * zf;
-            const xViewLoT = xfwd(xViewLo);
-            const xViewHiT = xfwd(xViewHi);
-            const xViewSpanT = (xViewHiT - xViewLoT) || 1;
-            const yViewLo  = yLo + (yMinRaw - yLo) * zf;
-            const yViewHi  = yHi + (yMaxRaw - yHi) * zf;
-            const yViewSpan = (yViewHi - yViewLo) || 1;
-
-            // Zero line — projected through the *current* y viewport
-            const zeroY = pad.top + cH * (1 - (0 - yViewLo) / yViewSpan);
-            ctx.strokeStyle = '#E5E7EB22';
+            // Zero line
+            const zeroY = pad.top + cH * (1 - (0 - minP) / rangeP);
+            ctx.strokeStyle = '#E5E7EB';
             ctx.lineWidth = 1;
-            ctx.setLineDash([3, 3]);
             ctx.beginPath();
             ctx.moveTo(pad.left, zeroY);
             ctx.lineTo(W - pad.right, zeroY);
             ctx.stroke();
-            ctx.setLineDash([]);
 
-            // Project a data point to canvas coords with edge clipping for
-            // points outside the current zoom viewport. `clipSide` records
-            // which edge a point spilled past so the outlier sentinel ring
-            // can be drawn on the correct side. As the user slides the zoom
-            // toward the bottom, the viewport widens and clipped points
-            // gradually un-clip and slot into their true positions.
-            const project = (d) => {
-                let clipped = false;
-                let clipSide = null;     // 'left' | 'right' | 'top' | 'bottom'
-                let xRaw = d.distance;
-                let y    = d.pnl;
-                if (xRaw < xViewLo) { xRaw = xViewLo; clipped = true; clipSide = 'left';   }
-                if (xRaw > xViewHi) { xRaw = xViewHi; clipped = true; clipSide = 'right';  }
-                if (y > yViewHi)    { y = yViewHi;    clipped = true; clipSide = clipSide || 'top';    }
-                if (y < yViewLo)    { y = yViewLo;    clipped = true; clipSide = clipSide || 'bottom'; }
-                return {
-                    px: pad.left + ((xfwd(xRaw) - xViewLoT) / xViewSpanT) * cW,
-                    py: pad.top + cH * (1 - (y - yViewLo) / yViewSpan),
-                    clipped,
-                    clipSide,
-                };
-            };
-
-            // Tiny deterministic jitter so overlapping points remain distinguishable.
-            // Hash the trade's strike+pnl so jitter is stable across re-renders.
-            const jitter = (seed) => {
-                const h = Math.abs(Math.sin(seed * 12.9898) * 43758.5453) % 1;
-                return (h - 0.5) * 4;        // ±2px
-            };
-
-            // Build plotted list once; reuse for hover-state and drawing.
-            // Jitter is suppressed for clipped points so the sentinel rings
-            // sit cleanly on the chart edge instead of sliding off it.
-            const plotted = [];
-            for (const d of (data.ce_distances || [])) {
-                const p = project(d);
-                plotted.push({ side: 'CE', d,
-                    x: p.px + (p.clipped ? 0 : jitter(d.strike + d.pnl)),
-                    y: p.py + (p.clipped ? 0 : jitter(d.strike - d.pnl)),
-                    clipped: p.clipped, clipSide: p.clipSide });
-            }
-            for (const d of (data.pe_distances || [])) {
-                const p = project(d);
-                plotted.push({ side: 'PE', d,
-                    x: p.px + (p.clipped ? 0 : jitter(d.strike + d.pnl)),
-                    y: p.py + (p.clipped ? 0 : jitter(d.strike - d.pnl)),
-                    clipped: p.clipped, clipSide: p.clipSide });
-            }
-
-            // Density-aware opacity: the more dots, the more transparent each
-            // becomes — so dense clusters still read as clusters but distinct
-            // points stay visible. Larger size when sparse, smaller when dense.
-            const fillAlpha = Math.max(0.25, Math.min(0.78, 14 / plotted.length));
-            const dotR = plotted.length > 80 ? 3.2
-                       : plotted.length > 40 ? 4
-                       : 5;
-
-            for (const pt of plotted) {
-                const win = pt.d.win;
-                const fill = win ? `rgba(22,163,74,${fillAlpha})` : `rgba(220,38,38,${fillAlpha})`;
-                const stroke = win ? '#166534' : '#991B1B';
-                ctx.fillStyle = fill;
-                ctx.strokeStyle = stroke;
+            // Dots
+            for (const d of data.ce_distances || []) {
+                const x = pad.left + (d.distance / maxDist) * cW;
+                const y = pad.top + cH * (1 - (d.pnl - minP) / rangeP);
+                ctx.beginPath();
+                ctx.arc(x, y, 5, 0, Math.PI * 2);
+                ctx.fillStyle = d.win ? 'rgba(22,163,74,0.7)' : 'rgba(220,38,38,0.7)';
+                ctx.fill();
+                ctx.strokeStyle = d.win ? '#166534' : '#991B1B';
                 ctx.lineWidth = 1;
-                if (pt.side === 'CE') {
-                    ctx.beginPath();
-                    ctx.arc(pt.x, pt.y, dotR, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.stroke();
-                } else {
-                    ctx.beginPath();
-                    ctx.rect(pt.x - dotR, pt.y - dotR, dotR * 2, dotR * 2);
-                    ctx.fill();
-                    ctx.stroke();
-                }
-                // Outlier sentinel: small open ring around clipped points
-                if (pt.clipped) {
-                    ctx.beginPath();
-                    ctx.arc(pt.x, pt.y, dotR + 3, 0, Math.PI * 2);
-                    ctx.strokeStyle = '#9CA3AF';
-                    ctx.lineWidth = 1;
-                    ctx.setLineDash([2, 2]);
-                    ctx.stroke();
-                    ctx.setLineDash([]);
-                }
+                ctx.stroke();
+            }
+            for (const d of data.pe_distances || []) {
+                const x = pad.left + (d.distance / maxDist) * cW;
+                const y = pad.top + cH * (1 - (d.pnl - minP) / rangeP);
+                ctx.beginPath();
+                ctx.rect(x - 4, y - 4, 8, 8);
+                ctx.fillStyle = d.win ? 'rgba(22,163,74,0.7)' : 'rgba(220,38,38,0.7)';
+                ctx.fill();
+                ctx.strokeStyle = d.win ? '#166534' : '#991B1B';
+                ctx.lineWidth = 1;
+                ctx.stroke();
             }
 
-            // Axis tick labels (X) — under sqrt scaling, evenly-spaced PIXELS
-            // map to non-uniform DATA values. We invert the forward transform
-            // across the *visible window* so labels reflect what the user is
-            // actually looking at as they pan the slider.
+            // Axes labels
             ctx.fillStyle = '#6B7280';
-            ctx.font = '9px JetBrains Mono, monospace';
+            ctx.font = '10px sans-serif';
             ctx.textAlign = 'center';
-            const xViewWidth = xViewHi - xViewLo;
-            const xRoundStep = xViewWidth > 5000 ? 500
-                              : xViewWidth > 1000 ? 100
-                              : xViewWidth > 200  ? 50
-                              : 25;
-            for (let i = 0; i <= 5; i++) {
-                const frac = i / 5;
-                // Invert the forward transform across the visible window
-                const tickT = xViewLoT + frac * xViewSpanT;
-                const dataAtTick = sqrtScale ? Math.pow(tickT, 2) : tickT;
-                const v = Math.round(dataAtTick / xRoundStep) * xRoundStep;
-                const x = pad.left + frac * cW;
-                ctx.fillText(v.toString(), x, H - 18);
-            }
-            // X-axis title with scale tag + zoom-aware outlier note
-            const rightClipped  = plotted.filter(p => p.clipSide === 'right').length;
-            const topClipped    = plotted.filter(p => p.clipSide === 'top').length;
-            const bottomClipped = plotted.filter(p => p.clipSide === 'bottom').length;
-            const xScaleTag = sqrtScale ? ' · √-scale (cluster zoom)' : '';
-            const xNote = rightClipped ? ` · ${rightClipped} outlier${rightClipped > 1 ? 's' : ''} →` : '';
-            ctx.fillText('Strike distance (pts OTM)' + xScaleTag + xNote, pad.left + cW / 2, H - 4);
-
-            // Axis tick labels (Y) — projected through current y viewport
+            ctx.fillText('Strike Distance (pts OTM)', W/2, H - 4);
             ctx.textAlign = 'right';
-            for (let i = 0; i <= 4; i++) {
-                const v = yViewLo + (yViewSpan * i / 4);
-                const y = pad.top + cH * (1 - i / 4);
-                ctx.fillText(Utils.formatNum(Math.round(v)), pad.left - 6, y + 3);
-            }
-            // Y-axis title — show clipped counts when outliers are off-screen
-            const yClippedNote = (topClipped || bottomClipped)
-                ? ' · ' + [topClipped && `${topClipped} ↑`, bottomClipped && `${bottomClipped} ↓`]
-                          .filter(Boolean).join(' · ')
-                : '';
-            ctx.save();
-            ctx.translate(14, pad.top + cH / 2);
-            ctx.rotate(-Math.PI / 2);
-            ctx.textAlign = 'center';
-            ctx.fillText('P&L (₹)' + yClippedNote, 0, 0);
-            ctx.restore();
+            ctx.fillText('P&L', pad.left - 8, pad.top + 4);
 
             // Legend
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'left';
-            ctx.beginPath(); ctx.arc(W - 152, 14, 4, 0, Math.PI*2); ctx.fillStyle = '#DC2626'; ctx.fill();
-            ctx.fillStyle = '#6B7280'; ctx.fillText('CE', W - 144, 17);
-            ctx.beginPath(); ctx.rect(W - 110, 10, 8, 8); ctx.fillStyle = '#2563EB'; ctx.fill();
-            ctx.fillStyle = '#6B7280'; ctx.fillText('PE', W - 98, 17);
-            ctx.beginPath(); ctx.arc(W - 66, 14, 4, 0, Math.PI*2); ctx.fillStyle = '#16A34A'; ctx.fill();
-            ctx.fillStyle = '#6B7280'; ctx.fillText('Win', W - 58, 17);
+            ctx.beginPath(); ctx.arc(W - 140, 12, 4, 0, Math.PI*2); ctx.fillStyle = '#DC2626'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('CE', W - 132, 15);
+            ctx.beginPath(); ctx.rect(W - 100, 8, 8, 8); ctx.fillStyle = '#2563EB'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('PE', W - 88, 15);
+            ctx.beginPath(); ctx.arc(W - 60, 12, 4, 0, Math.PI*2); ctx.fillStyle = '#16A34A'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('Win', W - 52, 15);
 
-            _hoverState.scatter = { plotted, W, H };
-
-            // Sync the corner zoom widget. Hide it entirely when there's
-            // nothing to zoom out to (data has no outliers beyond cluster
-            // bounds on either axis). The slider is reverse-oriented in CSS
-            // (top = +, bottom = −), so the displayed value flips: the
-            // browser still emits 0..1000 in slider units, but we keep
-            // zoomFrac in "fraction of zoom-out" semantics.
-            const wrap = document.getElementById('scatter-zoom');
-            if (wrap) {
-                const canZoom = hasXOutliers || hasYOutliers;
-                if (canZoom) {
-                    wrap.style.display = 'flex';
-                    // Native vertical slider: value 1000 = top, 0 = bottom.
-                    // We want top = cluster (zf=0), so the slider value is
-                    // the *complement* of the zoom fraction.
-                    const input = document.getElementById('scatter-zoom-input');
-                    const sliderVal = Math.round((1 - zf) * 1000);
-                    if (input && Math.round(input.value) !== sliderVal) {
-                        input.value = String(sliderVal);
-                    }
-                    const pct = document.getElementById('scatter-zoom-pct');
-                    if (pct) pct.textContent = Math.round(zf * 100) + '%';
-                } else {
-                    wrap.style.display = 'none';
-                }
+            // Build lookup: pixel position for every plotted point
+            const plotted = [];
+            for (const d of data.ce_distances || []) {
+                plotted.push({
+                    side: 'CE', d,
+                    x: pad.left + (d.distance / maxDist) * cW,
+                    y: pad.top + cH * (1 - (d.pnl - minP) / rangeP),
+                });
             }
+            for (const d of data.pe_distances || []) {
+                plotted.push({
+                    side: 'PE', d,
+                    x: pad.left + (d.distance / maxDist) * cW,
+                    y: pad.top + cH * (1 - (d.pnl - minP) / rangeP),
+                });
+            }
+            _hoverState.scatter = { plotted, W, H };
         }
-
-        // Corner zoom slider — re-renders the cached scatter dataset with a
-        // new viewport. The vertical slider is RTL'd in CSS so the *top*
-        // position represents zero zoom-out (cluster view) and the *bottom*
-        // is full zoom-out (everything visible) — matches the +/− glyphs.
-        document.addEventListener('DOMContentLoaded', () => {
-            const input = document.getElementById('scatter-zoom-input');
-            if (!input) return;
-            input.addEventListener('input', () => {
-                // Slider value 1000 = thumb at top = zf=0 (cluster view).
-                // Slider value 0    = thumb at bottom = zf=1 (full extent).
-                _scatterZoomFrac = 1 - Number(input.value) / 1000;
-                if (_scatterLastData) {
-                    _drawScatterChartInternal(_scatterLastData, _scatterZoomFrac);
-                }
-            });
-        });
 
         // ── VIX regime bars ───────────────────────────────────────────
         function renderVixRegime(regimes) {

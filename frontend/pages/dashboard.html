@@ -148,6 +148,43 @@
         [data-theme="dark"] .legend-chip {
             background: rgba(15, 23, 42, 0.36);
         }
+        /* Risk-meter factor breakdown.  Standalone table styles so the
+           Factor column stays in the body sans (mono made the header read
+           as decorative-empty) and reads with full opacity in every theme. */
+        .risk-breakdown-table {
+            width: 100%;
+            margin-top: 12px;
+            border-collapse: collapse;
+            font-size: 11px;
+        }
+        .risk-breakdown-table thead th {
+            text-align: right;
+            padding: 6px 10px 6px 0;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 700;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+        }
+        .risk-breakdown-table thead th.rb-factor-h { text-align: left; }
+        .risk-breakdown-table tbody td {
+            padding: 7px 10px 7px 0;
+            text-align: right;
+            border-bottom: 1px solid var(--border-light);
+        }
+        .risk-breakdown-table tbody td.rb-factor {
+            text-align: left;
+            font-weight: 700;
+            font-family: inherit;
+            font-size: 11.5px;
+            letter-spacing: 0.1px;
+            color: var(--text-primary);
+            white-space: nowrap;
+            padding-right: 14px;
+            opacity: 1;
+        }
+        .risk-breakdown-table tbody tr:last-child td { border-bottom: none; }
     </style>
 </head>
 <body>
@@ -427,6 +464,7 @@
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
+    <script src="/js/ne-live.js"></script>
     <script src="/js/ws.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Not authenticated');
@@ -1123,12 +1161,12 @@
                 premium: 'Premium', proximity: 'Proximity', theta_ratio: 'Theta Ratio'
             };
 
-            let html = '<table class="data-table" style="font-size:11px"><thead><tr><th style="text-align:left">Factor</th><th>CE Side</th><th>PE Side</th></tr></thead><tbody>';
+            let html = '<table class="risk-breakdown-table"><thead><tr><th class="rb-factor-h">Factor</th><th>CE Side</th><th>PE Side</th></tr></thead><tbody>';
             for (const key of rows) {
                 const ceB = cePos?.risk?.breakdown?.[key];
                 const peB = pePos?.risk?.breakdown?.[key];
                 html += `<tr>
-                    <td style="text-align:left;font-weight:600">${labels[key]}</td>
+                    <td class="rb-factor">${labels[key]}</td>
                     <td><span class="badge ${riskBadgeClass(ceB?.label)}">${ceB ? ceB.score + (ceB.value != null ? ' | ' + formatBreakdownValue(key, ceB) : '') : '-'}</span></td>
                     <td><span class="badge ${riskBadgeClass(peB?.label)}">${peB ? peB.score + (peB.value != null ? ' | ' + formatBreakdownValue(key, peB) : '') : '-'}</span></td>
                 </tr>`;
@@ -1163,9 +1201,14 @@
             const shown = positions.filter(p => p.parent_trade_id == null).slice(0, 4);
             let html = '';
             for (const pos of shown) {
-                // Futures branch — no IV / delta / risk; show side + LTP + MTM
+                // ── Futures branch ─────────────────────────────────────
+                // FUT positions have no strike, IV, delta, or risk score.
+                // Render side+expiry+lots+LTP+MTM instead so the row reads
+                // cleanly. Without this branch the option layout below
+                // would print "FUT BUY 0" and read undefined IV/delta.
                 const isFut = (pos.instrument_type === 'FUT')
-                              || pos.trade_type === 'FUT_BUY' || pos.trade_type === 'FUT_SELL';
+                              || pos.trade_type === 'FUT_BUY'
+                              || pos.trade_type === 'FUT_SELL';
                 if (isFut) {
                     const isLong = pos.trade_type === 'FUT_BUY';
                     const sideCol = isLong ? '#16A34A' : '#DC2626';
@@ -1604,10 +1647,17 @@
         // off-market hours, no market_update pushes happening).
         setInterval(loadNewsTicker, 5 * 60 * 1000);
 
-        // ── Market Verdict (mirrors Strategy Builder's outlook verdict) ────────
-        // Uses the same /api/strategies/market-analytics feed and scoring rules
-        // so the one-line read on the dashboard can never contradict the
-        // Strategy Builder page.
+        // ── Market Verdict ─────────────────────────────────────────────
+        // Reads the *backend-computed* verdict from /api/strategies/market-
+        // analytics. The same payload also drives the Strategy Builder's
+        // Market Outlook panel, so the two surfaces can never disagree.
+        // We also use this fetch to overwrite the Skew + Signal cards with
+        // the z-score-aware tendency and full directional-signal counts —
+        // that way the Dashboard never shows "Flat" while Builder shows
+        // "Bullish Skew", and the "0↑ 0↓" snapshot fallback never lingers.
+        // DO NOT reintroduce client-side bullScore/bearScore math here —
+        // the backend's compute_market_verdict() is the single source of
+        // truth (see backend/routes_strategies.py).
         async function loadMarketVerdict() {
             const el    = document.getElementById('m-verdict');
             const subEl = document.getElementById('m-verdict-sub');
@@ -1616,48 +1666,62 @@
                 const expiry = document.getElementById('expiry-selector')?.value || '';
                 const q = expiry ? `?expiry=${encodeURIComponent(expiry)}` : '';
                 const d = await API.fetch(`/api/strategies/market-analytics${q}`);
-                if (!d) { el.textContent = '-'; return; }
+                if (!d || !d.verdict) { el.textContent = '-'; return; }
 
-                const _rrZ    = d.rr_zscore?.z_score ?? null;
-                const _vixC   = d.vix_change_pct ?? 0;
-                const _mpDist = (d.spot && d.max_pain) ? d.spot - d.max_pain : null;
-                const _ts     = d.term_structure?.shape;
+                const tone2color = {
+                    BULLISH:      '#16A34A',
+                    BULLISH_SOFT: '#22C55E',
+                    BEARISH:      '#DC2626',
+                    BEARISH_SOFT: '#EF4444',
+                    RANGE:        '#D97706',
+                    NEUTRAL:      '#6B7280',
+                };
+                el.textContent  = d.verdict.text;
+                el.style.color  = tone2color[d.verdict.tone] || '#6B7280';
+                if (subEl) subEl.textContent = d.verdict.sub;
 
-                const bullScore = [
-                    d.direction === 'BULLISH',
-                    d.pcr_oi > 1.1,
-                    d.vol_pcr > 1.0,
-                    (d.gex || 0) > 0,
-                    _rrZ !== null && _rrZ > 1.0,
-                    _vixC < -3,
-                    _ts === 'Contango',
-                    _mpDist !== null && _mpDist < -50,
-                ].filter(Boolean).length;
-
-                const bearScore = [
-                    d.direction === 'BEARISH',
-                    d.pcr_oi < 0.9,
-                    d.vol_pcr < 0.8,
-                    (d.gex || 0) < 0,
-                    _rrZ !== null && _rrZ < -1.5,
-                    _vixC > 5,
-                    d.iv_skew > 3,
-                    _ts === 'Backwardation',
-                    _mpDist !== null && _mpDist > 100,
-                ].filter(Boolean).length;
-
-                let text, color;
-                if (bullScore >= 3)       { text = 'Mildly Bullish — favour PE selling / bull spreads'; color = '#16A34A'; }
-                else if (bearScore >= 3)  { text = 'Mildly Bearish — favour CE selling / bear spreads'; color = '#DC2626'; }
-                else if (d.iv_rank > 60)  { text = 'Range-Bound, High IV — premium collection'; color = '#D97706'; }
-                else                      { text = 'Mixed Signals — no strong edge'; color = '#6B7280'; }
-
-                el.textContent  = text;
-                el.style.color  = color;
-                if (subEl) subEl.textContent = `Bull ${bullScore}/8 · Bear ${bearScore}/9`;
+                // Cross-update Skew + Signal cards from the same authoritative
+                // payload, overriding any earlier snapshot read.
+                _syncSkewAndSignalFromAnalytics(d);
             } catch (e) {
                 el.textContent = 'Awaiting data';
                 el.style.color = 'var(--text-muted)';
+            }
+        }
+
+        // Drive the Skew + Signal cards from the verdict payload so they
+        // can never disagree with the Strategy Builder analytics bar.
+        function _syncSkewAndSignalFromAnalytics(d) {
+            const skewEl  = document.getElementById('m-tendency');
+            const skewSub = document.getElementById('m-tendency-sub');
+            if (skewEl && d.tendency) {
+                const t = d.tendency;
+                const cls = t === 'Bullish Skew' ? 'badge-safe'
+                          : t === 'Bearish Skew' ? 'badge-danger'
+                          : 'badge-neutral';
+                skewEl.innerHTML = `<span class="badge ${cls}">${t}</span>`;
+                if (skewSub) {
+                    const conf  = d.tendency_confidence || '';
+                    const rrTxt = (d.rr_value != null)
+                        ? `RR: ${d.rr_value > 0 ? '+' : ''}${Number(d.rr_value).toFixed(2)}`
+                        : '';
+                    skewSub.textContent = [conf, rrTxt].filter(Boolean).join(' · ');
+                }
+            }
+            const sigEl  = document.getElementById('m-directional');
+            const sigSub = document.getElementById('m-dir-detail');
+            if (sigEl && d.direction) {
+                const cls = d.direction === 'BULLISH' ? 'badge-safe'
+                          : d.direction === 'BEARISH' ? 'badge-danger'
+                          : 'badge-neutral';
+                sigEl.innerHTML = `<span class="badge ${cls}">${d.direction}</span>`;
+            }
+            if (sigSub) {
+                const bC  = d.bullish_count ?? 0;
+                const beC = d.bearish_count ?? 0;
+                const sc  = (d.direction_score != null) ? Number(d.direction_score).toFixed(2) : '-';
+                const conv = d.conviction ? ` · ${d.conviction}` : '';
+                sigSub.textContent = `${bC}↑ ${beC}↓ · ${sc}${conv}`;
             }
         }
 

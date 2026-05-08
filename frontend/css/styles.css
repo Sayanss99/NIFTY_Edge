@@ -2752,3 +2752,358 @@ html[data-theme="dark"] .ne-tweaks-launcher {
 html[data-theme="dark"] .ne-tweaks-launcher:hover {
     background: color-mix(in srgb, var(--primary) 22%, var(--bg-card));
 }
+
+
+/* ═════════════════════════════════════════════════════════════════════════
+   NIFTYEDGE v4 — LIVING TERMINAL LAYER
+   Activated by data-ne-vibe="living" on <html>. Adds animated visualizations
+   and richer interactivity over the existing markup. CSS-only effects + a
+   small DOM observer (ne-live.js) drive the data-bound bits via CSS vars
+   and decorative SVG slots — no markup the existing app reads is touched.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+html { --ne-vibe-fade: 220ms; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   PULSE — value flashes when its text changes (driven by ne-live.js)
+   ───────────────────────────────────────────────────────────────────────── */
+@keyframes ne-pulse-up {
+    0%   { background: color-mix(in srgb, var(--green) 40%, transparent);
+           color: var(--green); text-shadow: 0 0 14px color-mix(in srgb, var(--green) 60%, transparent); }
+    100% { background: transparent; color: inherit; text-shadow: none; }
+}
+@keyframes ne-pulse-down {
+    0%   { background: color-mix(in srgb, var(--red) 40%, transparent);
+           color: var(--red); text-shadow: 0 0 14px color-mix(in srgb, var(--red) 60%, transparent); }
+    100% { background: transparent; color: inherit; text-shadow: none; }
+}
+.ne-pulse-up   { animation: ne-pulse-up   1200ms ease-out 1; border-radius: 4px; }
+.ne-pulse-down { animation: ne-pulse-down 1200ms ease-out 1; border-radius: 4px; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   METRIC CARD as DIAL — radial fill ring around the number
+   The fill is normalised to that card's own min/max history.
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-vibe="living"] .metric-card,
+html[data-ne-vibe="pulse"]  .metric-card {
+    position: relative;
+    overflow: hidden;
+    --ne-norm: 0.5;
+    --ne-trend: var(--primary);
+    isolation: isolate;
+}
+html[data-ne-vibe="living"] .metric-card.ne-trend-up,
+html[data-ne-vibe="pulse"]  .metric-card.ne-trend-up   { --ne-trend: var(--green); }
+html[data-ne-vibe="living"] .metric-card.ne-trend-down,
+html[data-ne-vibe="pulse"]  .metric-card.ne-trend-down { --ne-trend: var(--red); }
+
+.ne-dial-ring {
+    position: absolute;
+    right: 10px; top: 10px;
+    width: 32px; height: 32px;
+    /* Allow hover so the title attribute (set in ne-live.js) surfaces a
+       tooltip explaining the ring's purpose — without intercepting card
+       clicks elsewhere. */
+    pointer-events: auto;
+    opacity: 0.78;
+    z-index: 0;
+    transition: opacity 200ms ease, transform 200ms ease;
+}
+.ne-dial-ring:hover { opacity: 1; transform: scale(1.06); }
+.ne-dial-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ne-dial-track {
+    fill: none;
+    stroke: color-mix(in srgb, var(--border) 60%, transparent);
+    stroke-width: 5;
+}
+.ne-dial-fill {
+    fill: none;
+    stroke: var(--ne-trend);
+    stroke-width: 5;
+    stroke-linecap: round;
+    stroke-dasharray: 276.46;     /* 2π·44 */
+    stroke-dashoffset: calc(276.46 * (1 - var(--ne-norm, 0.5)));
+    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--ne-trend) 45%, transparent));
+    transition: stroke-dashoffset 700ms cubic-bezier(0.22, 1, 0.36, 1),
+                stroke 200ms ease;
+}
+/* Centre dot intentionally removed — it duplicated the ring fill colour
+   without adding information.  The ring arc itself is the read.
+   (placeholder rule below, no visual content) */
+.ne-dial-ring::after {
+    content: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   SPARKLINE — last 30 ticks of every metric card
+   ───────────────────────────────────────────────────────────────────────── */
+.ne-spark-slot {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 22px;
+    color: var(--primary);
+    opacity: 0;
+    transform: translateY(2px);
+    transition: opacity 350ms ease, transform 350ms ease;
+    pointer-events: none;
+    z-index: 0;
+}
+.ne-spark-slot svg { width: 100%; height: 100%; display: block; }
+.metric-card.ne-has-spark .ne-spark-slot,
+.card.ne-has-spark .ne-spark-slot,
+.position-card.ne-has-spark .ne-spark-slot { opacity: 0.85; transform: none; }
+.metric-card.ne-trend-up   .ne-spark-slot { color: var(--green); }
+.metric-card.ne-trend-down .ne-spark-slot { color: var(--red);   }
+.card.ne-trend-up    .ne-spark-slot { color: var(--green); }
+.card.ne-trend-down  .ne-spark-slot { color: var(--red);   }
+
+/* Reserve room for the spark below the metric so it doesn't crowd numbers */
+html[data-ne-vibe="living"] .metric-card { padding-bottom: 26px; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   SIDEBAR — liquid active state with rotating cobalt halo
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-vibe="living"] .nav-item {
+    position: relative;
+    overflow: hidden;
+}
+html[data-ne-vibe="living"] .nav-item::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: radial-gradient(120px 60px at var(--mx, 50%) var(--my, 50%),
+        color-mix(in srgb, var(--primary) 18%, transparent), transparent 70%);
+    opacity: 0;
+    transition: opacity 220ms ease;
+}
+html[data-ne-vibe="living"] .nav-item:hover::after { opacity: 1; }
+
+html[data-ne-vibe="living"] .nav-item.active {
+    background: linear-gradient(90deg,
+        color-mix(in srgb, var(--primary) 22%, transparent),
+        color-mix(in srgb, var(--primary) 8%,  transparent) 80%,
+        transparent 100%);
+}
+html[data-ne-vibe="living"] .nav-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 6px; bottom: 6px;
+    width: 2px;
+    background: linear-gradient(180deg,
+        transparent,
+        var(--primary) 30%,
+        color-mix(in srgb, var(--primary) 70%, #fff) 50%,
+        var(--primary) 70%,
+        transparent);
+    background-size: 100% 200%;
+    animation: ne-rail-flow 3.2s ease-in-out infinite;
+    box-shadow: 0 0 12px color-mix(in srgb, var(--primary) 50%, transparent);
+}
+@keyframes ne-rail-flow {
+    0%, 100% { background-position: 0% -50%; }
+    50%      { background-position: 0%  50%; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   HEADER — animated live ribbon under the bar (pulses with feed)
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-vibe="living"] .header { position: relative; }
+html[data-ne-vibe="living"] .header::after {
+    content: '';
+    display: block !important;
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 1px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--primary) 0%,  transparent) 10%,
+        color-mix(in srgb, var(--primary) 90%, transparent) 50%,
+        color-mix(in srgb, var(--primary) 0%,  transparent) 90%,
+        transparent 100%);
+    background-size: 200% 100%;
+    animation: ne-ribbon-slide 6s linear infinite;
+    opacity: 0.7;
+}
+@keyframes ne-ribbon-slide {
+    0%   { background-position: -100% 0%; }
+    100% { background-position:  100% 0%; }
+}
+
+/* Header live status dot */
+html[data-ne-vibe="living"] .refresh-info::before,
+html[data-ne-vibe="living"] .header-live::before {
+    content: '';
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    margin-right: 7px;
+    background: var(--green);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent);
+    vertical-align: middle;
+    animation: ne-live-dot 2.4s ease-in-out infinite;
+}
+@keyframes ne-live-dot {
+    0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent); }
+    50%      { box-shadow: 0 0 0 6px color-mix(in srgb, var(--green) 6%,  transparent); }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   TABLES — cursor spotlight on rows (uses --mx/--my from ne-live.js)
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-vibe="living"] .data-table tbody tr,
+html[data-ne-vibe="living"] .journal-table tbody tr,
+html[data-ne-vibe="living"] .history-table tbody tr,
+html[data-ne-vibe="living"] .option-chain-table tbody tr {
+    position: relative;
+}
+html[data-ne-vibe="living"] .data-table tbody tr::before,
+html[data-ne-vibe="living"] .journal-table tbody tr::before,
+html[data-ne-vibe="living"] .history-table tbody tr::before,
+html[data-ne-vibe="living"] .option-chain-table tbody tr::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(180px 60px at var(--mx, -200px) var(--my, 50%),
+        color-mix(in srgb, var(--primary) 18%, transparent),
+        transparent 70%);
+    opacity: 0;
+    transition: opacity 200ms ease;
+}
+html[data-ne-vibe="living"] .data-table tbody tr:hover::before,
+html[data-ne-vibe="living"] .journal-table tbody tr:hover::before,
+html[data-ne-vibe="living"] .history-table tbody tr:hover::before,
+html[data-ne-vibe="living"] .option-chain-table tbody tr:hover::before {
+    opacity: 1;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   DROPDOWNS / SELECTS — custom cobalt caret + open animation
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-vibe="living"] select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image:
+        linear-gradient(45deg, transparent 50%, currentColor 50%),
+        linear-gradient(-45deg, transparent 50%, currentColor 50%);
+    background-position:
+        calc(100% - 14px) 50%,
+        calc(100% - 9px)  50%;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+    padding-right: 26px;
+    color: var(--text-secondary);
+    transition: color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+html[data-ne-vibe="living"] select:hover { color: var(--primary); }
+html[data-ne-vibe="living"] select:focus {
+    color: var(--primary);
+    border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   BUTTONS — micro-bounce on click + sheen on primary
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-vibe="living"] .btn {
+    position: relative;
+    overflow: hidden;
+    transition: transform 120ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                box-shadow 200ms ease,
+                background 150ms ease;
+}
+html[data-ne-vibe="living"] .btn:active { transform: translateY(1px) scale(0.985); }
+html[data-ne-vibe="living"] .btn-primary::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(115deg,
+        transparent 30%,
+        rgba(255,255,255,0.18) 50%,
+        transparent 70%);
+    transform: translateX(-100%);
+    transition: transform 600ms ease;
+    pointer-events: none;
+}
+html[data-ne-vibe="living"] .btn-primary:hover::before { transform: translateX(100%); }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   ALERTS — pulsing rim when active
+   ───────────────────────────────────────────────────────────────────────── */
+@keyframes ne-alert-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 35%, transparent); }
+    50%      { box-shadow: 0 0 0 6px color-mix(in srgb, var(--amber) 0%,  transparent); }
+}
+html[data-ne-vibe="living"] .alert-card.is-active,
+html[data-ne-vibe="living"] .alert-card.active,
+html[data-ne-vibe="living"] .alert-item.is-active,
+html[data-ne-vibe="living"] .alert-item.active {
+    animation: ne-alert-pulse 2.6s ease-in-out infinite;
+    border-color: color-mix(in srgb, var(--amber) 40%, var(--border));
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   CARDS — subtle hover lift + cobalt edge wash
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-vibe="living"] .card,
+html[data-ne-vibe="living"] .summary-card,
+html[data-ne-vibe="living"] .position-card,
+html[data-ne-vibe="living"] .future-card {
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+                border-color 200ms ease,
+                box-shadow 250ms ease;
+}
+html[data-ne-vibe="living"] .card:hover,
+html[data-ne-vibe="living"] .summary-card:hover,
+html[data-ne-vibe="living"] .position-card:hover,
+html[data-ne-vibe="living"] .future-card:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+}
+
+/* Card edge wash that follows pointer (read --mx/--my off the card) */
+html[data-ne-vibe="living"] .card { position: relative; isolation: isolate; }
+html[data-ne-vibe="living"] .card::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: -1;
+    background: radial-gradient(360px 200px at var(--mx, 100%) var(--my, 0%),
+        color-mix(in srgb, var(--primary) 14%, transparent),
+        transparent 60%);
+    opacity: 0;
+    transition: opacity 300ms ease;
+}
+html[data-ne-vibe="living"] .card:hover::after { opacity: 1; }
+
+/* Make all .card surfaces report cursor position via inline vars (no JS needed) */
+@supports (background: paint(noop)) { /* feature query that always fails — placeholder */ }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   NEWS TICKER — smoother continuous marquee
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-vibe="living"] #news-ticker-wrap {
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
+            mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   TWEAKS PANEL — additions for the new Vibe row
+   ───────────────────────────────────────────────────────────────────────── */
+.ne-tweaks-panel .ne-vibe-hint {
+    font-size: 10px; color: var(--text-muted);
+    margin-top: -4px; margin-bottom: 8px;
+    letter-spacing: 0.04em;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   CALM mode — explicitly damp the v4 effects (overrides above)
+   ───────────────────────────────────────────────────────────────────────── */
+html[data-ne-vibe="calm"] .ne-dial-ring,
+html[data-ne-vibe="calm"] .ne-spark-slot { display: none; }
+html[data-ne-vibe="calm"] .ne-pulse-up,
+html[data-ne-vibe="calm"] .ne-pulse-down { animation: none !important; }
+html[data-ne-vibe="calm"] .header::after { animation: none; opacity: 0.35; }

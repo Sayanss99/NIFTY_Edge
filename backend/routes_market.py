@@ -154,8 +154,25 @@ def compute_for_expiry(
         rr = compute_risk_reversal(chain_df) or {}
     except Exception:
         rr = {}
+    # Compute RR z-score so tendency labels match the Strategy Builder.  Without
+    # this the dashboard fell through to the absolute fallback (rr < -4 / > 1)
+    # while the builder used z-score thresholds, producing contradictory
+    # "Flat" vs "Bullish Skew" reads on the same RR.
+    rr_zscore = None
     try:
-        tendency_data = compute_tendency(rr.get("rr_value", 0) or 0, vix, vix_change_pct or 0)
+        from routes_strategies import _compute_rr_zscore
+        db_z = SessionLocal()
+        try:
+            rr_zscore = _compute_rr_zscore(db_z, rr.get("rr_value", 0) or 0)
+        finally:
+            db_z.close()
+    except Exception:
+        rr_zscore = None
+    try:
+        tendency_data = compute_tendency(
+            rr.get("rr_value", 0) or 0, vix, vix_change_pct or 0,
+            rr_zscore=rr_zscore,
+        )
     except Exception:
         tendency_data = {"label": "N/A"}
     try:
@@ -230,6 +247,7 @@ def compute_for_expiry(
         "expiry_date": expiry,
         "expiries": [str(e) for e in expiries],
         "risk_reversal": rr,
+        "rr_zscore": rr_zscore,
         "sr_levels": {"supports": sr_supports, "resistances": sr_resistances},
     }
 

@@ -194,6 +194,158 @@ def _compute_rr_zscore(db: Session, current_rr: float, lookback: int = 60) -> di
     }
 
 
+def compute_market_verdict(d: dict) -> dict:
+    """Centralized "Market Verdict / Outlook" scoring — single source of truth
+    consumed by both the Dashboard's Market Verdict card and the Strategy
+    Builder's Market Outlook panel.  The two pages MUST never disagree, so
+    the logic lives here on the backend rather than being duplicated in JS.
+
+    Each factor is a fixed mathematical comparison against a threshold derived
+    from option-market mechanics — there are no situational hard-codes, no
+    look-up tables, and no learned weights.  Factors fire only when the data
+    is *materially* on one side of the boundary (no zero-noise triggers), and
+    every comparison defends against missing inputs so an absent field can
+    never silently fire as a one-sided factor.
+
+    ── Bull factors (each fires only when data is present) ──────────────────
+      1. (bullish_count − bearish_count) ≥ 2  — dominance in the 8-factor
+         directional sub-signal (mathematically equivalent to "the underlying
+         8-factor system has at least two more bullish votes than bearish").
+      2. pcr_oi > 1.10  — put OI ≥ 110% of call OI; symmetric ±0.1 around 1.0
+         where 1.0 is the no-bias point.
+      3. vol_pcr > 1.20 — put volume ≥ 120% of call volume; tightened from
+         the legacy 1.0 to give a properly symmetric ±0.2 band around the
+         empirical 1.0 mean (NIFTY structural retail-call bias means most
+         days vol_pcr > 0.8, so 1.0 was too easy a threshold).
+      4. gex > +5e5    — positive net gamma above 500K (matches the existing
+         narrative "+GEX (mean-reverting)" threshold; eliminates noise hits
+         around zero).
+      5. rr_z > +1.0   — RR ≥ 1σ above its own 60-day mean.  Z-score is
+         already normalised so structural NIFTY put-skew is absorbed into
+         the mean — ±1σ is the symmetric, statistically defensible band.
+      6. vix_change_pct < -3%  — material VIX drop (fear subsiding).
+      7. term_structure = Contango — front IV ≤ next-month IV (normal curve).
+      8. (spot − max_pain) < -50  — spot ≥ 50 pts below max-pain → mechanical
+         upward pull.  -50/+100 asymmetry below encodes NIFTY's documented
+         "drift up to max pain" tendency (writers' floor effect).
+
+    ── Bear factors (each fires only when data is present) ──────────────────
+      1. (bearish_count − bullish_count) ≥ 2  — mirror dominance.
+      2. pcr_oi < 0.90  — symmetric mirror of #2 above.
+      3. vol_pcr < 0.80 — symmetric mirror of #3 above.
+      4. gex < -5e5     — symmetric mirror of #4 above.
+      5. rr_z < -1.0    — symmetric (was −1.5; corrected to remove the
+         hidden bull-bias of the legacy asymmetric thresholds).
+      6. vix_change_pct > +5%  — VIX surge (asymmetric vs −3% above
+         because empirical vol asymmetry: VIX rises faster than it falls,
+         so a higher threshold for "material spike" is justified).
+      7. iv_skew > 3    — elevated put-wing IV.  Bull has no mirror because
+         elevated call skew is already captured by rr_z > 1 (#5).  This is
+         the only deliberate factor-count asymmetry (9 bear vs 8 bull).
+      8. term_structure = Backwardation — front IV > next-month IV (stress).
+      9. (spot − max_pain) > +100 — spot well above max pain → downward
+         pull.  +100 vs the bull's −50 reflects NIFTY's asymmetric drift.
+
+    ── Verdict tiers ────────────────────────────────────────────────────────
+    Both an *absolute floor* and a *dominance gap* are required, so a 3-vs-2
+    near-tie cannot masquerade as a directional call:
+
+      Mildly Bullish/Bearish (strong) : score ≥ 3 AND |diff| ≥ 2
+      Slight lean (soft)              : score ≥ 2 AND |diff| ≥ 2
+      Range-Bound, High IV            : iv_rank > 60 AND |diff| ≤ 1
+      Mixed Signals                   : everything else (truly indecisive)
+
+    ── Sanity walk: representative scenarios ────────────────────────────────
+       8 bull / 0 bear  → diff +8 → Mildly Bullish      (clear)
+       3 bull / 1 bear  → diff +2 → Mildly Bullish      (dominant + floor)
+       3 bull / 2 bear  → diff +1 → Mixed               (near-tie; honest)
+       2 bull / 0 bear  → diff +2 → Slight bullish lean (quiet but one-sided)
+       2 bull / 1 bear  → diff +1 → Mixed               (1-vote contradiction)
+       1 bull / 0 bear  → diff +1 → Mixed               (single factor too thin)
+       0 bull / 0 bear  → diff  0 → Mixed               (no signal)
+       4 bull / 4 bear  → diff  0 → Mixed (or Range if iv_rank > 60)
+
+    Mirror cases for bears resolve identically.  The system is symmetric,
+    transparent, and produces "Mixed" exactly when signals truly are.
+    """
+    # ── Defensive extraction.  Use explicit None checks for any field whose
+    # missing value would FALSELY fire a one-sided factor (PCRs in particular:
+    # `pcr_oi or 0` would make `0 < 0.9` True, spuriously firing a bear).
+    rr_z    = (d.get("rr_zscore") or {}).get("z_score")
+    vix_c   = d.get("vix_change_pct")
+    spot    = d.get("spot")
+    mp      = d.get("max_pain")
+    mp_dist = (spot - mp) if (spot and mp) else None
+    ts      = (d.get("term_structure") or {}).get("shape")
+    iv_skew = d.get("iv_skew")
+    pcr_oi  = d.get("pcr_oi")
+    vol_pcr = d.get("vol_pcr")
+    gex     = d.get("gex")
+    iv_rank = d.get("iv_rank") or 0
+    bull_n  = d.get("bullish_count") or 0
+    bear_n  = d.get("bearish_count") or 0
+
+    GEX_THRESH = 5e5  # 500K — same threshold the narrative uses for "+GEX/−GEX"
+
+    # Each factor is a (name, fired?) tuple for full audit traceability in
+    # the response.  Every comparison is None-safe.
+    bull_factors = [
+        ("dir_dominance",   (bull_n - bear_n) >= 2),
+        ("pcr_oi",          pcr_oi  is not None and pcr_oi  > 1.10),
+        ("vol_pcr",         vol_pcr is not None and vol_pcr > 1.20),
+        ("gex",             gex     is not None and gex     >  GEX_THRESH),
+        ("rr_zscore",       rr_z    is not None and rr_z    >  1.0),
+        ("vix_falling",     vix_c   is not None and vix_c   < -3),
+        ("term_contango",   ts == "Contango"),
+        ("max_pain_below",  mp_dist is not None and mp_dist < -50),
+    ]
+    bear_factors = [
+        ("dir_dominance",   (bear_n - bull_n) >= 2),
+        ("pcr_oi",          pcr_oi  is not None and pcr_oi  < 0.90),
+        ("vol_pcr",         vol_pcr is not None and vol_pcr < 0.80),
+        ("gex",             gex     is not None and gex     < -GEX_THRESH),
+        ("rr_zscore",       rr_z    is not None and rr_z    < -1.0),
+        ("vix_surging",     vix_c   is not None and vix_c   >  5),
+        ("iv_skew",         iv_skew is not None and iv_skew >  3),
+        ("term_backwardn",  ts == "Backwardation"),
+        ("max_pain_above",  mp_dist is not None and mp_dist > 100),
+    ]
+    bull = sum(1 for _, fired in bull_factors if fired)
+    bear = sum(1 for _, fired in bear_factors if fired)
+    diff = bull - bear
+
+    if   bull >= 3 and diff  >= 2:
+        text, tone = "Mildly Bullish — favour PE selling / bull spreads", "BULLISH"
+    elif bear >= 3 and -diff >= 2:
+        text, tone = "Mildly Bearish — favour CE selling / bear spreads", "BEARISH"
+    elif bull >= 2 and diff  >= 2:
+        text, tone = "Slight bullish lean — early signs of upward bias", "BULLISH_SOFT"
+    elif bear >= 2 and -diff >= 2:
+        text, tone = "Slight bearish lean — early signs of downward bias", "BEARISH_SOFT"
+    elif iv_rank > 60 and abs(diff) <= 1:
+        text, tone = "Range-Bound, High IV — premium collection", "RANGE"
+    else:
+        text, tone = "Mixed Signals — no strong edge", "NEUTRAL"
+
+    return {
+        "text": text,
+        "tone": tone,
+        "bull": bull,
+        "bull_total": len(bull_factors),
+        "bear": bear,
+        "bear_total": len(bear_factors),
+        "sub": f"Bull {bull}/{len(bull_factors)} · Bear {bear}/{len(bear_factors)}",
+        # Per-factor breakdown so the verdict is fully auditable from the API
+        # response — no hidden state.  The dashboard/builder don't render
+        # this today, but having it on the wire makes future debugging and
+        # any "explain this verdict" UI trivial.
+        "factor_details": {
+            "bull": [{"name": n, "fired": bool(f)} for n, f in bull_factors],
+            "bear": [{"name": n, "fired": bool(f)} for n, f in bear_factors],
+        },
+    }
+
+
 def _score_strategies(iv_rank, direction, dir_score, rr_value, pcr, vix):
     """Score 5 strategy types 0-100 for current market. Safety-first bias —
     defined-risk strategies (Iron Condor, spreads, Calendar) get a head start
@@ -411,7 +563,7 @@ def get_market_analytics(
     except Exception:
         pass
 
-    return {
+    response = {
         "spot": round(spot, 2),
         "expiry": near_expiry,
         "dte": dte,
@@ -462,6 +614,12 @@ def get_market_analytics(
         "data_days": iv_data["data_days"],
         "low_data_warning": iv_data["data_days"] < 30,
     }
+    # Compute the centralized verdict from the dict we just built so the
+    # scoring sees identical values to what the UI sees.  Both the dashboard
+    # and the strategy builder read this field; client-side scoring has been
+    # removed from both pages.
+    response["verdict"] = compute_market_verdict(response)
+    return response
 
 
 @router.get("/rankings")

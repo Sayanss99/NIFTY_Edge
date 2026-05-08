@@ -5,7 +5,7 @@
  */
 (function () {
     const KEY = 'niftyedge_tweaks_v1';
-    // Baked defaults: dark + cobalt + grid + round, per user preference.
+    // Baked defaults: dark + cobalt + grid + round + living, per user preference.
     // First visit on any device gets this look; user can still change via Tweaks panel.
     const DEFAULTS = {
         refine: 'on',          // on | off  — toggles the v3 refinement layer
@@ -13,7 +13,8 @@
         hue: 220,              // accent hue (oklch) — cobalt
         density: 'normal',     // compact | normal | spacious
         texture: 'grid',       // grid | scan | none
-        radius: 20             // card radius in px — round
+        radius: 20,            // card radius in px — round
+        vibe: 'living'         // calm | living | pulse  — v4 living-terminal layer
     };
 
     function load() {
@@ -53,6 +54,7 @@
         root.setAttribute('data-ne-refine', state.refine);
         root.setAttribute('data-ne-density', state.density);
         root.setAttribute('data-ne-texture', state.texture);
+        root.setAttribute('data-ne-vibe', state.vibe || 'living');
         root.style.setProperty('--ne-accent-h', String(state.hue));
         root.style.setProperty('--ne-radius', state.radius + 'px');
         applyTheme(state.theme);
@@ -120,6 +122,12 @@
             'Corners', 'Card radius',
             [['8', 'Sharp'], ['14', 'Soft'], ['20', 'Round']],
             String(state.radius), v => updateOne('radius', parseInt(v, 10))
+        ));
+
+        body.appendChild(buildSegRow(
+            'Vibe', 'Motion & live visuals',
+            [['calm', 'Calm'], ['living', 'Living'], ['pulse', 'Pulse']],
+            state.vibe, v => updateOne('vibe', v)
         ));
 
         panel.appendChild(body);
