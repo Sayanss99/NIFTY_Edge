@@ -1412,6 +1412,33 @@ textarea:focus-visible {
 }
 
 /* ── Expiry selector — premium pill in the header ─────────────────────── */
+/* Wraps the "Expiry" label + dropdown so they read as a single
+   labelled control. Pure visual coupling — clicking the label
+   focuses the native <select> via for=. */
+.expiry-selector-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+    user-select: none;
+}
+.expiry-selector-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--bg-secondary, rgba(0,0,0,0.04));
+    border: 1px solid var(--border-light);
+    transition: color 160ms, border-color 160ms, background 160ms;
+}
+.expiry-selector-group:hover .expiry-selector-label,
+.expiry-selector-group:focus-within .expiry-selector-label {
+    color: var(--primary, #2563EB);
+    border-color: var(--primary, #2563EB);
+}
 .expiry-selector {
     appearance: none;
     -webkit-appearance: none;
@@ -2797,42 +2824,12 @@ html[data-ne-vibe="pulse"]  .metric-card.ne-trend-up   { --ne-trend: var(--green
 html[data-ne-vibe="living"] .metric-card.ne-trend-down,
 html[data-ne-vibe="pulse"]  .metric-card.ne-trend-down { --ne-trend: var(--red); }
 
-.ne-dial-ring {
-    position: absolute;
-    right: 10px; top: 10px;
-    width: 32px; height: 32px;
-    /* Allow hover so the title attribute (set in ne-live.js) surfaces a
-       tooltip explaining the ring's purpose — without intercepting card
-       clicks elsewhere. */
-    pointer-events: auto;
-    opacity: 0.78;
-    z-index: 0;
-    transition: opacity 200ms ease, transform 200ms ease;
-}
-.ne-dial-ring:hover { opacity: 1; transform: scale(1.06); }
-.ne-dial-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
-.ne-dial-track {
-    fill: none;
-    stroke: color-mix(in srgb, var(--border) 60%, transparent);
-    stroke-width: 5;
-}
-.ne-dial-fill {
-    fill: none;
-    stroke: var(--ne-trend);
-    stroke-width: 5;
-    stroke-linecap: round;
-    stroke-dasharray: 276.46;     /* 2π·44 */
-    stroke-dashoffset: calc(276.46 * (1 - var(--ne-norm, 0.5)));
-    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--ne-trend) 45%, transparent));
-    transition: stroke-dashoffset 700ms cubic-bezier(0.22, 1, 0.36, 1),
-                stroke 200ms ease;
-}
-/* Centre dot intentionally removed — it duplicated the ring fill colour
-   without adding information.  The ring arc itself is the read.
-   (placeholder rule below, no visual content) */
-.ne-dial-ring::after {
-    content: none;
-}
+/* Conic-gradient dial ring removed entirely — it added visual noise
+   without communicating anything actionable.  Kept a hard hide selector
+   in case any cached page still tries to inject one. */
+.ne-dial-ring,
+.ne-dial-track,
+.ne-dial-fill { display: none !important; }
 
 /* ─────────────────────────────────────────────────────────────────────────
    SPARKLINE — last 30 ticks of every metric card
@@ -2952,32 +2949,13 @@ html[data-ne-vibe="living"] .header-live::before {
 /* ─────────────────────────────────────────────────────────────────────────
    TABLES — cursor spotlight on rows (uses --mx/--my from ne-live.js)
    ───────────────────────────────────────────────────────────────────────── */
-html[data-ne-vibe="living"] .data-table tbody tr,
-html[data-ne-vibe="living"] .journal-table tbody tr,
-html[data-ne-vibe="living"] .history-table tbody tr,
-html[data-ne-vibe="living"] .option-chain-table tbody tr {
-    position: relative;
-}
-html[data-ne-vibe="living"] .data-table tbody tr::before,
-html[data-ne-vibe="living"] .journal-table tbody tr::before,
-html[data-ne-vibe="living"] .history-table tbody tr::before,
-html[data-ne-vibe="living"] .option-chain-table tbody tr::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: radial-gradient(180px 60px at var(--mx, -200px) var(--my, 50%),
-        color-mix(in srgb, var(--primary) 18%, transparent),
-        transparent 70%);
-    opacity: 0;
-    transition: opacity 200ms ease;
-}
-html[data-ne-vibe="living"] .data-table tbody tr:hover::before,
-html[data-ne-vibe="living"] .journal-table tbody tr:hover::before,
-html[data-ne-vibe="living"] .history-table tbody tr:hover::before,
-html[data-ne-vibe="living"] .option-chain-table tbody tr:hover::before {
-    opacity: 1;
-}
+/* Cursor-spotlight pseudo on <tr>::before was removed — Chromium / Edge has
+   a layout quirk where ::before on a <tr>, even with position:absolute, can
+   be rendered as an anonymous table-cell and visibly push body cells one
+   column to the right of their headers (reported in journal.html).
+   The simple `tr:hover { background }` rule already in each table's CSS
+   block gives clear row indication; we trade the cursor-following gradient
+   for guaranteed column alignment. */
 
 /* ─────────────────────────────────────────────────────────────────────────
    DROPDOWNS / SELECTS — custom cobalt caret + open animation
@@ -3102,7 +3080,6 @@ html[data-ne-vibe="living"] #news-ticker-wrap {
 /* ─────────────────────────────────────────────────────────────────────────
    CALM mode — explicitly damp the v4 effects (overrides above)
    ───────────────────────────────────────────────────────────────────────── */
-html[data-ne-vibe="calm"] .ne-dial-ring,
 html[data-ne-vibe="calm"] .ne-spark-slot { display: none; }
 html[data-ne-vibe="calm"] .ne-pulse-up,
 html[data-ne-vibe="calm"] .ne-pulse-down { animation: none !important; }

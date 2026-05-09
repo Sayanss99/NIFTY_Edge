@@ -210,7 +210,10 @@
                     <span id="ltp-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px;display:block;min-height:16px"></span>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Quantity (lots)</label>
+                    <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+                        <span>Quantity (lots)</span>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="openSizingForAddTrade()" title="Compute lots from your risk budget" style="font-size:10px;padding:3px 8px">⚖ Size</button>
+                    </label>
                     <input type="number" id="add-qty" class="form-input" value="1" min="1" required>
                 </div>
                 <div class="form-group" id="add-parent-group" style="display:none">
@@ -356,6 +359,7 @@
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
     <script src="/js/ne-live.js"></script>
+    <script src="/js/sizing.js"></script>
     <script src="/js/ws.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Not authenticated');
@@ -680,7 +684,7 @@
             const currentLtp = (typeof live.current_ltp === 'number') ? live.current_ltp
                               : (typeof trade.exit_price === 'number' ? trade.exit_price : null);
             const unrealizedPnl = isClosed ? trade.realized_pnl : live.unrealized_pnl;
-            const lotSize = trade.lot_size_override || live.lot_size || 75;
+            const lotSize = trade.lot_size_override || live.lot_size || 65;   // NIFTY lot
             const qtyUnits = trade.quantity * lotSize;
             const contractValue = currentLtp != null ? currentLtp * qtyUnits : null;
             const profitHint = isLong ? 'Profit if NIFTY ↑' : 'Profit if NIFTY ↓';
@@ -849,6 +853,25 @@
             document.getElementById('add-modal').classList.add('active');
         }
 
+        // Sizing calculator wired to the Add Trade modal — pulls the current
+        // tradeType / strike / premium from the live form and writes the
+        // suggested lots straight back into the qty input on Apply.
+        function openSizingForAddTrade() {
+            const strike  = parseFloat(document.getElementById('add-strike').value) || null;
+            const premium = parseFloat(document.getElementById('add-premium').value) || null;
+            const tradeType = document.getElementById('add-type').value || `${_tradeOptType}_${_tradeAction}`;
+            window.Sizing.open({
+                tradeType,
+                strike,
+                premium,
+                onApply: (lots) => {
+                    const qtyEl = document.getElementById('add-qty');
+                    qtyEl.value = String(lots);
+                    qtyEl.dispatchEvent(new Event('input', { bubbles: true }));
+                },
+            });
+        }
+
         function closeAddModal() {
             document.getElementById('add-modal').classList.remove('active');
             document.getElementById('ltp-hint').textContent = '';
@@ -878,6 +901,36 @@
             if (parentId) trade.parent_trade_id = parseInt(parentId);
 
             const resp = await API.addTrade(trade);
+
+            // Daily loss-stop soft-block: backend returns 200 with
+            // requires_override=true when today_pnl breaches the user's
+            // threshold.  Confirm with the user, then re-submit with
+            // confirm_override:true.
+            if (resp && resp.requires_override) {
+                const lost = Math.abs(resp.today_pnl || 0);
+                const lim  = resp.threshold || 0;
+                const ok = confirm(
+                    `Daily loss ₹${Math.round(lost).toLocaleString('en-IN')} ` +
+                    `exceeds your ₹${Math.round(lim).toLocaleString('en-IN')} limit.\n\n` +
+                    `Are you sure you want to open this position anyway?`
+                );
+                if (!ok) {
+                    Utils.toast('Trade cancelled', 'success');
+                    return;
+                }
+                const resp2 = await API.addTrade({ ...trade, confirm_override: true });
+                if (resp2 && resp2.id) {
+                    Utils.toast('Trade added (loss-limit override)', 'success');
+                    closeAddModal();
+                    document.getElementById('add-trade-form').reset();
+                    window.history.replaceState({}, '', '/positions');
+                    await loadPositions();
+                } else {
+                    Utils.toast(resp2?.detail || 'Failed to add trade', 'error');
+                }
+                return;
+            }
+
             if (resp && resp.id) {
                 Utils.toast('Trade added successfully', 'success');
                 closeAddModal();

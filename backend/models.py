@@ -335,3 +335,48 @@ class NewsDismissal(Base):
     user_id      = Column(Integer, ForeignKey("users.id"), nullable=False)
     news_item_id = Column(Integer, ForeignKey("news_items.id"), nullable=False)
     dismissed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ── Trade Annotation (post-trade journal capture) ─────────────────────────────
+# Kept separate from `Trade` so the trading lifecycle stays clean — the
+# annotation grows over time (notes evolve, tags are revisited) while the
+# Trade row is immutable after close.  One-to-one with Trade via UNIQUE on
+# trade_id.
+
+class TradeAnnotation(Base):
+    __tablename__ = "trade_annotations"
+
+    id           = Column(Integer, primary_key=True)
+    trade_id     = Column(Integer, ForeignKey("trades.id"), unique=True, nullable=False, index=True)
+    user_id      = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    notes        = Column(Text, nullable=True)
+    # mistake_tags stores a list of slugs from a fixed taxonomy.  Allowed
+    # values (frontend constant): wrong_direction, held_too_long, no_hedge,
+    # oversized, fomo_entry, ignored_signal, exited_too_early, no_plan, other.
+    # Server doesn't enforce the slug list — the client owns the vocabulary
+    # so we can add tags without a migration.
+    mistake_tags = Column(JSON, nullable=True)
+    created_at   = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+# ── End-of-Day Summary (Batch C.2) ────────────────────────────────────────────
+# Per-user wrap of each trading day. Written by the scheduler at ~15:32 IST.
+
+class DailyEODSummary(Base):
+    __tablename__ = "daily_eod_summaries"
+
+    id                  = Column(Integer, primary_key=True)
+    user_id             = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    date                = Column(Date, nullable=False, index=True)
+    realized_pnl        = Column(Float, default=0.0, nullable=False)
+    open_positions      = Column(Integer, default=0, nullable=False)
+    closed_today        = Column(Integer, default=0, nullable=False)
+    alerts_fired        = Column(Integer, default=0, nullable=False)
+    signal_correct      = Column(Boolean, nullable=True)   # null if no signal that day
+    signal_direction    = Column(String(20), nullable=True)
+    nifty_close         = Column(Float, nullable=True)
+    nifty_change_pct    = Column(Float, nullable=True)
+    top_gainer_trade_id = Column(Integer, ForeignKey("trades.id"), nullable=True)
+    top_loser_trade_id  = Column(Integer, ForeignKey("trades.id"), nullable=True)
+    created_at          = Column(DateTime, default=datetime.utcnow, nullable=False)

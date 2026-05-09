@@ -5,7 +5,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Trade, TradeStatus, User, MarketSnapshot, DailySignalSnapshot
+from models import Trade, TradeAnnotation, TradeStatus, User, MarketSnapshot, DailySignalSnapshot, AlertLog, AlertRule
 from auth import get_current_user
 from config import LOT_SIZE
 
@@ -307,6 +307,164 @@ def _generate_insights(ce_data, pe_data, vix_regime):
             )
 
     return insights if insights else ["Not enough trade history for pattern insights yet."]
+
+
+@router.get("/mistake-breakdown")
+def mistake_breakdown(
+    months: int = Query(0, description="Filter last N months, 0=all"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Aggregate per-mistake-tag stats from TradeAnnotation × Trade.
+
+    Returns rows ordered by total_loss DESC so the trader sees their costliest
+    pattern first.  Only CLOSED trades are considered (annotations on still-open
+    trades are technically allowed but they have no realized_pnl yet — including
+    them would skew the "what cost me" view).
+    """
+    q = db.query(TradeAnnotation, Trade).join(
+        Trade, Trade.id == TradeAnnotation.trade_id
+    ).filter(
+        TradeAnnotation.user_id == user.id,
+        Trade.status == TradeStatus.CLOSED.value,
+    )
+    if months > 0:
+        cutoff = datetime.utcnow() - timedelta(days=months * 30)
+        q = q.filter(Trade.exit_date >= cutoff)
+
+    rows = q.all()
+
+    # Aggregate per tag.  A trade with multiple tags contributes its full P&L
+    # to each one — that's the correct attribution model: if a trade lost
+    # because of "oversized AND no_hedge", *both* patterns share the blame.
+    by_tag = defaultdict(lambda: {"count": 0, "total_pnl": 0.0, "wins": 0, "losses": 0})
+    total_tagged_trades = 0
+    for ann, trade in rows:
+        tags = ann.mistake_tags or []
+        if not tags:
+            continue
+        total_tagged_trades += 1
+        pnl = float(trade.realized_pnl or 0)
+        for slug in tags:
+            row = by_tag[slug]
+            row["count"]     += 1
+            row["total_pnl"] += pnl
+            if pnl >= 0: row["wins"]   += 1
+            else:        row["losses"] += 1
+
+    breakdown = [
+        {
+            "tag":         slug,
+            "count":       v["count"],
+            "wins":        v["wins"],
+            "losses":      v["losses"],
+            "total_pnl":   round(v["total_pnl"], 2),
+            "avg_pnl":     round(v["total_pnl"] / v["count"], 2) if v["count"] else 0.0,
+            # Aggregate loss only — useful for ranking which mistakes hurt
+            "total_loss":  round(-v["total_pnl"], 2) if v["total_pnl"] < 0 else 0.0,
+        }
+        for slug, v in by_tag.items()
+    ]
+    # Costliest first; ties broken by frequency
+    breakdown.sort(key=lambda r: (r["total_loss"], r["count"]), reverse=True)
+
+    return {
+        "breakdown":            breakdown,
+        "total_tagged_trades":  total_tagged_trades,
+        "months":               months,
+    }
+
+
+@router.get("/eod-summary")
+def eod_summary(
+    date: str | None = Query(None, description="YYYY-MM-DD (default = today IST)"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """End-of-day wrap for the dashboard.
+
+    Compute-on-demand (no scheduler dependency) so the card works on any
+    historical date and survives a missed batch run.  Joins three sources:
+      • Trade        — realised P&L of trades closed that day, top G/L.
+      • AlertLog     — count of alerts the user fired that day.
+      • DailySignalSnapshot — was the directional signal correct (backfilled
+                              the next day; today's row may have null
+                              `signal_correct` until after midnight).
+    Plus a reference to today's NIFTY close from MarketSnapshot.
+    """
+    from datetime import timezone, timedelta as _td
+    IST = timezone(_td(hours=5, minutes=30))
+    target = datetime.strptime(date, "%Y-%m-%d").date() if date else datetime.now(IST).date()
+
+    # Closed trades whose exit_date falls on the target IST date.
+    rows = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.status == TradeStatus.CLOSED.value,
+    ).all()
+    closed_today = []
+    for t in rows:
+        if not t.exit_date:
+            continue
+        ex_ist = (t.exit_date + _td(hours=5, minutes=30)).date()
+        if ex_ist == target:
+            closed_today.append(t)
+    realized = sum((t.realized_pnl or 0) for t in closed_today)
+
+    top_gainer = max(closed_today, key=lambda t: (t.realized_pnl or 0), default=None)
+    top_loser  = min(closed_today, key=lambda t: (t.realized_pnl or 0), default=None)
+    # Don't surface "top gainer" if best is a loss, "top loser" if worst is a profit.
+    if top_gainer and (top_gainer.realized_pnl or 0) <= 0:
+        top_gainer = None
+    if top_loser and (top_loser.realized_pnl or 0) >= 0:
+        top_loser = None
+
+    # Current open positions count
+    open_count = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.status == TradeStatus.OPEN.value,
+    ).count()
+
+    # Alerts the user fired on the target date.  AlertRule.user_id scopes
+    # the count; AlertLog.triggered_at is UTC, shift to IST for date check.
+    alert_logs = db.query(AlertLog).join(AlertRule).filter(
+        AlertRule.user_id == user.id,
+    ).all()
+    alerts_fired = 0
+    for al in alert_logs:
+        if not al.triggered_at:
+            continue
+        ts_ist = (al.triggered_at + _td(hours=5, minutes=30)).date()
+        if ts_ist == target:
+            alerts_fired += 1
+
+    # Signal snapshot (system-wide, not per-user).  signal_correct gets
+    # backfilled the next day, so today's value is typically null until then.
+    sig = db.query(DailySignalSnapshot).filter(DailySignalSnapshot.date == target).first()
+
+    def _trade_summary(t):
+        if not t:
+            return None
+        return {
+            "trade_id":    t.id,
+            "trade_type":  t.trade_type,
+            "strike":      t.strike,
+            "expiry_date": t.expiry_date,
+            "realized_pnl": round(t.realized_pnl or 0, 2),
+        }
+
+    return {
+        "date":             target.isoformat(),
+        "realized_pnl":     round(realized, 2),
+        "closed_count":     len(closed_today),
+        "open_count":       open_count,
+        "alerts_fired":     alerts_fired,
+        "top_gainer":       _trade_summary(top_gainer),
+        "top_loser":        _trade_summary(top_loser),
+        "signal_direction": sig.directional_direction if sig else None,
+        "signal_correct":   sig.signal_correct if sig else None,
+        "nifty_close":      sig.nifty_close if sig else None,
+        "next_day_change_pct": sig.next_day_change_pct if sig else None,
+    }
 
 
 @router.get("/historical-signals")

@@ -388,11 +388,14 @@ const Utils = {
                 <span class="header-title">${title}</span>
             </div>
             <div class="header-right">
-                <select id="expiry-selector" class="expiry-selector">
-                    ${expiries.length ? expiries.map(e =>
-                        `<option value="${e}">${e}</option>`
-                    ).join('') : '<option value="">Loading...</option>'}
-                </select>
+                <label class="expiry-selector-group" for="expiry-selector">
+                    <span class="expiry-selector-label">Expiry</span>
+                    <select id="expiry-selector" class="expiry-selector">
+                        ${expiries.length ? expiries.map(e =>
+                            `<option value="${e}">${e}</option>`
+                        ).join('') : '<option value="">Loading...</option>'}
+                    </select>
+                </label>
                 <span class="refresh-info" id="refresh-info">Connecting...</span>
                 <a href="/alerts" class="notification-bell" id="notification-bell" title="Alerts" style="position:relative;text-decoration:none;font-size:18px;color:#6B7280;margin:0 8px;cursor:pointer">
                     &#128276;

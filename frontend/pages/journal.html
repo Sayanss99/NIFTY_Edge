@@ -147,6 +147,109 @@
             font-size: 32px;
             margin-bottom: 12px;
         }
+        /* ── Annotation pencil + modal (Batch B.1) ─────────────────── */
+        .note-btn {
+            background: transparent;
+            border: 1px solid var(--border-light);
+            color: var(--text-muted);
+            border-radius: 6px;
+            width: 28px; height: 26px;
+            cursor: pointer;
+            font-size: 13px;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: border-color 140ms, color 140ms, background 140ms;
+            position: relative;
+        }
+        .note-btn:hover {
+            border-color: var(--primary, #2563EB);
+            color: var(--primary, #2563EB);
+        }
+        .note-btn.has-note {
+            background: color-mix(in srgb, var(--primary, #2563EB) 12%, transparent);
+            border-color: var(--primary, #2563EB);
+            color: var(--primary, #2563EB);
+            width: 38px;
+        }
+        .note-btn .note-tag-count {
+            font-size: 9px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            margin-left: 3px;
+        }
+        .ann-modal-bg {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.55);
+            backdrop-filter: blur(4px);
+            display: none;
+            align-items: center; justify-content: center;
+            z-index: 1000;
+        }
+        .ann-modal-bg.open { display: flex; }
+        .ann-modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 14px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+            width: min(520px, 92vw);
+            padding: 22px 24px 18px;
+            animation: annModalIn 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        @keyframes annModalIn {
+            from { opacity: 0; transform: translateY(8px) scale(0.97); }
+            to   { opacity: 1; transform: translateY(0)   scale(1); }
+        }
+        .ann-modal h3 { margin: 0 0 4px; font-size: 16px; font-weight: 700; }
+        .ann-modal .ann-sub {
+            font-size: 11.5px; color: var(--text-muted);
+            margin-bottom: 14px;
+        }
+        .ann-modal label.ann-lbl {
+            display: block;
+            font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+            color: var(--text-muted); font-weight: 700;
+            margin: 12px 0 6px;
+        }
+        .ann-modal textarea {
+            width: 100%;
+            min-height: 88px;
+            background: var(--bg-secondary, rgba(255,255,255,0.03));
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 10px 12px;
+            font: inherit;
+            font-size: 13px;
+            color: var(--text-primary);
+            resize: vertical;
+        }
+        .ann-modal textarea:focus {
+            outline: none;
+            border-color: var(--primary, #2563EB);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary, #2563EB) 18%, transparent);
+        }
+        .ann-tags {
+            display: flex; flex-wrap: wrap; gap: 6px;
+        }
+        .ann-tag {
+            font-size: 11px; font-weight: 600;
+            padding: 5px 10px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--bg-secondary, rgba(255,255,255,0.03));
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 140ms ease;
+            user-select: none;
+        }
+        .ann-tag:hover { border-color: var(--text-muted); color: var(--text-primary); }
+        .ann-tag.on {
+            background: color-mix(in srgb, var(--red) 14%, transparent);
+            color: var(--red);
+            border-color: color-mix(in srgb, var(--red) 50%, transparent);
+        }
+        .ann-modal .ann-actions {
+            display: flex; justify-content: flex-end; gap: 10px;
+            margin-top: 18px;
+        }
     </style>
 </head>
 <body>
@@ -245,6 +348,7 @@
                     allTrades = tradesResp.trades;
                     populateExpiryFilter();
                     renderCurrentView();
+                    _prefetchAnnotations();
                 }
 
                 if (summaryResp) {
@@ -356,16 +460,67 @@
                 return;
             }
 
+            // Single column descriptor list drives BOTH the header row and
+            // each body row.  Each column's `cell(t)` returns the rendered
+            // <td>...</td> for one trade — keeping render arity identical
+            // by construction and making "missing column" or "extra column"
+            // bugs impossible without explicitly editing this list.
             const cols = [
-                { key: 'exit_date', label: 'Closed' },
-                { key: 'trade_type', label: 'Type' },
-                { key: 'strike', label: 'Strike' },
-                { key: 'expiry_date', label: 'Expiry' },
-                { key: 'entry_premium', label: 'Entry' },
-                { key: 'exit_price', label: 'Exit' },
-                { key: 'quantity', label: 'Qty' },
-                { key: 'realized_pnl', label: 'P&L' },
-                { key: '_duration', label: 'Duration' },
+                {
+                    key: 'exit_date', label: 'Closed',
+                    cell: (t) => `<td>${t.exit_date ? new Date(t.exit_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}</td>`,
+                },
+                {
+                    key: 'trade_type', label: 'Type',
+                    cell: (t) => `<td><span class="badge ${Utils.tradeTypeClass(t.trade_type)}">${t.trade_type.replace('_', ' ')}</span></td>`,
+                },
+                {
+                    key: 'strike', label: 'Strike',
+                    cell: (t) => `<td class="font-mono">${Utils.formatNum(t.strike)}</td>`,
+                },
+                {
+                    key: 'expiry_date', label: 'Expiry',
+                    cell: (t) => `<td>${t.expiry_date}</td>`,
+                },
+                {
+                    key: 'entry_premium', label: 'Entry',
+                    cell: (t) => `<td class="font-mono">${Utils.formatNum(t.entry_premium, 2)}</td>`,
+                },
+                {
+                    key: 'exit_price', label: 'Exit',
+                    cell: (t) => `<td class="font-mono">${Utils.formatNum(t.exit_price, 2)}</td>`,
+                },
+                {
+                    key: 'quantity', label: 'Qty',
+                    cell: (t) => `<td>${t.quantity}L</td>`,
+                },
+                {
+                    key: 'realized_pnl', label: 'P&L',
+                    cell: (t) => `<td class="font-mono fw-600">${Utils.pnlHtml(t.realized_pnl || 0)}</td>`,
+                },
+                {
+                    key: '_duration', label: 'Duration',
+                    cell: (t) => {
+                        if (!t.entry_date || !t.exit_date) return '<td>-</td>';
+                        const d = Math.max(0, Math.round(
+                            (new Date(t.exit_date) - new Date(t.entry_date)) / (1000 * 60 * 60 * 24)
+                        ));
+                        return `<td>${d}d</td>`;
+                    },
+                },
+                {
+                    key: '_note', label: 'Note', noSort: true,
+                    cell: (t) => {
+                        const ann = annotationsByTrade[t.id];
+                        const hasNote = ann && (ann.notes || (ann.mistake_tags && ann.mistake_tags.length));
+                        if (hasNote) {
+                            const n = (ann.mistake_tags || []).length;
+                            const title = `${n} tag${n === 1 ? '' : 's'}${ann.notes ? ' + note' : ''}`;
+                            return `<td><button class="note-btn has-note" onclick="openAnnotationModal(${t.id})" title="${title}">&#9998;<span class="note-tag-count">${n}</span></button></td>`;
+                        }
+                        return `<td><button class="note-btn" onclick="openAnnotationModal(${t.id})" title="Add note">&#9998;</button></td>`;
+                    },
+                },
             ];
 
             const arrow = (col) => {
@@ -373,36 +528,22 @@
                 return `<span class="sort-arrow active">${sortDir > 0 ? '&#9650;' : '&#9660;'}</span>`;
             };
 
-            let html = `<table class="journal-table">
-                <thead><tr>
-                    ${cols.map(c => `<th onclick="onSort('${c.key}')">${c.label}${arrow(c.key)}</th>`).join('')}
-                </tr></thead><tbody>`;
+            const headerHtml = cols.map(c => c.noSort
+                ? `<th>${c.label}</th>`
+                : `<th onclick="onSort('${c.key}')">${c.label}${arrow(c.key)}</th>`
+            ).join('');
 
-            for (const t of trades) {
+            const bodyHtml = trades.map(t => {
                 const pnl = t.realized_pnl || 0;
                 const rowClass = pnl > 0 ? 'profit' : pnl < 0 ? 'loss' : '';
-                const exitDate = t.exit_date ? new Date(t.exit_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
-                const entryDate = t.entry_date ? new Date(t.entry_date) : null;
-                const closedDate = t.exit_date ? new Date(t.exit_date) : null;
-                const duration = entryDate && closedDate
-                    ? Math.max(0, Math.round((closedDate - entryDate) / (1000 * 60 * 60 * 24))) + 'd'
-                    : '-';
+                return `<tr class="${rowClass}">${cols.map(c => c.cell(t)).join('')}</tr>`;
+            }).join('');
 
-                html += `<tr class="${rowClass}">
-                    <td>${exitDate}</td>
-                    <td><span class="badge ${Utils.tradeTypeClass(t.trade_type)}">${t.trade_type.replace('_', ' ')}</span></td>
-                    <td class="font-mono">${Utils.formatNum(t.strike)}</td>
-                    <td>${t.expiry_date}</td>
-                    <td class="font-mono">${Utils.formatNum(t.entry_premium, 2)}</td>
-                    <td class="font-mono">${Utils.formatNum(t.exit_price, 2)}</td>
-                    <td>${t.quantity}L</td>
-                    <td class="font-mono fw-600">${Utils.pnlHtml(pnl)}</td>
-                    <td>${duration}</td>
-                </tr>`;
-            }
-
-            html += '</tbody></table>';
-            container.innerHTML = html;
+            container.innerHTML = `
+                <table class="journal-table">
+                    <thead><tr>${headerHtml}</tr></thead>
+                    <tbody>${bodyHtml}</tbody>
+                </table>`;
         }
 
         // ── Grouped by expiry view ────────────────────────────────────
@@ -490,15 +631,137 @@
                     a.download = 'niftyedge_trades.csv';
                     a.click();
                     URL.revokeObjectURL(a.href);
-                    Utils.showToast('CSV downloaded', 'success');
+                    Utils.toast('CSV downloaded', 'success');
                 })
-                .catch(() => Utils.showToast('Export failed', 'error'));
+                .catch(() => Utils.toast('Export failed', 'error'));
         }
 
         // ── Filter change listeners ───────────────────────────────────
         document.getElementById('filter-expiry').onchange = renderCurrentView;
         document.getElementById('filter-type').onchange = renderCurrentView;
         document.getElementById('filter-result').onchange = renderCurrentView;
+
+        // ── Annotation modal (Batch B.1) ──────────────────────────────
+        // annotationsByTrade: { [trade_id]: {notes, mistake_tags[]} | null }
+        // Lazily filled per-trade as the user opens the modal; the cache lets
+        // the journal table render filled/hollow pencils without N round-trips.
+        let annotationsByTrade = {};
+        let _annModalState = null;            // {trade_id, tagsTaxonomy}
+        let _annTagsTaxonomy = null;
+
+        async function _loadTagTaxonomy() {
+            if (_annTagsTaxonomy) return _annTagsTaxonomy;
+            try {
+                const r = await API.fetch('/api/trades/annotation-tags');
+                _annTagsTaxonomy = r?.tags || [];
+            } catch { _annTagsTaxonomy = []; }
+            return _annTagsTaxonomy;
+        }
+
+        async function openAnnotationModal(tradeId) {
+            const tags = await _loadTagTaxonomy();
+            let ann = annotationsByTrade[tradeId];
+            if (ann === undefined) {       // not yet fetched
+                try {
+                    const r = await API.fetch(`/api/trades/${tradeId}/annotation`);
+                    ann = r?.annotation || null;
+                    annotationsByTrade[tradeId] = ann;
+                } catch { ann = null; }
+            }
+            _annModalState = {
+                trade_id: tradeId,
+                selected: new Set((ann?.mistake_tags) || []),
+            };
+            document.getElementById('ann-notes').value = ann?.notes || '';
+
+            // Render chips
+            const chipsEl = document.getElementById('ann-tags');
+            chipsEl.innerHTML = tags.map(t =>
+                `<span class="ann-tag ${_annModalState.selected.has(t.slug) ? 'on' : ''}"
+                       data-slug="${t.slug}"
+                       onclick="_toggleAnnTag('${t.slug}', this)">${t.label}</span>`
+            ).join('');
+
+            const trade = allTrades.find(t => t.id === tradeId);
+            document.getElementById('ann-title').textContent =
+                trade ? `${trade.trade_type.replace('_', ' ')} ${trade.strike} · ${trade.expiry_date}` : 'Trade note';
+            document.getElementById('ann-modal-bg').classList.add('open');
+        }
+        function _toggleAnnTag(slug, el) {
+            if (!_annModalState) return;
+            if (_annModalState.selected.has(slug)) {
+                _annModalState.selected.delete(slug);
+                el.classList.remove('on');
+            } else {
+                _annModalState.selected.add(slug);
+                el.classList.add('on');
+            }
+        }
+        function closeAnnotationModal(ev) {
+            if (ev && ev.target && ev.target.id !== 'ann-modal-bg' && ev.type === 'click') return;
+            document.getElementById('ann-modal-bg').classList.remove('open');
+            _annModalState = null;
+        }
+        async function saveAnnotation() {
+            if (!_annModalState) return;
+            const tradeId = _annModalState.trade_id;
+            const notes = document.getElementById('ann-notes').value.trim();
+            const tags = Array.from(_annModalState.selected);
+            const btn = document.getElementById('ann-save-btn');
+            btn.disabled = true;
+            btn.textContent = 'Saving…';
+            try {
+                const r = await API.put(`/api/trades/${tradeId}/annotation`, { notes, mistake_tags: tags });
+                annotationsByTrade[tradeId] = r?.annotation || null;
+                Utils.toast('Note saved', 'success');
+                closeAnnotationModal();
+                renderCurrentView();      // refresh pencil state on the row
+            } catch (e) {
+                Utils.toast('Save failed', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Save';
+            }
+        }
+
+        // Bulk-prefetch annotations for all currently visible trades on first
+        // load — single round-trip per trade, fired in parallel — so the
+        // pencil filled/hollow state is correct on initial paint.
+        async function _prefetchAnnotations() {
+            if (!allTrades || !allTrades.length) return;
+            const ids = allTrades.map(t => t.id).filter(id => annotationsByTrade[id] === undefined);
+            if (!ids.length) return;
+            await Promise.all(ids.map(async (id) => {
+                try {
+                    const r = await API.fetch(`/api/trades/${id}/annotation`);
+                    annotationsByTrade[id] = r?.annotation || null;
+                } catch { annotationsByTrade[id] = null; }
+            }));
+            renderCurrentView();
+        }
+        // Esc closes modal
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeAnnotationModal();
+        });
     </script>
+
+    <!-- Annotation modal -->
+    <div id="ann-modal-bg" class="ann-modal-bg" onclick="closeAnnotationModal(event)">
+        <div class="ann-modal" onclick="event.stopPropagation()">
+            <h3 id="ann-title">Trade note</h3>
+            <div class="ann-sub">Capture what worked and what didn't — turns history into pattern.</div>
+
+            <label class="ann-lbl" for="ann-notes">Notes</label>
+            <textarea id="ann-notes" placeholder="e.g. Sold too close to spot before RBI. Should have waited for the policy."></textarea>
+
+            <label class="ann-lbl">Mistake tags <span style="font-weight:500;color:var(--text-muted);text-transform:none;letter-spacing:0">(optional)</span></label>
+            <div id="ann-tags" class="ann-tags"></div>
+
+            <div class="ann-actions">
+                <button class="btn btn-sm btn-secondary" onclick="closeAnnotationModal()">Cancel</button>
+                <button id="ann-save-btn" class="btn btn-sm btn-primary" onclick="saveAnnotation()">Save</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

@@ -995,6 +995,10 @@ def payoff_preview(req: PayoffPreviewRequest, _=Depends(get_current_user)):
     # Resolve LTP for each leg from the live chain
     leg_records = []
     net_premium = 0.0          # ₹ across all legs (positive = credit received)
+    portfolio_theta = 0.0      # ₹/day at portfolio level — sum across legs,
+                               # short legs flip sign so the trader-PoV theta
+                               # for sellers reads positive (collection).
+    margin_estimate = 0.0      # SPAN+exposure approximation (Batch C.3)
     for leg in req.legs:
         row = chain_df[
             (chain_df["Strike"] == leg.strike) & (chain_df["Type"] == leg.option_type)
@@ -1006,8 +1010,23 @@ def payoff_preview(req: PayoffPreviewRequest, _=Depends(get_current_user)):
             )
         ltp = float(row["LTP"].iloc[0])
         qty = leg.lots * LOT_SIZE
-        sign = +1 if leg.action.upper() == "SELL" else -1
+        is_sell = leg.action.upper() == "SELL"
+        sign = +1 if is_sell else -1
         net_premium += sign * ltp * qty
+
+        # Theta per day at trader-PoV: chain.theta is per-share per-day in ₹
+        # (Black-Scholes / 365). Long legs carry the chain sign; short legs
+        # flip — sellers GAIN as options decay.
+        leg_theta_share = float(row.get("theta", 0) or 0)
+        portfolio_theta += leg_theta_share * qty * (-1 if is_sell else +1)
+
+        # Margin block per leg (same approximation used in /api/trades/
+        # margin-summary so the figures agree across pages):
+        #   short leg → 12% of strike notional
+        #   long  leg → 0 (premium paid IS the deployed capital)
+        if is_sell:
+            margin_estimate += 0.12 * float(leg.strike) * qty
+
         leg_records.append({
             "option_type": leg.option_type,
             "action": leg.action.upper(),
@@ -1071,6 +1090,12 @@ def payoff_preview(req: PayoffPreviewRequest, _=Depends(get_current_user)):
         "profit_unbounded": profit_unbounded,
         "loss_unbounded": loss_unbounded,
         "breakevens": dedup_be,
+        # Batch C.3 additions — surfaced by the Strategy Builder execute
+        # panel so the trader sees what the strategy locks up before they
+        # commit. Margin uses the same approximation as the dashboard's
+        # margin-summary endpoint so the two agree.
+        "theta_per_day": round(portfolio_theta, 2),
+        "margin_estimate": round(margin_estimate, 2),
         "legs": leg_records,
         "curve": curve,
     }

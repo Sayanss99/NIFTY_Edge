@@ -127,6 +127,7 @@
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                             <span class="fw-600" style="color:#991B1B">CE Lookup</span>
                             <div id="ce-add-row" class="hidden" style="display:none;align-items:center;gap:6px">
+                                <button class="btn btn-sm btn-secondary" onclick="openSizingFromLookup('CE')" title="How many lots fit my risk budget?">⚖ Size</button>
                                 <button class="btn btn-sm btn-danger" onclick="setAndAdd('CE','SELL')">↓ Sell</button>
                                 <button class="btn btn-sm btn-success" onclick="setAndAdd('CE','BUY')">↑ Buy</button>
                             </div>
@@ -148,6 +149,7 @@
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                             <span class="fw-600" style="color:#1E3A8A">PE Lookup</span>
                             <div id="pe-add-row" class="hidden" style="display:none;align-items:center;gap:6px">
+                                <button class="btn btn-sm btn-secondary" onclick="openSizingFromLookup('PE')" title="How many lots fit my risk budget?">⚖ Size</button>
                                 <button class="btn btn-sm btn-danger" onclick="setAndAdd('PE','SELL')">↓ Sell</button>
                                 <button class="btn btn-sm btn-success" onclick="setAndAdd('PE','BUY')">↑ Buy</button>
                             </div>
@@ -205,6 +207,7 @@
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
     <script src="/js/ne-live.js"></script>
+    <script src="/js/sizing.js"></script>
     <script src="/js/ws.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Not authenticated');
@@ -222,6 +225,24 @@
         function setAndAdd(side, action) {
             lookupAction[side] = action;
             addTradeFromLookup(side);
+        }
+
+        // Sizing calculator from the lookup panel — pre-fills strike + LTP +
+        // tradeType so the user only enters their ₹-at-risk budget.  No
+        // onApply because the option chain page doesn't host an Add Trade
+        // form directly (Buy/Sell jumps to Positions).
+        function openSizingFromLookup(side) {
+            const d = lookupData[side];
+            if (!d) {
+                Utils.showToast('Look up a strike first', 'error');
+                return;
+            }
+            const tradeType = `${side}_${lookupAction[side] || 'SELL'}`;
+            window.Sizing.open({
+                tradeType,
+                strike: d.strike,
+                premium: d.ltp,
+            });
         }
 
         // ── Load initial data ──────────────────────────────────────────

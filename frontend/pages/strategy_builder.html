@@ -301,6 +301,36 @@
             white-space: nowrap;
         }
 
+        /* ── Pre-execute preview tiles (Batch C.3) ───────────────────── */
+        .exec-preview {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .exec-preview-tile {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 7px;
+            padding: 8px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .exec-preview-tile .ep-lbl {
+            font-size: 9.5px;
+            color: var(--text-muted);
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+        }
+        .exec-preview-tile .ep-val {
+            font-size: 14px;
+            font-weight: 700;
+        }
+        .exec-preview-tile .ep-val.pos { color: var(--green); }
+        .exec-preview-tile .ep-val.neg { color: var(--red); }
+
         /* ── Payoff Canvas ──────────────────────────────────────────── */
         .payoff-wrap { position: relative; }
         #payoff-canvas { width: 100%; height: 220px; display: block; cursor: crosshair; }
@@ -415,6 +445,24 @@
                                             style="padding:5px 16px;font-size:12px;white-space:nowrap">
                                         &#9654; Execute
                                     </button>
+                                </div>
+
+                                <!-- Pre-execute preview — Margin / Theta / Max Loss (Batch C.3).
+                                     Reads _lastPayoffMeta written by previewPayoff(); hidden when
+                                     no legs configured. -->
+                                <div class="exec-preview" id="exec-preview" style="display:none">
+                                    <div class="exec-preview-tile">
+                                        <span class="ep-lbl">Margin (est.)</span>
+                                        <span class="ep-val font-mono" id="ep-margin">—</span>
+                                    </div>
+                                    <div class="exec-preview-tile">
+                                        <span class="ep-lbl">Theta / day</span>
+                                        <span class="ep-val font-mono" id="ep-theta">—</span>
+                                    </div>
+                                    <div class="exec-preview-tile">
+                                        <span class="ep-lbl">Max loss</span>
+                                        <span class="ep-val font-mono" id="ep-maxloss">—</span>
+                                    </div>
                                 </div>
 
                                 <!-- Payoff diagram -->
@@ -1108,6 +1156,47 @@
             // back to chart extremes only while the preview round-trip is
             // pending.
             document.getElementById('payoff-info').textContent = _payoffInfoText(steps);
+
+            // Pre-execute preview tiles (Margin / Theta / Max Loss).
+            _renderExecPreview(steps);
+        }
+
+        // Pre-execute preview — only meaningful once the server payoff
+        // round-trip has resolved (margin + theta need live LTPs).  Hidden
+        // until then so we don't show a stale "—".
+        function _renderExecPreview(steps) {
+            const wrap = document.getElementById('exec-preview');
+            if (!wrap) return;
+            const meta = _lastPayoffMeta;
+            if (!meta) {
+                wrap.style.display = 'none';
+                return;
+            }
+            wrap.style.display = '';
+
+            const fmt = (v) => '₹' + Math.round(Math.abs(v)).toLocaleString('en-IN');
+            const sign = (v) => v >= 0 ? '+' : '−';
+
+            const marginEl = document.getElementById('ep-margin');
+            marginEl.textContent = (meta.margin_estimate || 0) > 0
+                ? fmt(meta.margin_estimate)
+                : '—';
+            marginEl.className = 'ep-val font-mono';
+
+            const thetaEl = document.getElementById('ep-theta');
+            const theta = meta.theta_per_day || 0;
+            thetaEl.textContent = sign(theta) + fmt(theta);
+            thetaEl.className = 'ep-val font-mono ' + (theta > 0 ? 'pos' : theta < 0 ? 'neg' : '');
+
+            const maxlEl = document.getElementById('ep-maxloss');
+            if (meta.loss_unbounded) {
+                maxlEl.textContent = 'Unlimited';
+                maxlEl.className = 'ep-val font-mono neg';
+            } else {
+                const ml = meta.max_loss || 0;
+                maxlEl.textContent = sign(ml) + fmt(ml);
+                maxlEl.className = 'ep-val font-mono ' + (ml < 0 ? 'neg' : '');
+            }
         }
 
         function _payoffInfoText(steps) {

@@ -123,33 +123,11 @@
         return slot;
     }
 
-    function ensureDial(metricCard, valueEl) {
-        if (metricCard.__neDial) return;
-        // Decorative ring around value — does NOT move the value DOM, so any
-        // existing JS that does `.textContent =` on .metric-value still works.
-        const ring = document.createElement('div');
-        ring.className = 'ne-dial-ring';
-        // The ring fill traces where the current value sits inside the
-        // metric's own recent 30-tick range (empty arc = at the low,
-        // full arc = at the high). Surface that meaning on hover so the
-        // decoration isn't a mystery — accessible via title tooltip and
-        // SVG <title> for screen readers.
-        ring.setAttribute('title',
-            'Where the current value sits in its recent 30-tick range — ' +
-            'empty arc = at the low, full arc = at the high. ' +
-            'Color tints up/down on the latest move.');
-        ring.setAttribute('role', 'img');
-        ring.setAttribute('aria-label', 'Recent range indicator');
-        ring.innerHTML =
-            '<svg viewBox="0 0 100 100">' +
-            '<title>Recent range indicator</title>' +
-            '<circle class="ne-dial-track" cx="50" cy="50" r="44"/>' +
-            '<circle class="ne-dial-fill"  cx="50" cy="50" r="44"/>' +
-            '</svg>';
-        metricCard.classList.add('ne-has-dial');
-        metricCard.appendChild(ring);
-        metricCard.__neDial = ring;
-    }
+    // The conic-gradient dial ring was removed — it added visual noise
+    // without communicating anything actionable.  We keep --ne-norm being
+    // written to the card (cheap, harmless) so any future visual layer can
+    // pick it up, but we no longer mount the ring element itself.
+    function ensureDial(_metricCard, _valueEl) { /* no-op */ }
 
     function track(el) {
         const val = parseNum(el.textContent);

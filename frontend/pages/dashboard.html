@@ -185,6 +185,235 @@
             opacity: 1;
         }
         .risk-breakdown-table tbody tr:last-child td { border-bottom: none; }
+        /* ── Portfolio card (greeks tiles + margin strip) ──────────────── */
+        .pf-greeks {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+        .pf-tile {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 10px 10px;
+            text-align: center;
+            transition: border-color 140ms ease;
+        }
+        .pf-tile:hover { border-color: var(--border); }
+        .pf-tile .pf-lbl {
+            font-size: 10px;
+            color: var(--text-muted);
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .pf-tile .pf-val {
+            font-size: 15px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            line-height: 1.2;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .pf-tile .pf-val.pos { color: var(--green); }
+        .pf-tile .pf-val.neg { color: var(--red); }
+        .pf-tile .pf-sub {
+            font-size: 9.5px;
+            color: var(--text-muted);
+            margin-top: 3px;
+            line-height: 1.2;
+        }
+        @media (max-width: 1100px) {
+            .pf-greeks { grid-template-columns: repeat(2, 1fr); }
+        }
+        .pf-margin {
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border-light);
+        }
+        .pf-margin-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        .pf-margin-lbl { color: var(--text-muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 700; }
+        .pf-margin-bar {
+            height: 8px;
+            border-radius: 999px;
+            background: var(--bg-secondary);
+            overflow: hidden;
+            border: 1px solid var(--border-light);
+            margin-bottom: 6px;
+        }
+        .pf-margin-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary, #2563EB), color-mix(in srgb, var(--primary, #2563EB) 70%, var(--amber)));
+            transition: width 600ms cubic-bezier(0.22, 1, 0.36, 1), background 200ms ease;
+        }
+        .pf-margin-fill.high { background: linear-gradient(90deg, var(--amber), var(--red)); }
+        .pf-margin-edit {
+            font-size: 11px;
+            color: var(--primary, #2563EB);
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .pf-margin-edit:hover { text-decoration: underline; }
+        /* ── EOD wrap card (Batch C.2) ─────────────────────────────────── */
+        .eod-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+        .eod-tile {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+        .eod-tile .eod-lbl {
+            font-size: 10px; color: var(--text-muted);
+            font-weight: 700; letter-spacing: 0.4px;
+            text-transform: uppercase; margin-bottom: 4px;
+        }
+        .eod-tile .eod-val {
+            font-size: 16px; font-weight: 700; line-height: 1.2;
+        }
+        .eod-tile .eod-val.pos { color: var(--green); }
+        .eod-tile .eod-val.neg { color: var(--red); }
+        .eod-tile .eod-sub {
+            font-size: 10.5px; color: var(--text-muted); margin-top: 3px;
+        }
+        .eod-extremes {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .eod-extremes .eod-trade {
+            font-size: 11px;
+            padding: 8px 10px;
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            font-family: var(--font-mono);
+        }
+        .eod-extremes .eod-trade.gainer { border-left: 3px solid var(--green); }
+        .eod-extremes .eod-trade.loser  { border-left: 3px solid var(--red); }
+        .eod-extremes .eod-trade .eod-trade-lbl {
+            display: block;
+            font-family: inherit;
+            font-size: 9.5px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 2px;
+        }
+        /* ── In-app numeric editor modal ──────────────────────────────── */
+        .ne-input-modal-bg {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.55);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            display: none;
+            align-items: center; justify-content: center;
+            z-index: 1100;
+        }
+        .ne-input-modal-bg.open { display: flex; }
+        .ne-input-modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: 14px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+            width: min(420px, 92vw);
+            padding: 22px 24px 18px;
+            animation: neImIn 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        @keyframes neImIn {
+            from { opacity: 0; transform: translateY(8px) scale(0.97); }
+            to   { opacity: 1; transform: translateY(0)   scale(1); }
+        }
+        .ne-im-head {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            gap: 10px; margin-bottom: 4px;
+        }
+        .ne-im-head h3 { margin: 0; font-size: 16px; font-weight: 700; }
+        .ne-im-x {
+            background: none; border: none;
+            font-size: 22px; line-height: 1;
+            color: var(--text-muted); cursor: pointer;
+            padding: 0 4px;
+        }
+        .ne-im-x:hover { color: var(--text-primary); }
+        .ne-im-sub {
+            margin: 0 0 14px; font-size: 11.5px; color: var(--text-muted);
+            line-height: 1.45;
+        }
+        .ne-im-lbl {
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+            color: var(--text-muted); font-weight: 700;
+            margin-bottom: 6px;
+        }
+        .ne-im-prefix {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-muted);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            padding: 2px 7px;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+        .ne-im-input {
+            width: 100%;
+            background: var(--bg-secondary, rgba(255,255,255,0.03));
+            border: 1.5px solid var(--border-light);
+            border-radius: 8px;
+            padding: 10px 12px;
+            font: inherit;
+            font-family: var(--font-mono);
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            transition: border-color 140ms, box-shadow 140ms;
+        }
+        .ne-im-input:focus {
+            outline: none;
+            border-color: var(--primary, #2563EB);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary, #2563EB) 18%, transparent);
+        }
+        /* Hide the native spinner buttons — they overlap the prefix and add visual noise */
+        .ne-im-input::-webkit-outer-spin-button,
+        .ne-im-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .ne-im-input[type="number"] { -moz-appearance: textfield; }
+        .ne-im-hint {
+            margin: 8px 0 0;
+            font-size: 11px;
+            color: var(--text-muted);
+            line-height: 1.45;
+            min-height: 16px;
+        }
+        .ne-im-actions {
+            display: flex; align-items: center; gap: 8px;
+            margin-top: 18px;
+        }
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            font: inherit; font-weight: 600;
+            border-radius: 6px;
+            padding: 5px 10px;
+            transition: color 140ms, background 140ms, border-color 140ms;
+        }
+        .btn-ghost:hover { color: var(--red); background: var(--red-bg); border-color: var(--red); }
     </style>
 </head>
 <body>
@@ -193,6 +422,13 @@
         <div class="main-content">
             <header class="header" id="header"></header>
             <div class="page-content">
+                <!-- Daily loss-stop banner (Batch C.1). Shown only when the
+                     user's today_pnl breaches their configured threshold. -->
+                <div id="loss-stop-banner" style="display:none;background:var(--red-bg);border:1px solid var(--red);border-radius:8px;padding:10px 14px;margin-bottom:12px;color:var(--red);font-size:12.5px;font-weight:600;display:none">
+                    <span id="loss-stop-text">Daily loss limit breached.</span>
+                    <a href="#" onclick="openLossLimitEditor(event)" style="color:var(--red);text-decoration:underline;margin-left:10px">Adjust limit</a>
+                </div>
+
                 <!-- News Ticker Strip (top position, always visible when data exists) -->
                 <div id="news-ticker-wrap" style="display:none;overflow:hidden;position:relative;
                      background:var(--bg-card);border:1px solid var(--border);border-radius:8px;
@@ -376,6 +612,37 @@
 
                     <!-- Right Column (40%) -->
                     <div class="dashboard-right">
+                        <!-- End-of-Day summary (Batch C.2) — visible after 3:30 IST -->
+                        <div class="card" id="eod-card" style="display:none">
+                            <div class="card-header">
+                                <span class="card-title">End-of-Day Wrap</span>
+                                <span class="text-muted" style="font-size:10px" id="eod-date">-</span>
+                            </div>
+                            <div class="eod-grid">
+                                <div class="eod-tile">
+                                    <div class="eod-lbl">Realised P&L</div>
+                                    <div class="eod-val font-mono" id="eod-pnl">-</div>
+                                    <div class="eod-sub" id="eod-trades">-</div>
+                                </div>
+                                <div class="eod-tile">
+                                    <div class="eod-lbl">Alerts fired</div>
+                                    <div class="eod-val font-mono" id="eod-alerts">-</div>
+                                    <div class="eod-sub" id="eod-open">-</div>
+                                </div>
+                                <div class="eod-tile">
+                                    <div class="eod-lbl">Signal</div>
+                                    <div class="eod-val" id="eod-signal">-</div>
+                                    <div class="eod-sub" id="eod-signal-sub">-</div>
+                                </div>
+                                <div class="eod-tile">
+                                    <div class="eod-lbl">NIFTY Close</div>
+                                    <div class="eod-val font-mono" id="eod-close">-</div>
+                                    <div class="eod-sub" id="eod-close-chg">-</div>
+                                </div>
+                            </div>
+                            <div class="eod-extremes" id="eod-extremes"></div>
+                        </div>
+
                         <!-- 25-Delta Risk Reversal -->
                         <div class="card">
                             <div class="card-header">
@@ -419,6 +686,50 @@
                             </div>
                             <div id="positions-summary">
                                 <div class="text-muted text-center" style="padding:20px">No open positions</div>
+                            </div>
+                        </div>
+
+                        <!-- Portfolio greeks + margin (populated by /api/trades/risk + /api/trades/margin-summary) -->
+                        <div class="card" id="portfolio-card">
+                            <div class="card-header">
+                                <span class="card-title">Portfolio</span>
+                                <span class="text-muted" style="font-size:10px" id="portfolio-empty-hint">No open positions</span>
+                            </div>
+                            <div class="pf-greeks" id="pf-greeks">
+                                <div class="pf-tile">
+                                    <div class="pf-lbl">Δ Delta</div>
+                                    <div class="pf-val font-mono" id="pf-delta">-</div>
+                                    <div class="pf-sub">₹/pt spot move</div>
+                                </div>
+                                <div class="pf-tile">
+                                    <div class="pf-lbl">Γ Gamma</div>
+                                    <div class="pf-val font-mono" id="pf-gamma">-</div>
+                                    <div class="pf-sub">Δ change per pt</div>
+                                </div>
+                                <div class="pf-tile">
+                                    <div class="pf-lbl">Θ Theta</div>
+                                    <div class="pf-val font-mono" id="pf-theta">-</div>
+                                    <div class="pf-sub" id="pf-theta-sub">if spot holds</div>
+                                </div>
+                                <div class="pf-tile">
+                                    <div class="pf-lbl">V Vega</div>
+                                    <div class="pf-val font-mono" id="pf-vega">-</div>
+                                    <div class="pf-sub">per 1% IV move</div>
+                                </div>
+                            </div>
+                            <!-- Margin & capital strip (filled by Batch A.2 /api/trades/margin-summary) -->
+                            <div class="pf-margin" id="pf-margin" style="display:none">
+                                <div class="pf-margin-row">
+                                    <span class="pf-margin-lbl">Margin used</span>
+                                    <span class="font-mono" id="pf-margin-used">-</span>
+                                </div>
+                                <div class="pf-margin-bar">
+                                    <div class="pf-margin-fill" id="pf-margin-fill" style="width:0%"></div>
+                                </div>
+                                <div class="pf-margin-row">
+                                    <span class="text-muted" style="font-size:11px" id="pf-margin-detail">-</span>
+                                    <a href="#" onclick="openCapitalEditor(event)" class="pf-margin-edit" id="pf-margin-edit">Set capital</a>
+                                </div>
                             </div>
                         </div>
 
@@ -625,6 +936,16 @@
                     updatePositionsSummary(risk);
                 }
             } catch (e) {}
+
+            // Margin & capital tracker (independent of market hours)
+            loadMarginSummary();
+            setInterval(loadMarginSummary, 60000);
+
+            // EOD summary (visible after 15:30 IST). Polls every 5 min so the
+            // card transitions from "no data" to populated cleanly without
+            // requiring a page reload at market close.
+            loadEodSummary();
+            setInterval(loadEodSummary, 5 * 60 * 1000);
 
             // Load IV Rank (independent of market hours — uses DB history)
             try {
@@ -1099,6 +1420,265 @@
             }
 
             updateRiskDetailTable(data.positions || []);
+            updatePortfolioGreeks(data.portfolio_greeks, (data.positions || []).length);
+        }
+
+        // ── Margin & capital tracker (Batch A.2) ───────────────────────
+        // Polls /api/trades/margin-summary every 60s.  When capital is unset,
+        // the bar still renders showing absolute "used" so the trader can
+        // see something — and a "Set capital" link prompts configuration.
+        async function loadMarginSummary() {
+            const wrap = document.getElementById('pf-margin');
+            try {
+                const m = await API.fetch('/api/trades/margin-summary');
+                if (!m) { if (wrap) wrap.style.display = 'none'; return; }
+                if (!m.open_count) { if (wrap) wrap.style.display = 'none'; return; }
+                if (wrap) wrap.style.display = '';
+
+                const usedEl = document.getElementById('pf-margin-used');
+                const fillEl = document.getElementById('pf-margin-fill');
+                const detEl  = document.getElementById('pf-margin-detail');
+                const editEl = document.getElementById('pf-margin-edit');
+
+                const usedTxt = '₹' + Math.round(m.used).toLocaleString('en-IN');
+                if (m.capital) {
+                    const pct = Math.min(100, Math.max(0, m.deployed_pct || 0));
+                    usedEl.textContent = `${usedTxt} / ₹${Math.round(m.capital).toLocaleString('en-IN')}`;
+                    fillEl.style.width = pct + '%';
+                    fillEl.classList.toggle('high', pct >= 70);
+                    const free = m.free != null ? Math.round(m.free).toLocaleString('en-IN') : '-';
+                    const opt  = Math.round(m.by_instrument?.OPT || 0).toLocaleString('en-IN');
+                    const fut  = Math.round(m.by_instrument?.FUT || 0).toLocaleString('en-IN');
+                    detEl.textContent = `${pct}% deployed · ₹${free} free · OPT ₹${opt} · FUT ₹${fut}`;
+                    editEl.textContent = 'Edit';
+                } else {
+                    usedEl.textContent = usedTxt;
+                    fillEl.style.width = '0%';
+                    detEl.textContent = `Set total capital to see deployment %`;
+                    editEl.textContent = 'Set capital';
+                }
+
+                // Loss-stop banner — flips visible only when today_pnl <= -threshold.
+                _renderLossStopBanner(m);
+            } catch (e) {
+                if (wrap) wrap.style.display = 'none';
+                _renderLossStopBanner(null);
+            }
+        }
+
+        function _renderLossStopBanner(m) {
+            const banner = document.getElementById('loss-stop-banner');
+            const text   = document.getElementById('loss-stop-text');
+            if (!banner) return;
+            if (!m || !m.loss_breached) {
+                banner.style.display = 'none';
+                return;
+            }
+            banner.style.display = 'block';
+            const lost = Math.abs(m.today_pnl || 0);
+            const lim  = m.loss_threshold || 0;
+            text.textContent =
+                `⚠ Daily loss ₹${Math.round(lost).toLocaleString('en-IN')} ` +
+                `exceeds your ₹${Math.round(lim).toLocaleString('en-IN')} limit — ` +
+                `new trades require confirmation.`;
+        }
+
+        // ── EOD Wrap card (Batch C.2) ─────────────────────────────────
+        // Visible after 15:30 IST.  Hidden during market hours so the
+        // dashboard's right column stays focused on live state.
+        async function loadEodSummary() {
+            const card = document.getElementById('eod-card');
+            if (!card) return;
+            // Only show after market close (15:30 IST).  Cheap clock check —
+            // the card stays hidden mid-session so it doesn't pre-empt the
+            // live cards above.
+            const now = new Date();
+            const istOffsetMs = (5 * 60 + 30) * 60 * 1000;
+            const ist = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + istOffsetMs);
+            const minutesIst = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+            if (minutesIst < 15 * 60 + 30) {
+                card.style.display = 'none';
+                return;
+            }
+            try {
+                const s = await API.fetch('/api/analytics/eod-summary');
+                if (!s) { card.style.display = 'none'; return; }
+                // Don't show an entirely-empty card.
+                if (!s.realized_pnl && !s.closed_count && !s.alerts_fired && !s.signal_direction) {
+                    card.style.display = 'none';
+                    return;
+                }
+                card.style.display = '';
+
+                document.getElementById('eod-date').textContent = s.date || '';
+
+                const pnlEl = document.getElementById('eod-pnl');
+                const pnl = s.realized_pnl || 0;
+                pnlEl.textContent = (pnl >= 0 ? '+₹' : '−₹') + Math.round(Math.abs(pnl)).toLocaleString('en-IN');
+                pnlEl.className = 'eod-val font-mono ' + (pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : '');
+                document.getElementById('eod-trades').textContent =
+                    `${s.closed_count} closed today`;
+
+                document.getElementById('eod-alerts').textContent = String(s.alerts_fired || 0);
+                document.getElementById('eod-open').textContent = `${s.open_count || 0} open carrying over`;
+
+                const sigEl = document.getElementById('eod-signal');
+                const sigSub = document.getElementById('eod-signal-sub');
+                if (s.signal_direction) {
+                    const cls = s.signal_correct === true ? 'pos'
+                              : s.signal_correct === false ? 'neg'
+                              : '';
+                    sigEl.textContent = s.signal_direction;
+                    sigEl.className = 'eod-val ' + cls;
+                    sigSub.textContent = s.signal_correct === true ? 'Correct call'
+                                       : s.signal_correct === false ? 'Wrong call'
+                                       : 'Pending next-day result';
+                } else {
+                    sigEl.textContent = '—';
+                    sigEl.className = 'eod-val';
+                    sigSub.textContent = 'No signal captured';
+                }
+
+                const closeEl = document.getElementById('eod-close');
+                const closeChg = document.getElementById('eod-close-chg');
+                if (s.nifty_close) {
+                    closeEl.textContent = Math.round(s.nifty_close).toLocaleString('en-IN');
+                    if (s.next_day_change_pct != null) {
+                        const sign = s.next_day_change_pct >= 0 ? '+' : '';
+                        closeChg.textContent = `Next-day: ${sign}${s.next_day_change_pct.toFixed(2)}%`;
+                    } else {
+                        closeChg.textContent = 'awaiting next-day move';
+                    }
+                } else {
+                    closeEl.textContent = '—';
+                    closeChg.textContent = '';
+                }
+
+                // Top gainer/loser tiles — shown only when present.
+                const ext = document.getElementById('eod-extremes');
+                let extHtml = '';
+                if (s.top_gainer) {
+                    extHtml += `<div class="eod-trade gainer">
+                        <span class="eod-trade-lbl">Top gainer</span>
+                        ${s.top_gainer.trade_type.replace('_', ' ')} ${s.top_gainer.strike} · +₹${Math.round(s.top_gainer.realized_pnl).toLocaleString('en-IN')}
+                    </div>`;
+                }
+                if (s.top_loser) {
+                    extHtml += `<div class="eod-trade loser">
+                        <span class="eod-trade-lbl">Top loser</span>
+                        ${s.top_loser.trade_type.replace('_', ' ')} ${s.top_loser.strike} · −₹${Math.round(Math.abs(s.top_loser.realized_pnl)).toLocaleString('en-IN')}
+                    </div>`;
+                }
+                ext.innerHTML = extHtml;
+                ext.style.display = extHtml ? '' : 'none';
+            } catch (e) {
+                card.style.display = 'none';
+            }
+        }
+
+        // Loss-limit editor — in-app modal; persists to
+        // /api/auth/settings.max_daily_loss_inr.
+        async function openLossLimitEditor(ev) {
+            if (ev) ev.preventDefault();
+            let existing = null;
+            try {
+                const cur = await API.fetch('/api/auth/settings');
+                existing = cur?.max_daily_loss_inr || null;
+            } catch (e) {}
+            _openInputModal({
+                title: 'Daily Max-Loss Limit',
+                sub:   'When today\'s realised loss exceeds this amount, new trades will require explicit confirmation before they\'re booked.',
+                label: 'Daily max-loss',
+                hint:  'Leave at 0 (or click Clear) to disable the circuit breaker entirely.',
+                value: existing,
+                onSave: async (val) => {
+                    await API.put('/api/auth/settings', { max_daily_loss_inr: val });
+                    Utils.toast(
+                        val > 0
+                            ? `Daily loss limit set to ₹${val.toLocaleString('en-IN')}`
+                            : 'Daily limit cleared',
+                        'success'
+                    );
+                    loadMarginSummary();
+                },
+            });
+        }
+
+        // Capital editor — opens an in-app modal (no window.prompt).
+        // Persists to /api/auth/settings.total_capital_inr.
+        async function openCapitalEditor(ev) {
+            if (ev) ev.preventDefault();
+            let existing = null;
+            try {
+                const cur = await API.fetch('/api/auth/settings');
+                existing = cur?.total_capital_inr || null;
+            } catch (e) {}
+            _openInputModal({
+                title: 'Total Capital',
+                sub:   'Used to compute the deployment % bar on the Portfolio card.',
+                label: 'Total capital',
+                hint:  'Leave at 0 (or click Clear) to hide the deployment bar.',
+                value: existing,
+                onSave: async (val) => {
+                    await API.put('/api/auth/settings', { total_capital_inr: val });
+                    Utils.toast(
+                        val > 0
+                            ? `Capital set to ₹${val.toLocaleString('en-IN')}`
+                            : 'Capital cleared',
+                        'success'
+                    );
+                    loadMarginSummary();
+                },
+            });
+        }
+
+        // Portfolio greeks tile group — reads the aggregated `portfolio_greeks`
+        // block emitted by /api/trades/risk.  Sign convention from the
+        // trader's PoV (see backend): theta positive = collecting, delta
+        // positive = long the market, etc.
+        function updatePortfolioGreeks(g, openCount) {
+            const dEl  = document.getElementById('pf-delta');
+            const gEl  = document.getElementById('pf-gamma');
+            const tEl  = document.getElementById('pf-theta');
+            const vEl  = document.getElementById('pf-vega');
+            const tSub = document.getElementById('pf-theta-sub');
+            const hint = document.getElementById('portfolio-empty-hint');
+            if (!dEl) return;
+            if (!g || openCount === 0) {
+                dEl.textContent = '-'; gEl.textContent = '-'; tEl.textContent = '-'; vEl.textContent = '-';
+                dEl.className = gEl.className = tEl.className = vEl.className = 'pf-val font-mono';
+                if (tSub) tSub.textContent = 'if spot holds';
+                if (hint) hint.style.display = '';
+                return;
+            }
+            if (hint) hint.style.display = 'none';
+
+            const fmtSigned = (v, digits = 2) => (v >= 0 ? '+' : '') + Number(v).toFixed(digits);
+            const cls = v => 'pf-val font-mono ' + (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
+
+            // Δ — show as ₹/pt (which equals shares-equivalent with NIFTY's
+            // 1 unit = 1 ₹/pt convention).
+            dEl.textContent = fmtSigned(g.delta, 0);
+            dEl.className = cls(g.delta);
+
+            // Γ — small numbers; show 4 decimals
+            gEl.textContent = fmtSigned(g.gamma, 4);
+            gEl.className = cls(g.gamma);
+
+            // Θ — positive = trader collects daily; show as ₹/day
+            tEl.textContent = fmtSigned(g.theta, 0);
+            tEl.className = cls(g.theta);
+            if (tSub) {
+                tSub.textContent = g.theta > 0
+                    ? `+₹${Math.round(g.theta).toLocaleString('en-IN')}/day collected`
+                    : g.theta < 0
+                        ? `−₹${Math.round(Math.abs(g.theta)).toLocaleString('en-IN')}/day decay`
+                        : 'flat decay';
+            }
+
+            // V — ₹ per 1% IV move
+            vEl.textContent = fmtSigned(g.vega, 0);
+            vEl.className = cls(g.vega);
         }
 
         function setRiskGauge(side, riskData) {
@@ -1753,6 +2333,96 @@
         setInterval(loadNewsTone, 90000);
         WS.on('news_alert', () => loadNewsTone());
         document.getElementById('expiry-selector')?.addEventListener('change', loadMarketVerdict);
+    </script>
+
+    <!-- ── In-app numeric editor (replaces window.prompt for capital + max-loss) ── -->
+    <div id="ne-input-modal-bg" class="ne-input-modal-bg" onclick="_closeInputModal(event)">
+        <div class="ne-input-modal" onclick="event.stopPropagation()">
+            <div class="ne-im-head">
+                <h3 id="ne-im-title">Set value</h3>
+                <button class="ne-im-x" type="button" onclick="_closeInputModal()" aria-label="Close">&times;</button>
+            </div>
+            <p class="ne-im-sub" id="ne-im-sub"></p>
+
+            <label class="ne-im-lbl" for="ne-im-input">
+                <span id="ne-im-input-label">Amount</span>
+                <span class="ne-im-prefix">₹</span>
+            </label>
+            <input type="number" id="ne-im-input" class="ne-im-input" min="0" step="100" inputmode="numeric" placeholder="0">
+
+            <p class="ne-im-hint" id="ne-im-hint"></p>
+
+            <div class="ne-im-actions">
+                <button class="btn btn-sm btn-ghost" type="button" id="ne-im-clear" onclick="_clearInputModal()">Clear / Disable</button>
+                <span style="flex:1"></span>
+                <button class="btn btn-sm btn-secondary" type="button" onclick="_closeInputModal()">Cancel</button>
+                <button class="btn btn-sm btn-primary" type="button" id="ne-im-save" onclick="_saveInputModal()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ── Generic numeric-input modal (in-app replacement for window.prompt)
+        // Used by the dashboard's "Set capital" and "Adjust limit" buttons.
+        // _imState holds the open spec: { title, sub, hint, label, value,
+        //                                 onSave(num), onClear() }.
+        let _imState = null;
+
+        function _openInputModal(spec) {
+            _imState = spec;
+            document.getElementById('ne-im-title').textContent = spec.title || 'Set value';
+            document.getElementById('ne-im-sub').textContent   = spec.sub   || '';
+            document.getElementById('ne-im-hint').textContent  = spec.hint  || '';
+            document.getElementById('ne-im-input-label').textContent = spec.label || 'Amount';
+            const input = document.getElementById('ne-im-input');
+            input.value = (spec.value != null && spec.value > 0) ? String(Math.round(spec.value)) : '';
+            // Hide the Clear button when there's nothing to clear (cleaner first-time UX).
+            document.getElementById('ne-im-clear').style.display =
+                (spec.value != null && spec.value > 0) ? '' : 'none';
+            document.getElementById('ne-input-modal-bg').classList.add('open');
+            setTimeout(() => input.focus(), 60);
+        }
+        function _closeInputModal(ev) {
+            if (ev && ev.target && ev.target.id !== 'ne-input-modal-bg' && ev.type === 'click') return;
+            document.getElementById('ne-input-modal-bg').classList.remove('open');
+            _imState = null;
+        }
+        async function _saveInputModal() {
+            if (!_imState) return;
+            const raw = document.getElementById('ne-im-input').value;
+            const val = parseFloat(String(raw).replace(/[, ]/g, ''));
+            if (!isFinite(val) || val < 0) { Utils.toast('Enter a positive number', 'error'); return; }
+            const btn = document.getElementById('ne-im-save');
+            btn.disabled = true;
+            btn.textContent = 'Saving…';
+            try {
+                await _imState.onSave(val);
+                _closeInputModal();
+            } catch (e) {
+                Utils.toast('Save failed', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Save';
+            }
+        }
+        async function _clearInputModal() {
+            if (!_imState) return;
+            const btn = document.getElementById('ne-im-clear');
+            btn.disabled = true;
+            try {
+                if (_imState.onClear) await _imState.onClear();
+                else if (_imState.onSave) await _imState.onSave(0);
+                _closeInputModal();
+            } catch (e) { Utils.toast('Clear failed', 'error'); }
+            finally { btn.disabled = false; }
+        }
+        // Esc + Enter wiring
+        document.addEventListener('keydown', (e) => {
+            const open = document.getElementById('ne-input-modal-bg')?.classList.contains('open');
+            if (!open) return;
+            if (e.key === 'Escape') _closeInputModal();
+            else if (e.key === 'Enter') { e.preventDefault(); _saveInputModal(); }
+        });
     </script>
 </body>
 </html>

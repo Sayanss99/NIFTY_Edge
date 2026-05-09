@@ -5,11 +5,31 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from database import get_db
-from models import Trade, TradeStatus, User
+from models import Trade, TradeAnnotation, TradeStatus, User
 from auth import get_current_user
 from config import LOT_SIZE
 
 _IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _today_realized_pnl(db: Session, user_id: int) -> float:
+    """Sum realised P&L of trades closed today (IST).  Used by the daily
+    loss-stop guard.  Negative = today is in the red.  Includes both option
+    and futures legs since they all share the same realized_pnl column."""
+    today_ist = datetime.now(_IST).date()
+    rows = db.query(Trade).filter(
+        Trade.user_id == user_id,
+        Trade.status == TradeStatus.CLOSED.value,
+    ).all()
+    total = 0.0
+    for t in rows:
+        if not t.exit_date:
+            continue
+        # exit_date is naive UTC; treat midnight-day comparison via IST shift
+        ex_ist = (t.exit_date + timedelta(hours=5, minutes=30)).date()
+        if ex_ist == today_ist and t.realized_pnl is not None:
+            total += float(t.realized_pnl)
+    return total
 
 
 def _expire_past_trades(db: Session, user_id: int) -> int:
@@ -70,6 +90,11 @@ class AddTradeRequest(BaseModel):
     entry_iv: float = 0.0
     entry_delta: float = 0.0
     parent_trade_id: int | None = None
+    # Daily-loss circuit-breaker: when the user's realised loss for today
+    # exceeds `max_daily_loss_inr`, POST /api/trades/ refuses to write the
+    # row and returns `{requires_override: true, ...}` instead.  Re-posting
+    # with this flag set to True acknowledges the breach and books anyway.
+    confirm_override: bool = False
 
 
 class CloseTradeRequest(BaseModel):
@@ -167,6 +192,26 @@ def add_trade(
         ).first()
         if not parent:
             raise HTTPException(status_code=404, detail="Parent trade not found or already closed")
+
+    # ── Daily loss-stop gate (Batch C.1, warn + soft-block UX) ──────────
+    # If today's realised loss has already exceeded the user's configured
+    # max_daily_loss_inr, return a 200 with `requires_override` so the
+    # frontend can show a confirmation dialog.  The user then re-posts
+    # with confirm_override=True to acknowledge and book anyway.
+    threshold = (user.settings or {}).get("max_daily_loss_inr")
+    if threshold and threshold > 0 and not req.confirm_override:
+        today_pnl = _today_realized_pnl(db, user.id)
+        if today_pnl <= -float(threshold):
+            return {
+                "requires_override":  True,
+                "today_pnl":          round(today_pnl, 2),
+                "threshold":          float(threshold),
+                "message": (
+                    f"Daily loss ₹{int(abs(today_pnl)):,} exceeds your ₹"
+                    f"{int(threshold):,} limit. Re-submit with confirm_override "
+                    "to book anyway."
+                ),
+            }
 
     trade = Trade(
         user_id=user.id,
@@ -393,7 +438,10 @@ def get_risk_scores(
     ).all()
 
     if not open_trades:
-        return {"ce_risk": None, "pe_risk": None, "positions": []}
+        return {
+            "ce_risk": None, "pe_risk": None, "positions": [],
+            "portfolio_greeks": {"delta": 0.0, "gamma": 0.0, "theta": 0.0, "vega": 0.0},
+        }
 
     from models import MarketSnapshot
     snap = db.query(MarketSnapshot).order_by(MarketSnapshot.timestamp.desc()).first()
@@ -420,6 +468,16 @@ def get_risk_scores(
     pe_scores = []
     positions = []
 
+    # Portfolio-greek accumulators.  Sign convention from the trader's PoV:
+    #   BUY  → +1 × row.greek (long exposure)
+    #   SELL → -1 × row.greek (short exposure; theta becomes POSITIVE because
+    #          the chain's theta is negative for both CE/PE — the seller gains)
+    # Units are per-share scalars × qty × LOT_SIZE = position-level exposure.
+    pf_delta = 0.0      # shares-equivalent (also = ₹/pt move in spot)
+    pf_gamma = 0.0      # ₹/pt² (delta-change per 1pt move)
+    pf_theta = 0.0      # ₹/day (positive = trader collects)
+    pf_vega  = 0.0      # ₹ per 1% IV change
+
     # Futures contracts cache — populated lazily so we only hit NSE if the
     # user actually has open FUT positions.
     fut_by_expiry: dict | None = None
@@ -445,6 +503,9 @@ def get_risk_scores(
             qty_units = trade.quantity * lot
             is_long = trade.trade_type == "FUT_BUY"
             mtm = (ltp - trade.entry_premium) * qty_units if is_long else (trade.entry_premium - ltp) * qty_units
+            # Futures: delta is exactly the unit count (sign by side), no
+            # gamma/theta/vega exposure.  Contributes only to the Δ tile.
+            pf_delta += qty_units if is_long else -qty_units
             positions.append({
                 "trade_id": trade.id,
                 "trade_type": trade.trade_type,
@@ -494,6 +555,24 @@ def get_risk_scores(
                 vix_chg_pct=vix_chg_pct,
             )
 
+        # Per-share greeks pulled from the chain row.  Sign-flip for shorts
+        # so the accumulator reflects the trader's exposure (a short option
+        # gives the trader negative delta/gamma, positive theta — because
+        # row.theta is negative for decaying options).
+        sign = -1.0 if is_short else 1.0
+        units = trade.quantity * LOT_SIZE
+        row_gamma = float(row.get("gamma", 0) or 0)
+        row_theta = float(row.get("theta", 0) or 0)
+        row_vega  = float(row.get("vega",  0) or 0)
+        pos_delta = float(row["delta"]) * sign * units
+        pos_gamma = row_gamma * sign * units
+        pos_theta = row_theta * sign * units      # ₹/day for the position
+        pos_vega  = row_vega  * sign * units
+        pf_delta += pos_delta
+        pf_gamma += pos_gamma
+        pf_theta += pos_theta
+        pf_vega  += pos_vega
+
         position_data = {
             "trade_id": trade.id,
             "trade_type": trade.trade_type,
@@ -501,6 +580,11 @@ def get_risk_scores(
             "current_ltp": row["LTP"],
             "current_iv": row["IV"],
             "current_delta": row["delta"],
+            "current_gamma": row_gamma,
+            "current_theta": row_theta,
+            "current_vega":  row_vega,
+            "position_delta": round(pos_delta, 2),
+            "position_theta": round(pos_theta, 2),
             "iv_change_pct": round(((row["IV"] - trade.entry_iv) / trade.entry_iv * 100) if trade.entry_iv > 0 else 0, 1),
             "unrealized_pnl": round(
                 (trade.entry_premium - row["LTP"]) * LOT_SIZE * trade.quantity
@@ -522,10 +606,21 @@ def get_risk_scores(
     ce_risk = round(max(ce_scores), 1) if ce_scores else None
     pe_risk = round(max(pe_scores), 1) if pe_scores else None
 
+    # Portfolio-level greeks aggregation.  All values are at portfolio scale
+    # already (per-share × qty × LOT_SIZE).  See accumulator init for sign
+    # conventions and units.
+    portfolio_greeks = {
+        "delta": round(pf_delta, 2),       # shares-equivalent ⇄ ₹/pt move
+        "gamma": round(pf_gamma, 4),       # ₹/pt² (delta change per pt)
+        "theta": round(pf_theta, 2),       # ₹/day (positive = collecting)
+        "vega":  round(pf_vega, 2),        # ₹ per 1% IV change
+    }
+
     return {
         "ce_risk": {"score": ce_risk, "label": _risk_label(ce_risk)} if ce_risk is not None else None,
         "pe_risk": {"score": pe_risk, "label": _risk_label(pe_risk)} if pe_risk is not None else None,
         "positions": positions,
+        "portfolio_greeks": portfolio_greeks,
         "spot": spot,
     }
 
@@ -536,6 +631,187 @@ def _risk_label(score):
     if score < 60: return "Warning"
     if score < 80: return "Danger"
     return "Critical"
+
+
+# ── Trade annotations (Batch B.1) ────────────────────────────────────────────
+
+# Recognised mistake-tag slugs. The server stores whatever the client sends;
+# this list is published via /api/trades/annotation-tags so the client can
+# render a consistent chip palette without a separate config endpoint.
+MISTAKE_TAGS = [
+    {"slug": "wrong_direction",    "label": "Wrong direction"},
+    {"slug": "held_too_long",      "label": "Held too long"},
+    {"slug": "no_hedge",           "label": "No hedge"},
+    {"slug": "oversized",          "label": "Oversized"},
+    {"slug": "fomo_entry",         "label": "FOMO entry"},
+    {"slug": "ignored_signal",     "label": "Ignored signal"},
+    {"slug": "exited_too_early",   "label": "Exited too early"},
+    {"slug": "no_plan",            "label": "No plan"},
+    {"slug": "other",              "label": "Other"},
+]
+
+
+@router.get("/annotation-tags")
+def list_annotation_tags(_: User = Depends(get_current_user)):
+    """Mistake-tag taxonomy — single source of truth consumed by Journal +
+    Positions close-modal so the chip set never drifts between surfaces."""
+    return {"tags": MISTAKE_TAGS}
+
+
+class AnnotationRequest(BaseModel):
+    notes: str | None = None
+    mistake_tags: list[str] | None = None
+
+
+@router.get("/{trade_id}/annotation")
+def get_annotation(
+    trade_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Fetch annotation for a trade. Returns null if none yet — the journal
+    UI uses that to decide between "Add note" and "Edit note" affordances."""
+    trade = db.query(Trade).filter(Trade.id == trade_id, Trade.user_id == user.id).first()
+    if not trade:
+        raise HTTPException(404, "Trade not found")
+    a = db.query(TradeAnnotation).filter(TradeAnnotation.trade_id == trade_id).first()
+    if not a:
+        return {"annotation": None}
+    return {
+        "annotation": {
+            "trade_id":     a.trade_id,
+            "notes":        a.notes,
+            "mistake_tags": a.mistake_tags or [],
+            "updated_at":   a.updated_at.isoformat() if a.updated_at else None,
+        }
+    }
+
+
+@router.put("/{trade_id}/annotation")
+def upsert_annotation(
+    trade_id: int,
+    req: AnnotationRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Upsert annotation. Empty notes + empty tags deletes the row to keep
+    the table tidy (no zombie blank entries from accidental opens)."""
+    trade = db.query(Trade).filter(Trade.id == trade_id, Trade.user_id == user.id).first()
+    if not trade:
+        raise HTTPException(404, "Trade not found")
+    notes = (req.notes or "").strip() or None
+    tags  = [t for t in (req.mistake_tags or []) if isinstance(t, str)]
+    a = db.query(TradeAnnotation).filter(TradeAnnotation.trade_id == trade_id).first()
+    if not notes and not tags:
+        if a:
+            db.delete(a)
+            db.commit()
+        return {"annotation": None}
+    if a:
+        a.notes = notes
+        a.mistake_tags = tags or None
+    else:
+        a = TradeAnnotation(
+            trade_id=trade_id, user_id=user.id,
+            notes=notes, mistake_tags=tags or None,
+        )
+        db.add(a)
+    db.commit()
+    db.refresh(a)
+    return {
+        "annotation": {
+            "trade_id":     a.trade_id,
+            "notes":        a.notes,
+            "mistake_tags": a.mistake_tags or [],
+            "updated_at":   a.updated_at.isoformat(),
+        }
+    }
+
+
+# ── Margin & capital tracker ─────────────────────────────────────────────────
+# Crude SPAN+exposure approximation for index instruments.  Exact intraday
+# block depends on SPAN scenario shocks the exchange runs; treat this as a
+# *planning* number (parity with the futures Margin/lot disclaimer).
+#
+# Coefficients:
+#   short OPT  → 12% of strike × LOT_SIZE × qty   (SEBI ATM index-short range
+#                                                  is ~12-15%; we pick the low end
+#                                                  so we don't overstate "used")
+#   long  OPT  → 0 margin block, but premium paid is "deployed capital"
+#   FUT (any)  → reuse nse_futures.estimate_futures_margin (8.5% SPAN + 1.5%
+#                exposure, same convention as the Futures page)
+SHORT_OPT_MARGIN_PCT = 0.12
+
+
+def _estimate_opt_margin(trade: Trade) -> float:
+    """Per-trade margin block (₹) for an open option position."""
+    if "BUY" in trade.trade_type:
+        return 0.0
+    return SHORT_OPT_MARGIN_PCT * float(trade.strike) * LOT_SIZE * trade.quantity
+
+
+@router.get("/margin-summary")
+def get_margin_summary(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Capital deployment summary across all open positions.
+
+    Returns total margin blocked, free capital (vs the user's configured
+    `total_capital_inr`), and a breakdown by instrument so the dashboard
+    can show "how much room do I have left".
+    """
+    from nse_futures import estimate_futures_margin
+
+    open_trades = db.query(Trade).filter(
+        Trade.user_id == user.id,
+        Trade.status == TradeStatus.OPEN.value,
+    ).all()
+
+    capital = (user.settings or {}).get("total_capital_inr")
+    capital = float(capital) if capital and capital > 0 else None
+
+    by_instrument = {"OPT": 0.0, "FUT": 0.0}
+    by_position = []
+    long_premium_deployed = 0.0   # capital tied up in long-option premium
+
+    for t in open_trades:
+        if t.instrument_type == "FUT" or t.trade_type in ("FUT_BUY", "FUT_SELL"):
+            lot = t.lot_size_override or LOT_SIZE
+            mgn = estimate_futures_margin(t.entry_premium, t.quantity, lot)["total"]
+            by_instrument["FUT"] += mgn
+            by_position.append({"trade_id": t.id, "kind": "FUT", "margin": mgn})
+        else:
+            mgn = _estimate_opt_margin(t)
+            by_instrument["OPT"] += mgn
+            by_position.append({"trade_id": t.id, "kind": "OPT", "margin": mgn})
+            if "BUY" in t.trade_type:
+                long_premium_deployed += t.entry_premium * LOT_SIZE * t.quantity
+
+    used = round(by_instrument["OPT"] + by_instrument["FUT"], 2)
+
+    # Daily loss-stop status (Batch C.1) — piggybacked on this endpoint so
+    # the dashboard's red-banner check doesn't need a separate poll.
+    threshold = (user.settings or {}).get("max_daily_loss_inr")
+    threshold = float(threshold) if threshold and threshold > 0 else None
+    today_pnl = _today_realized_pnl(db, user.id)
+    breached = bool(threshold) and today_pnl <= -threshold
+
+    return {
+        "capital":              capital,                                  # may be None
+        "used":                 used,
+        "long_premium":         round(long_premium_deployed, 2),
+        "free":                 round(capital - used, 2) if capital else None,
+        "deployed_pct":         round((used / capital) * 100, 1) if capital else None,
+        "by_instrument":        {k: round(v, 2) for k, v in by_instrument.items()},
+        "by_position":          by_position,
+        "open_count":           len(open_trades),
+        "method":               "SPAN+exposure approximation",
+        # Daily loss-stop block
+        "today_pnl":            round(today_pnl, 2),
+        "loss_threshold":       threshold,
+        "loss_breached":        breached,
+    }
 
 
 # ── Roll Suggestion ───────────────────────────────────────────────────────────

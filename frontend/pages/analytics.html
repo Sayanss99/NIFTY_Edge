@@ -231,6 +231,55 @@
             transition: width 0.5s;
         }
         .vix-bar .vix-stat { width: 100px; text-align: right; font-family: var(--font-mono); font-size: 11px; }
+        /* Mistake breakdown — horizontal bars ranked by aggregate ₹ lost. */
+        .mb-row {
+            display: grid;
+            grid-template-columns: 150px 1fr 130px;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+        .mb-label { font-weight: 600; }
+        .mb-track {
+            height: 18px;
+            background: var(--bg-table-header);
+            border-radius: 4px;
+            position: relative;
+            overflow: hidden;
+        }
+        .mb-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--red), color-mix(in srgb, var(--red) 60%, var(--amber)));
+            border-radius: 4px;
+            transition: width 600ms cubic-bezier(0.22, 1, 0.36, 1);
+            min-width: 2px;
+        }
+        .mb-amount {
+            text-align: right;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            color: var(--red);
+            font-size: 11.5px;
+        }
+        .mb-amount .mb-count {
+            display: block;
+            font-size: 10px;
+            color: var(--text-muted);
+            font-weight: 500;
+            margin-top: 1px;
+        }
+        .mb-empty {
+            color: var(--text-muted);
+            text-align: center;
+            padding: 30px 12px;
+            font-size: 12px;
+        }
+        .mb-empty .mb-empty-link {
+            color: var(--primary, #2563EB);
+            text-decoration: none;
+            font-weight: 600;
+        }
         .insight-card {
             background: var(--blue-bg);
             border: 1px solid var(--blue);
@@ -401,6 +450,15 @@
                             <canvas id="scatter-chart" height="220"></canvas>
                             <div class="chart-tooltip" id="scatter-tip"></div>
                         </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-header-row">
+                            <div class="chart-title">What Cost Me</div>
+                            <span class="text-muted" style="font-size:11px" id="mistake-summary-line"></span>
+                        </div>
+                        <div class="chart-subtitle">Closed losing trades you tagged on the Journal page, ranked by total ₹ lost. A trade with multiple tags counts toward each — the goal is to surface the patterns most worth eliminating.</div>
+                        <div id="mistake-breakdown"></div>
                     </div>
 
                     <div class="chart-container">
@@ -704,24 +762,22 @@
             drawSlice(startA, winEnd,  greenC, winFrac  > 0.10 ? winPctTxt  : null);
             drawSlice(winEnd, lossEnd, redC,   lossFrac > 0.10 ? lossPctTxt : null);
 
-            // Centre KPI: net P&L + win rate
-            const net = winSum - lossSum;
+            // Centre KPI — win rate + sample size only.  The net ₹ amount
+            // is intentionally NOT shown here: the legend on the right
+            // already lists Profit total + Loss total, and a third number
+            // in the small donut hole was overcrowded.
             const totalN = winN + lossN;
             const winRate = totalN ? (winN / totalN * 100) : 0;
-            ctx.fillStyle = muted;
-            ctx.font = '600 9px sans-serif';
+            ctx.fillStyle = primary;
+            ctx.font = '700 22px JetBrains Mono, monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('NET P&L', cx, cy - 22);
-            ctx.fillStyle = net >= 0 ? greenC : redC;
-            ctx.font = '700 18px JetBrains Mono, monospace';
-            ctx.fillText((net >= 0 ? '+' : '−') + Utils.formatINR(Math.abs(net)).replace(/^[+\-]/, ''), cx, cy - 4);
-            ctx.fillStyle = primary;
-            ctx.font = '700 12px JetBrains Mono, monospace';
-            ctx.fillText(winRate.toFixed(0) + '% win rate', cx, cy + 16);
+            ctx.fillText(winRate.toFixed(0) + '%', cx, cy - 6);
             ctx.fillStyle = muted;
+            ctx.font = '600 10px sans-serif';
+            ctx.fillText('win rate', cx, cy + 12);
             ctx.font = '500 9.5px sans-serif';
-            ctx.fillText(totalN + ' trade' + (totalN === 1 ? '' : 's'), cx, cy + 30);
+            ctx.fillText(totalN + ' trade' + (totalN === 1 ? '' : 's'), cx, cy + 26);
 
             _hoverState.pie = {
                 cx, cy, rInner, rOuter,
@@ -1115,6 +1171,70 @@
             drawScatterChart(data);
             renderVixRegime(data.vix_regime);
             renderInsights(data.insights);
+            loadMistakeBreakdown();
+        }
+
+        // ── Mistake Breakdown (Batch B.2) ─────────────────────────────
+        // Pulls /api/analytics/mistake-breakdown.  Empty state nudges the
+        // user back to the Journal page where they tag trades — there's no
+        // path to populate this chart without going through that flow.
+        let _mistakeTagLabels = null;
+        async function _ensureMistakeLabels() {
+            if (_mistakeTagLabels) return _mistakeTagLabels;
+            try {
+                const r = await API.fetch('/api/trades/annotation-tags');
+                _mistakeTagLabels = {};
+                for (const t of (r?.tags || [])) _mistakeTagLabels[t.slug] = t.label;
+            } catch { _mistakeTagLabels = {}; }
+            return _mistakeTagLabels;
+        }
+
+        async function loadMistakeBreakdown() {
+            const container = document.getElementById('mistake-breakdown');
+            const summary   = document.getElementById('mistake-summary-line');
+            if (!container) return;
+            const labels = await _ensureMistakeLabels();
+            try {
+                const r = await API.fetch('/api/analytics/mistake-breakdown');
+                const rows = r?.breakdown || [];
+                if (summary) {
+                    summary.textContent = r?.total_tagged_trades
+                        ? `${r.total_tagged_trades} tagged trade${r.total_tagged_trades > 1 ? 's' : ''}`
+                        : '';
+                }
+                if (!rows.length) {
+                    container.innerHTML = `
+                        <div class="mb-empty">
+                            No tagged losses yet. Tag a trade on the
+                            <a href="/journal" class="mb-empty-link">Journal</a> page to start
+                            spotting your costliest patterns.
+                        </div>`;
+                    return;
+                }
+                // Bars are scaled to the costliest tag.  We display
+                // total_loss for ranking + count below as context. Tags that
+                // net out positive (count column shows wins > losses) get a
+                // 0-width bar — they're not "what cost me".
+                const maxLoss = Math.max(...rows.map(r => r.total_loss), 1);
+                container.innerHTML = rows.map(r => {
+                    const w = (r.total_loss / maxLoss) * 100;
+                    const lbl = labels[r.tag] || r.tag;
+                    const sub = `${r.count} trade${r.count > 1 ? 's' : ''} · ${r.wins}W / ${r.losses}L`;
+                    return `
+                        <div class="mb-row" title="${lbl}">
+                            <div class="mb-label">${lbl}</div>
+                            <div class="mb-track">
+                                <div class="mb-fill" style="width:${w.toFixed(1)}%"></div>
+                            </div>
+                            <div class="mb-amount">
+                                ${r.total_loss > 0 ? '−' + Utils.formatINR(r.total_loss).replace(/^[+\-]/, '') : Utils.formatINR(r.total_pnl)}
+                                <span class="mb-count">${sub}</span>
+                            </div>
+                        </div>`;
+                }).join('');
+            } catch (e) {
+                container.innerHTML = '<div class="mb-empty">Could not load mistake breakdown.</div>';
+            }
         }
 
         function drawDistanceChart(canvasId, distances, color) {

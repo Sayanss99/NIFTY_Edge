@@ -75,6 +75,8 @@ def get_me(user: User = Depends(get_current_user)):
 
 class UpdateSettingsRequest(BaseModel):
     vix_offset: float | None = None
+    total_capital_inr: float | None = None        # Margin tracker (Batch A.2)
+    max_daily_loss_inr: float | None = None       # Daily loss-stop (Batch C.1)
 
 
 @router.get("/settings")
@@ -82,6 +84,9 @@ def get_settings(user: User = Depends(get_current_user)):
     settings = user.settings or {}
     return {
         "vix_offset": settings.get("vix_offset", 50),
+        # `None`-able fields — frontend treats null as "not set / disabled"
+        "total_capital_inr":  settings.get("total_capital_inr"),
+        "max_daily_loss_inr": settings.get("max_daily_loss_inr"),
     }
 
 
@@ -91,9 +96,15 @@ def update_settings(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    settings = user.settings or {}
+    settings = dict(user.settings or {})   # copy so SQLAlchemy detects change
     if req.vix_offset is not None:
         settings["vix_offset"] = req.vix_offset
+    # Capital and daily-loss are nullable on purpose: passing 0 disables both.
+    # An empty/missing key leaves the prior value untouched.
+    if req.total_capital_inr is not None:
+        settings["total_capital_inr"] = float(req.total_capital_inr) if req.total_capital_inr > 0 else None
+    if req.max_daily_loss_inr is not None:
+        settings["max_daily_loss_inr"] = float(req.max_daily_loss_inr) if req.max_daily_loss_inr > 0 else None
     user.settings = settings
     db.commit()
     return {"message": "Settings updated", "settings": settings}
