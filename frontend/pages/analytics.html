@@ -320,6 +320,47 @@
         .month-cell:hover { transform: scale(1.06); }
         .chart-wrap { position: relative; }
         .chart-wrap canvas { cursor: crosshair; }
+        /* Scatter zoom slider — small corner widget, vertical native control */
+        .scatter-zoom {
+            position: absolute;
+            top: 8px; right: 8px;
+            background: var(--bg-card, #fff);
+            border: 1px solid var(--border, #E5E7EB);
+            border-radius: 8px;
+            padding: 6px 5px 5px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            z-index: 5;
+            user-select: none;
+        }
+        .scatter-zoom .sz-plus,
+        .scatter-zoom .sz-minus {
+            font-size: 11px; font-weight: 700; line-height: 1;
+            color: var(--text-muted);
+        }
+        .scatter-zoom input[type="range"] {
+            appearance: slider-vertical;
+            -webkit-appearance: slider-vertical;
+            writing-mode: vertical-lr;
+            width: 18px; height: 84px;
+            margin: 0; padding: 0;
+            accent-color: var(--primary, #2563EB);
+            cursor: ns-resize;
+        }
+        .scatter-zoom .sz-pct {
+            font-size: 9px;
+            font-family: JetBrains Mono, monospace;
+            font-weight: 700;
+            color: var(--primary, #2563EB);
+            background: var(--bg-secondary, rgba(37,99,235,0.08));
+            border-radius: 4px;
+            padding: 1px 4px;
+            min-width: 28px;
+            text-align: center;
+        }
         .chart-tooltip {
             position: absolute;
             pointer-events: none;
@@ -444,11 +485,22 @@
                     </div>
 
                     <div class="chart-container">
-                        <div class="chart-title">Strike Distance vs P&L <span style="font-size:10px;color:var(--text-muted);font-weight:400">(hover points)</span></div>
-                        <div class="chart-subtitle">Each mark is one closed option leg. X-axis = OTM distance at entry, Y-axis = realised P&L. Circles are CE, squares are PE; green = winner. Clusters in the top-right mean "far OTM worked"; losses near the left mean strikes were too close to spot.</div>
+                        <div class="chart-title">Strike Distance vs P&L</div>
+                        <div class="chart-subtitle">Each mark is one closed option leg. X-axis = OTM distance at entry, Y-axis = realised P&L. Circles are CE, squares are PE; green = winner. Clusters near the left mean strikes were close to spot; far-right points are the deep-OTM tail. Use the corner zoom slider to expand the view toward the axis with the farthest outliers.</div>
                         <div class="chart-wrap">
                             <canvas id="scatter-chart" height="220"></canvas>
                             <div class="chart-tooltip" id="scatter-tip"></div>
+                            <!-- Corner zoom slider — top = cluster, bottom = full extent.
+                                 Per-axis lerp between cluster bounds and raw extent: axis
+                                 with the farthest outliers expands the most per slider unit. -->
+                            <div id="scatter-zoom" class="scatter-zoom" style="display:none">
+                                <span class="sz-plus"  title="Cluster zoom">＋</span>
+                                <input type="range" id="scatter-zoom-input" min="0" max="1000" value="1000" step="1"
+                                       orient="vertical"
+                                       title="Zoom: top = cluster, bottom = include outliers">
+                                <span class="sz-minus" title="Full extent (all outliers)">−</span>
+                                <span class="sz-pct" id="scatter-zoom-pct">0%</span>
+                            </div>
                         </div>
                     </div>
 
@@ -1048,13 +1100,16 @@
                     const bx = s.pad.left + s.gap + i * (s.barW + s.gap);
                     if (x >= bx && x <= bx + s.barW) {
                         const total = s.buckets[i];
-                        const wins = s.winBuckets[i];
+                        const wins  = s.winBuckets[i];
                         const wr = total ? Math.round((wins / total) * 100) : 0;
-                        const lo = i * s.bucketSize;
-                        const hi = lo + s.bucketSize;
                         const sideLabel = side === 'ce' ? 'CE' : 'PE';
+                        // Final bucket is the overflow tier when hasOverflow
+                        const isOverflow = s.hasOverflow && i === s.bucketCount - 1;
+                        const range = isOverflow
+                            ? `≥${Math.round(s.visMax)} pts OTM (max ${s.overflowMax})`
+                            : `${i * s.bucketSize}–${(i + 1) * s.bucketSize} pts OTM`;
                         return `
-                            <div class="t-label">${sideLabel} · ${lo}–${hi} pts OTM</div>
+                            <div class="t-label">${sideLabel} · ${range}</div>
                             <div>${total} trade${total > 1 ? 's' : ''} · ${wins} win${wins === 1 ? '' : 's'}</div>
                             <div>Win rate: <span style="color:${wr >= 50 ? '#16A34A' : '#DC2626'};font-weight:700">${wr}%</span></div>
                         `;
@@ -1110,10 +1165,14 @@
             if (!best) return null;
             const d = best.d;
             const color = d.pnl >= 0 ? '#16A34A' : '#DC2626';
+            const outlierTag = best.clipped
+                ? '<div style="font-size:10px;color:#9CA3AF;margin-top:2px">⚠ Outlier — pinned to edge (slide zoom down to see)</div>'
+                : '';
             return `
                 <div class="t-label">${best.side} · ${d.strike || ''} ${d.expiry ? '· ' + d.expiry : ''}</div>
                 <div>Distance: ${Math.round(d.distance)} pts OTM</div>
                 <div>P&L: <span style="color:${color};font-weight:700">${Utils.formatINR(d.pnl)}</span> · ${d.win ? 'Win' : 'Loss'}</div>
+                ${outlierTag}
             `;
         });
 
@@ -1256,53 +1315,154 @@
                 return;
             }
 
-            // Histogram: bucket by 200pt intervals
-            const bucketSize = 200;
-            const maxDist = Math.max(...distances.map(d => d.distance));
-            const bucketCount = Math.ceil(maxDist / bucketSize) + 1;
-            const buckets = Array(bucketCount).fill(0);
-            const winBuckets = Array(bucketCount).fill(0);
+            // ── Adaptive bucketing ─────────────────────────────────────
+            // PE distances often have one or two extreme outliers (e.g. a
+            // single 24,000-pt trade) alongside a tight cluster near 0.
+            // Naive bucketing (fixed 200-pt steps from 0..max) then produces
+            // 120+ thin bars with overlapping fractional labels — which is
+            // exactly the unreadable mess this code was rewritten to avoid.
+            //
+            // Strategy:
+            //   1. Cap the visible ceiling at min(p95, median × 6) so a lone
+            //      outlier can't drag the axis out to oblivion.
+            //   2. Snap the ceiling to a 1-2-2.5-5×10ᵏ "nice" value.
+            //   3. Pick an integer bucket size from a curated list so labels
+            //      never end up fractional (e.g. "2008.33").
+            //   4. Outliers beyond the ceiling collapse into a final "≥X"
+            //      overflow bucket — visible but compressed.
+            //   5. If bars get narrow, draw every Nth label (always keep
+            //      first / last / overflow visible).
+            const dists = distances.map(d => d.distance).sort((a, b) => a - b);
+            const p = (q) => dists[Math.min(dists.length - 1, Math.floor(dists.length * q))];
+            const p95     = p(0.95);
+            const median  = p(0.50);
+            const tailCap = median > 0 ? median * 6 : Infinity;
+            const rawCeiling = Math.max(Math.min(p95, tailCap), 100);
+
+            const niceCeil = (v) => {
+                const pow  = Math.pow(10, Math.floor(Math.log10(v)));
+                const m    = v / pow;
+                const snap = m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10;
+                return snap * pow;
+            };
+            const visMax = niceCeil(rawCeiling);
+
+            const targetBuckets = 8;
+            const rawStep = visMax / targetBuckets;
+            const niceSteps = [10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000];
+            let bucketSize = niceSteps.find(s => s >= rawStep);
+            if (!bucketSize) bucketSize = niceCeil(rawStep);
+
+            const visBuckets = Math.max(1, Math.ceil(visMax / bucketSize));
+            const buckets    = Array(visBuckets + 1).fill(0);  // last = overflow
+            const winBuckets = Array(visBuckets + 1).fill(0);
+            let overflowMax = 0;
 
             for (const d of distances) {
-                const idx = Math.floor(d.distance / bucketSize);
-                buckets[idx]++;
-                if (d.win) winBuckets[idx]++;
+                if (d.distance >= visMax) {
+                    buckets[visBuckets]++;
+                    if (d.win) winBuckets[visBuckets]++;
+                    overflowMax = Math.max(overflowMax, d.distance);
+                } else {
+                    const idx = Math.min(visBuckets - 1, Math.floor(d.distance / bucketSize));
+                    buckets[idx]++;
+                    if (d.win) winBuckets[idx]++;
+                }
             }
+            const hasOverflow = buckets[visBuckets] > 0;
+            const totalBuckets = hasOverflow ? visBuckets + 1 : visBuckets;
 
-            const pad = { top: 10, right: 10, bottom: 30, left: 30 };
+            const pad = { top: 14, right: 14, bottom: 36, left: 34 };
             const cW = W - pad.left - pad.right;
             const cH = H - pad.top - pad.bottom;
-            const maxCount = Math.max(...buckets, 1);
-            const barW = Math.min(30, cW / bucketCount - 2);
-            const gap = (cW - barW * bucketCount) / (bucketCount + 1);
+            const maxCount = Math.max(...buckets.slice(0, totalBuckets), 1);
+            const barW = Math.max(8, Math.min(36, cW / totalBuckets - 6));
+            const gap  = (cW - barW * totalBuckets) / (totalBuckets + 1);
 
-            for (let i = 0; i < bucketCount; i++) {
-                if (buckets[i] === 0) continue;
+            // Pre-compute label stride so labels never overlap regardless
+            // of how many bars fit on screen.
+            const widestLabel = Math.max(
+                String(Math.round((visBuckets - 1) * bucketSize)).length,
+                hasOverflow ? String(`≥${Math.round(visMax)}`).length : 0
+            );
+            const labelPxNeeded = widestLabel * 6 + 6;   // ~6px per char + padding
+            const labelStride   = Math.max(1, Math.ceil(labelPxNeeded / (barW + gap)));
+
+            // Y-axis max-count tick
+            ctx.fillStyle = '#6B7280';
+            ctx.font = '9px JetBrains Mono, monospace';
+            ctx.textAlign = 'right';
+            ctx.fillText(maxCount.toString(), pad.left - 4, pad.top + 8);
+
+            for (let i = 0; i < totalBuckets; i++) {
                 const x = pad.left + gap + i * (barW + gap);
-                const barH = (buckets[i] / maxCount) * cH;
-                const y = pad.top + cH - barH;
+                const isOverflow = (i === visBuckets) && hasOverflow;
 
-                // Total bar
-                ctx.fillStyle = color + '40';
-                ctx.fillRect(x, y, barW, barH);
-                // Win portion
-                const winH = (winBuckets[i] / maxCount) * cH;
-                ctx.fillStyle = color;
-                ctx.fillRect(x, pad.top + cH - winH, barW, winH);
+                if (buckets[i] > 0) {
+                    const barH = (buckets[i] / maxCount) * cH;
+                    const y = pad.top + cH - barH;
+                    // Total bar (all trades in bucket, light fill)
+                    ctx.fillStyle = isOverflow ? '#9CA3AF55' : color + '40';
+                    ctx.fillRect(x, y, barW, barH);
+                    // Win portion (solid overlay)
+                    const winH = (winBuckets[i] / maxCount) * cH;
+                    ctx.fillStyle = isOverflow ? '#9CA3AF' : color;
+                    ctx.fillRect(x, pad.top + cH - winH, barW, winH);
+                    // Count label above bar — only when bar is tall enough
+                    if (barH > 14) {
+                        ctx.fillStyle = '#9CA3AF';
+                        ctx.font = '9px JetBrains Mono, monospace';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(buckets[i].toString(), x + barW / 2, y - 2);
+                    }
+                }
 
-                // Label
-                ctx.fillStyle = '#6B7280';
-                ctx.font = '9px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText(`${i * bucketSize}`, x + barW/2, H - 8);
+                // X-axis label — first, last, overflow always; otherwise stride
+                const showLabel = isOverflow || i === 0 || i === totalBuckets - 1
+                                  || (i % labelStride === 0);
+                if (showLabel) {
+                    ctx.fillStyle = '#6B7280';
+                    ctx.font = '9px JetBrains Mono, monospace';
+                    ctx.textAlign = 'center';
+                    const label = isOverflow
+                        ? `≥${Math.round(visMax)}`
+                        : Math.round(i * bucketSize).toString();
+                    ctx.fillText(label, x + barW / 2, H - 18);
+                }
             }
 
+            // X-axis title with overflow callout so the user knows outliers
+            // were collapsed (and what the max was).
+            ctx.fillStyle = '#9CA3AF';
+            ctx.font = '9px sans-serif';
+            ctx.textAlign = 'center';
+            const overflowNote = hasOverflow
+                ? ` · ${buckets[visBuckets]} outlier${buckets[visBuckets] > 1 ? 's' : ''} (max ${overflowMax} pts)`
+                : '';
+            ctx.fillText('OTM distance (pts)' + overflowNote, pad.left + cW / 2, H - 4);
+
             const side = canvasId === 'ce-dist-chart' ? 'ce' : 'pe';
-            _hoverState[side] = { buckets, winBuckets, bucketSize, bucketCount, pad, barW, gap, cH, W, H, maxCount };
+            _hoverState[side] = {
+                buckets, winBuckets, bucketSize, bucketCount: totalBuckets,
+                pad, barW, gap, cH, W, H, maxCount, visMax, hasOverflow, overflowMax,
+            };
         }
 
-        // ── Scatter chart ─────────────────────────────────────────────
+        // ── Scatter chart with corner zoom slider ─────────────────────
+        // Last dataset is cached so the slider re-renders without re-fetching
+        // analytics. zoomFrac=0 → cluster view (default); 1 → full extent.
+        // Per-axis lerp means the axis with the farthest outliers expands
+        // most per slider unit — exactly the "focus on cluster, peek at
+        // outliers" UX the user asked for.
+        let _scatterLastData = null;
+        let _scatterZoomFrac = 0;
+
         function drawScatterChart(data) {
+            _scatterLastData = data;
+            _drawScatterChartInternal(data, _scatterZoomFrac);
+        }
+
+        function _drawScatterChartInternal(data, zoomFrac) {
             const canvas = document.getElementById('scatter-chart');
             const ctx = canvas.getContext('2d');
             const dpr = window.devicePixelRatio || 1;
@@ -1319,88 +1479,225 @@
                 ctx.font = '12px sans-serif';
                 ctx.textAlign = 'center';
                 ctx.fillText('No trades', W/2, H/2);
+                _hoverState.scatter = null;
                 return;
             }
 
-            const pad = { top: 15, right: 20, bottom: 30, left: 60 };
+            const pad = { top: 18, right: 28, bottom: 38, left: 68 };
             const cW = W - pad.left - pad.right;
             const cH = H - pad.top - pad.bottom;
 
-            const maxDist = Math.max(...all.map(d => d.distance), 100);
-            const pnls = all.map(d => d.pnl);
-            const minP = Math.min(0, ...pnls);
-            const maxP = Math.max(0, ...pnls);
-            const rangeP = maxP - minP || 1;
+            // ── Tail-clipped cluster bounds ─────────────────────────────
+            // Use min(p95, median × 6) so a single deep-OTM outlier can't
+            // drag the X axis out to 24,000 pts and crush the meaningful
+            // cluster into a single pixel on the left.
+            const dists = all.map(d => d.distance).sort((a, b) => a - b);
+            const pnls  = all.map(d => d.pnl).sort((a, b) => a - b);
+            const q = (arr, p) => arr.length ? arr[Math.min(arr.length - 1, Math.floor(arr.length * p))] : 0;
+            const xMedian   = q(dists, 0.50);
+            const xTailCap  = xMedian > 0 ? xMedian * 6 : Infinity;
+            const xClip     = Math.max(Math.min(q(dists, 0.95), xTailCap), 100);
+            const yLo   = Math.min(q(pnls, 0.02), 0);
+            const yHi   = Math.max(q(pnls, 0.98), 0);
+            const xMaxRaw = dists[dists.length - 1] || xClip;
+            const yMaxRaw = pnls[pnls.length - 1]   || yHi;
+            const yMinRaw = pnls[0]                  || yLo;
+            const hasXOutliers = xMaxRaw > xClip;
+            const hasYOutliers = yMaxRaw > yHi || yMinRaw < yLo;
 
-            // Zero line
-            const zeroY = pad.top + cH * (1 - (0 - minP) / rangeP);
-            ctx.strokeStyle = '#E5E7EB';
+            // sqrt-scale on X kicks in when the cluster is heavily right-
+            // skewed — spreads dense low values across the canvas while
+            // preserving rank order.
+            const sqrtScale = (xMedian > 0) && (xClip / Math.max(xMedian, 1) > 5);
+            const xfwd = sqrtScale ? Math.sqrt : (v) => v;
+
+            // ── Zoom viewport ────────────────────────────────────────────
+            // Per-axis lerp: cluster bounds @ zf=0 → raw extent @ zf=1.
+            const zf = Math.max(0, Math.min(1, zoomFrac));
+            const xViewLo  = 0;
+            const xViewHi  = xClip + (xMaxRaw - xClip) * zf;
+            const xViewLoT = xfwd(xViewLo);
+            const xViewHiT = xfwd(xViewHi);
+            const xViewSpanT = (xViewHiT - xViewLoT) || 1;
+            const yViewLo  = yLo + (yMinRaw - yLo) * zf;
+            const yViewHi  = yHi + (yMaxRaw - yHi) * zf;
+            const yViewSpan = (yViewHi - yViewLo) || 1;
+
+            // Zero line — projected through the current y viewport
+            const zeroY = pad.top + cH * (1 - (0 - yViewLo) / yViewSpan);
+            ctx.strokeStyle = '#E5E7EB22';
             ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
             ctx.beginPath();
             ctx.moveTo(pad.left, zeroY);
             ctx.lineTo(W - pad.right, zeroY);
             ctx.stroke();
+            ctx.setLineDash([]);
 
-            // Dots
-            for (const d of data.ce_distances || []) {
-                const x = pad.left + (d.distance / maxDist) * cW;
-                const y = pad.top + cH * (1 - (d.pnl - minP) / rangeP);
-                ctx.beginPath();
-                ctx.arc(x, y, 5, 0, Math.PI * 2);
-                ctx.fillStyle = d.win ? 'rgba(22,163,74,0.7)' : 'rgba(220,38,38,0.7)';
-                ctx.fill();
-                ctx.strokeStyle = d.win ? '#166534' : '#991B1B';
-                ctx.lineWidth = 1;
-                ctx.stroke();
+            // Project a data point.  Points outside the viewport are pinned
+            // to the edge and marked with an outlier sentinel ring so the
+            // user can see *that* outliers exist without losing cluster
+            // resolution.
+            const project = (d) => {
+                let clipped = false;
+                let clipSide = null;
+                let xRaw = d.distance;
+                let y    = d.pnl;
+                if (xRaw < xViewLo) { xRaw = xViewLo; clipped = true; clipSide = 'left';   }
+                if (xRaw > xViewHi) { xRaw = xViewHi; clipped = true; clipSide = 'right';  }
+                if (y > yViewHi)    { y = yViewHi;    clipped = true; clipSide = clipSide || 'top';    }
+                if (y < yViewLo)    { y = yViewLo;    clipped = true; clipSide = clipSide || 'bottom'; }
+                return {
+                    px: pad.left + ((xfwd(xRaw) - xViewLoT) / xViewSpanT) * cW,
+                    py: pad.top + cH * (1 - (y - yViewLo) / yViewSpan),
+                    clipped, clipSide,
+                };
+            };
+
+            // Stable per-point jitter so co-located dots remain distinguishable
+            const jitter = (seed) => {
+                const h = Math.abs(Math.sin(seed * 12.9898) * 43758.5453) % 1;
+                return (h - 0.5) * 4;        // ±2px
+            };
+
+            const plotted = [];
+            for (const d of (data.ce_distances || [])) {
+                const p = project(d);
+                plotted.push({ side: 'CE', d,
+                    x: p.px + (p.clipped ? 0 : jitter(d.strike + d.pnl)),
+                    y: p.py + (p.clipped ? 0 : jitter(d.strike - d.pnl)),
+                    clipped: p.clipped, clipSide: p.clipSide });
             }
-            for (const d of data.pe_distances || []) {
-                const x = pad.left + (d.distance / maxDist) * cW;
-                const y = pad.top + cH * (1 - (d.pnl - minP) / rangeP);
-                ctx.beginPath();
-                ctx.rect(x - 4, y - 4, 8, 8);
-                ctx.fillStyle = d.win ? 'rgba(22,163,74,0.7)' : 'rgba(220,38,38,0.7)';
-                ctx.fill();
-                ctx.strokeStyle = d.win ? '#166534' : '#991B1B';
-                ctx.lineWidth = 1;
-                ctx.stroke();
+            for (const d of (data.pe_distances || [])) {
+                const p = project(d);
+                plotted.push({ side: 'PE', d,
+                    x: p.px + (p.clipped ? 0 : jitter(d.strike + d.pnl)),
+                    y: p.py + (p.clipped ? 0 : jitter(d.strike - d.pnl)),
+                    clipped: p.clipped, clipSide: p.clipSide });
             }
 
-            // Axes labels
+            // Density-aware sizing so dense clusters still read as clusters
+            // but distinct points stay visible.
+            const fillAlpha = Math.max(0.25, Math.min(0.78, 14 / plotted.length));
+            const dotR = plotted.length > 80 ? 3.2
+                       : plotted.length > 40 ? 4
+                       : 5;
+
+            for (const pt of plotted) {
+                const win = pt.d.win;
+                ctx.fillStyle   = win ? `rgba(22,163,74,${fillAlpha})` : `rgba(220,38,38,${fillAlpha})`;
+                ctx.strokeStyle = win ? '#166534' : '#991B1B';
+                ctx.lineWidth = 1;
+                if (pt.side === 'CE') {
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, dotR, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                } else {
+                    ctx.beginPath();
+                    ctx.rect(pt.x - dotR, pt.y - dotR, dotR * 2, dotR * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                }
+                // Outlier sentinel — open ring around clipped points
+                if (pt.clipped) {
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, dotR + 3, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#9CA3AF';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([2, 2]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            }
+
+            // X ticks — invert the transform across the current window
             ctx.fillStyle = '#6B7280';
-            ctx.font = '10px sans-serif';
+            ctx.font = '9px JetBrains Mono, monospace';
             ctx.textAlign = 'center';
-            ctx.fillText('Strike Distance (pts OTM)', W/2, H - 4);
+            const xViewWidth = xViewHi - xViewLo;
+            const xRoundStep = xViewWidth > 5000 ? 500
+                              : xViewWidth > 1000 ? 100
+                              : xViewWidth > 200  ? 50
+                              : 25;
+            for (let i = 0; i <= 5; i++) {
+                const frac = i / 5;
+                const tickT = xViewLoT + frac * xViewSpanT;
+                const dataAtTick = sqrtScale ? Math.pow(tickT, 2) : tickT;
+                const v = Math.round(dataAtTick / xRoundStep) * xRoundStep;
+                const x = pad.left + frac * cW;
+                ctx.fillText(v.toString(), x, H - 18);
+            }
+            const rightClipped  = plotted.filter(p => p.clipSide === 'right').length;
+            const topClipped    = plotted.filter(p => p.clipSide === 'top').length;
+            const bottomClipped = plotted.filter(p => p.clipSide === 'bottom').length;
+            const xScaleTag = sqrtScale ? ' · √-scale (cluster zoom)' : '';
+            const xNote = rightClipped ? ` · ${rightClipped} outlier${rightClipped > 1 ? 's' : ''} →` : '';
+            ctx.fillText('Strike distance (pts OTM)' + xScaleTag + xNote, pad.left + cW / 2, H - 4);
+
+            // Y ticks
             ctx.textAlign = 'right';
-            ctx.fillText('P&L', pad.left - 8, pad.top + 4);
+            for (let i = 0; i <= 4; i++) {
+                const v = yViewLo + (yViewSpan * i / 4);
+                const y = pad.top + cH * (1 - i / 4);
+                ctx.fillText(Utils.formatNum(Math.round(v)), pad.left - 6, y + 3);
+            }
+            const yClippedNote = (topClipped || bottomClipped)
+                ? ' · ' + [topClipped && `${topClipped} ↑`, bottomClipped && `${bottomClipped} ↓`]
+                          .filter(Boolean).join(' · ')
+                : '';
+            ctx.save();
+            ctx.translate(14, pad.top + cH / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.textAlign = 'center';
+            ctx.fillText('P&L (₹)' + yClippedNote, 0, 0);
+            ctx.restore();
 
             // Legend
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'left';
-            ctx.beginPath(); ctx.arc(W - 140, 12, 4, 0, Math.PI*2); ctx.fillStyle = '#DC2626'; ctx.fill();
-            ctx.fillStyle = '#6B7280'; ctx.fillText('CE', W - 132, 15);
-            ctx.beginPath(); ctx.rect(W - 100, 8, 8, 8); ctx.fillStyle = '#2563EB'; ctx.fill();
-            ctx.fillStyle = '#6B7280'; ctx.fillText('PE', W - 88, 15);
-            ctx.beginPath(); ctx.arc(W - 60, 12, 4, 0, Math.PI*2); ctx.fillStyle = '#16A34A'; ctx.fill();
-            ctx.fillStyle = '#6B7280'; ctx.fillText('Win', W - 52, 15);
+            ctx.beginPath(); ctx.arc(W - 152, 14, 4, 0, Math.PI*2); ctx.fillStyle = '#DC2626'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('CE', W - 144, 17);
+            ctx.beginPath(); ctx.rect(W - 110, 10, 8, 8); ctx.fillStyle = '#2563EB'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('PE', W - 98, 17);
+            ctx.beginPath(); ctx.arc(W - 66, 14, 4, 0, Math.PI*2); ctx.fillStyle = '#16A34A'; ctx.fill();
+            ctx.fillStyle = '#6B7280'; ctx.fillText('Win', W - 58, 17);
 
-            // Build lookup: pixel position for every plotted point
-            const plotted = [];
-            for (const d of data.ce_distances || []) {
-                plotted.push({
-                    side: 'CE', d,
-                    x: pad.left + (d.distance / maxDist) * cW,
-                    y: pad.top + cH * (1 - (d.pnl - minP) / rangeP),
-                });
-            }
-            for (const d of data.pe_distances || []) {
-                plotted.push({
-                    side: 'PE', d,
-                    x: pad.left + (d.distance / maxDist) * cW,
-                    y: pad.top + cH * (1 - (d.pnl - minP) / rangeP),
-                });
-            }
             _hoverState.scatter = { plotted, W, H };
+
+            // ── Sync the corner slider visibility/state ──────────────────
+            const wrap = document.getElementById('scatter-zoom');
+            if (wrap) {
+                const canZoom = hasXOutliers || hasYOutliers;
+                if (canZoom) {
+                    wrap.style.display = 'flex';
+                    const input = document.getElementById('scatter-zoom-input');
+                    // Native vertical slider: 1000=top, 0=bottom. We want
+                    // top=cluster (zf=0), so the slider value is (1 - zf).
+                    const sliderVal = Math.round((1 - zf) * 1000);
+                    if (input && Math.round(input.value) !== sliderVal) {
+                        input.value = String(sliderVal);
+                    }
+                    const pct = document.getElementById('scatter-zoom-pct');
+                    if (pct) pct.textContent = Math.round(zf * 100) + '%';
+                } else {
+                    wrap.style.display = 'none';
+                }
+            }
         }
+
+        // Wire the zoom slider once (independent of dataset reloads).
+        document.addEventListener('DOMContentLoaded', () => {
+            const input = document.getElementById('scatter-zoom-input');
+            if (!input) return;
+            input.addEventListener('input', () => {
+                // 1000 = thumb at top = cluster (zf=0); 0 = bottom = full extent (zf=1)
+                _scatterZoomFrac = 1 - Number(input.value) / 1000;
+                if (_scatterLastData) {
+                    _drawScatterChartInternal(_scatterLastData, _scatterZoomFrac);
+                }
+            });
+        });
 
         // ── VIX regime bars ───────────────────────────────────────────
         function renderVixRegime(regimes) {
