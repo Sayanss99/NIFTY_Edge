@@ -4,6 +4,9 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+backend/__pycache__/
+
+Sheet_dashboard_codes/
 
 # ── Virtual environments ─────────────────────────────────────────────────────
 venv/
