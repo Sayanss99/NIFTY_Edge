@@ -6,46 +6,221 @@ Ported from Sheet_dasboard_codes/option_chain_greeks.py and risk_monitor.py.
 """
 
 import math
+import threading
+import time as _time
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
 from datetime import datetime, date, timedelta
 from pnsea import NSE
-from config import RISK_FREE_RATE, LOT_SIZE
+from config import RISK_FREE_RATE, LOT_SIZE, FAST_REFRESH_SECONDS
 
 CONFLUENCE_WINDOW = 75  # pts — OI and Fib levels within this band are merged
 
 
-# ── Black-Scholes Greeks ────────────────────────────────────────────────────
+# ── Shared market-data cache ────────────────────────────────────────────────
+#
+# Everything fetched here (option chains, VIX, Fibonacci, pivots) is *common*
+# to every user — it does not depend on who is logged in.  Without a cache,
+# each API request from each user triggers its own NSE / yfinance round-trip,
+# so the same chain gets scraped N times per refresh for N users.
+#
+# This module-level TTL cache makes the fetch happen *once* per refresh window
+# and serves every subsequent caller (any route, any user, the scheduler) from
+# memory.  Only user-specific data (positions, journal, alerts) is still
+# computed per user.  The cache is thread-safe because FastAPI runs sync
+# endpoints in a worker thread-pool and the scheduler fetches via
+# run_in_executor.
+#
+# TTLs:
+#   • Chain / VIX  — short while the market is open (data ticks), long when
+#     closed (NSE just returns the last frozen snapshot, so re-fetching is
+#     wasted work).  The open-TTL is set slightly above the scheduler's refresh
+#     interval so the cache stays continuously warm between scheduler cycles.
+#   • Fibonacci / pivots — derived from daily OHLC; they only change once a day,
+#     so a long TTL is fine even intraday.
 
-def _d1_d2(S, K, T, r, sigma):
-    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
-        return None, None
-    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
-    return d1, d2
+_CACHE_LOCK = threading.RLock()
+_chain_cache: dict = {}   # (symbol, expiry) -> (expires_at_monotonic, (df, expiries, spot))
+_misc_cache: dict = {}    # key -> (expires_at_monotonic, value)
+
+_CHAIN_TTL_OPEN = float(FAST_REFRESH_SECONDS) + 5.0   # ~20s — covers the gap between 15s cycles
+_CHAIN_TTL_CLOSED = 600.0                              # 10 min when market closed
+_VIX_TTL_OPEN = float(FAST_REFRESH_SECONDS) + 5.0
+_VIX_TTL_CLOSED = 600.0
+_DAILY_TTL = 600.0                                     # Fib / pivot — daily OHLC derived
 
 
-def greeks(S, K, T, r, sigma, option_type="CE"):
-    d1, d2 = _d1_d2(S, K, T, r, sigma)
-    if d1 is None:
+def _now() -> float:
+    return _time.monotonic()
+
+
+def _market_is_open() -> bool:
+    """Best-effort market-open check (lazy import to avoid an import cycle)."""
+    try:
+        from scheduler import is_market_open
+        return bool(is_market_open().get("open"))
+    except Exception:
+        return True   # assume open → use the shorter, safer TTL
+
+
+def _chain_cache_get(symbol, expiry):
+    with _CACHE_LOCK:
+        entry = _chain_cache.get((symbol, expiry))
+        if entry and entry[0] > _now():
+            df, expiries, spot = entry[1]
+            # Return copies so a caller mutating the frame can never corrupt
+            # the shared cache entry.
+            return df.copy(), list(expiries), spot
+    return None
+
+
+def _chain_cache_put(symbol, expiry, payload, resolved_expiry):
+    ttl = _CHAIN_TTL_OPEN if _market_is_open() else _CHAIN_TTL_CLOSED
+    expires_at = _now() + ttl
+    with _CACHE_LOCK:
+        _chain_cache[(symbol, expiry)] = (expires_at, payload)
+        # Mirror an expiry=None ("nearest") fetch under its resolved expiry too,
+        # so an explicit request for that same expiry hits the cache instead of
+        # re-scraping.
+        if resolved_expiry and resolved_expiry != expiry:
+            _chain_cache[(symbol, resolved_expiry)] = (expires_at, payload)
+
+
+def _memo(key, ttl, producer, cache_falsy=False):
+    """Generic TTL memo for the non-chain common fetches.
+
+    A failed fetch (falsy result) is not cached unless ``cache_falsy`` is set,
+    so a transient NSE/yfinance error doesn't pin an empty value for the whole
+    TTL — the next caller retries.
+    """
+    with _CACHE_LOCK:
+        entry = _misc_cache.get(key)
+        if entry and entry[0] > _now():
+            return entry[1]
+    value = producer()
+    if value or cache_falsy:
+        with _CACHE_LOCK:
+            _misc_cache[key] = (_now() + ttl, value)
+    return value
+
+
+def clear_market_cache():
+    """Drop all cached common data (used by tests / manual refresh)."""
+    with _CACHE_LOCK:
+        _chain_cache.clear()
+        _misc_cache.clear()
+
+
+# ── Symbol universe & lot sizes ─────────────────────────────────────────────
+#
+# Index symbols use the Indices option-chain endpoint; every other F&O symbol
+# is an individual stock and uses the Equity endpoint.  Lot sizes vary per stock
+# and are sourced from NSE's canonical F&O market-lots master CSV (cached daily),
+# with a hard fallback to the NIFTY lot.
+
+_INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
+
+_FO_MKTLOTS_URL = "https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv"
+_LOTSIZE_TTL = 6 * 3600.0   # refresh the lot-size master a few times a day
+
+
+def _fetch_lot_size_map() -> dict:
+    """Parse NSE's F&O market-lots master into {SYMBOL: lot_size}.
+
+    The CSV has UNDERLYING, SYMBOL, then one lot column per expiry month; the
+    first numeric month column is the current lot.  Returns {} on failure so the
+    caller falls back to the default lot.
+    """
+    try:
+        resp = NSE().endpoint_tester(_FO_MKTLOTS_URL)
+        text = resp.text if hasattr(resp, "text") else ""
+        if not text:
+            return {}
+        out = {}
+        lines = text.splitlines()
+        for line in lines[1:]:
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 3:
+                continue
+            sym = parts[1].upper()
+            if not sym or sym == "SYMBOL":
+                continue
+            lot = None
+            for cell in parts[2:]:
+                if cell.isdigit() and int(cell) > 0:
+                    lot = int(cell)
+                    break
+            if lot:
+                out[sym] = lot
+        return out
+    except Exception as e:
+        print(f"  [WARN] lot-size master fetch failed: {e}")
+        return {}
+
+
+def get_lot_size(symbol: str) -> int:
+    """Return the F&O lot size for a symbol (cached). Falls back to LOT_SIZE."""
+    if not symbol:
+        return LOT_SIZE
+    sym = symbol.upper()
+    lot_map = _memo("fo_lotsizes", _LOTSIZE_TTL, _fetch_lot_size_map)
+    if lot_map and sym in lot_map:
+        return lot_map[sym]
+    return LOT_SIZE
+
+
+# ── Black-76 Greeks (forward-based) ─────────────────────────────────────────
+#
+# NIFTY options are European index options and must be priced/greeked off the
+# *forward* (synthetic-futures) price, NOT the spot.  The forward sits above
+# spot by the cost-of-carry minus dividends, so using spot systematically
+# under-states call deltas and over-states put deltas — which is exactly why the
+# chain's deltas were "off" vs Sensibull/NSE (e.g. ATM CE read 0.47 instead of
+# the correct 0.51).
+#
+# We pass the synthetic forward (derived from put-call parity, see
+# `synthetic_forward`) into `greeks` and use the Black-76 model.  When no
+# forward is supplied, we fall back to the pure-carry forward F = S·e^(rT),
+# which reduces Black-76 to the previous spot model (deltas differ only by the
+# tiny discount factor) — so callers that only have spot are unaffected.
+
+def greeks(S, K, T, r, sigma, option_type="CE", forward=None):
+    # Forward price: prefer the supplied (parity-derived) forward; otherwise
+    # use the cost-of-carry forward off spot.
+    if forward and forward > 0:
+        F = forward
+    elif S > 0 and T > 0:
+        F = S * math.exp(r * T)
+    else:
+        F = S
+
+    if T <= 0 or sigma <= 0 or F <= 0 or K <= 0:
         return {g: 0.0 for g in ("delta", "gamma", "theta", "vega", "rho")}
+
+    sqrtT = np.sqrt(T)
+    d1 = (np.log(F / K) + 0.5 * sigma ** 2 * T) / (sigma * sqrtT)
+    d2 = d1 - sigma * sqrtT
 
     n_d1 = norm.pdf(d1)
     disc = np.exp(-r * T)
-    gamma = n_d1 / (S * sigma * np.sqrt(T))
-    vega = S * n_d1 * np.sqrt(T) / 100
+
+    # Black-76 gamma/vega (w.r.t. the forward).
+    gamma = disc * n_d1 / (F * sigma * sqrtT)
+    vega = F * disc * n_d1 * sqrtT / 100
+
+    decay = F * disc * n_d1 * sigma / (2 * sqrtT)  # time-decay term (shared)
 
     if option_type == "CE":
-        delta = norm.cdf(d1)
-        theta = ((-S * n_d1 * sigma / (2 * np.sqrt(T)))
-                 - r * K * disc * norm.cdf(d2)) / 365
-        rho = K * T * disc * norm.cdf(d2) / 100
+        delta = disc * norm.cdf(d1)
+        price = disc * (F * norm.cdf(d1) - K * norm.cdf(d2))
+        theta = (r * disc * (F * norm.cdf(d1) - K * norm.cdf(d2)) - decay) / 365
+        rho = -T * price / 100
     else:
-        delta = norm.cdf(d1) - 1
-        theta = ((-S * n_d1 * sigma / (2 * np.sqrt(T)))
-                 + r * K * disc * norm.cdf(-d2)) / 365
-        rho = -K * T * disc * norm.cdf(-d2) / 100
+        delta = -disc * norm.cdf(-d1)
+        price = disc * (K * norm.cdf(-d2) - F * norm.cdf(-d1))
+        theta = (r * disc * (K * norm.cdf(-d2) - F * norm.cdf(-d1)) - decay) / 365
+        rho = -T * price / 100
 
     return {
         "delta": round(float(delta), 4),
@@ -54,6 +229,31 @@ def greeks(S, K, T, r, sigma, option_type="CE"):
         "vega": round(float(vega), 4),
         "rho": round(float(rho), 4),
     }
+
+
+def synthetic_forward(spot, atm_pairs, T=0.0, r=RISK_FREE_RATE):
+    """Derive the synthetic-futures (forward) price from put-call parity.
+
+    `atm_pairs` is an iterable of (strike, ce_ltp, pe_ltp) for strikes near the
+    money.  Parity gives F = K + (CE − PE); we average the nearest few strikes
+    for stability against a single stale quote.  Falls back to the cost-of-carry
+    forward F = S·e^(rT) when no valid pairs are available.
+
+    This matches the "Synth Fut Price" that vendors (e.g. Sensibull) use as the
+    underlying for index-option Greeks.
+    """
+    vals = []
+    for k, ce, pe in atm_pairs:
+        try:
+            if ce and pe and ce > 0 and pe > 0:
+                vals.append(float(k) + float(ce) - float(pe))
+        except (TypeError, ValueError):
+            continue
+    if vals:
+        return sum(vals) / len(vals)
+    if spot > 0 and T > 0:
+        return spot * math.exp(r * T)
+    return spot
 
 
 def time_to_expiry(expiry_str: str) -> float:
@@ -137,10 +337,21 @@ def pick_active_expiry(expiries) -> str | None:
 
 # ── Option Chain Fetching ───────────────────────────────────────────────────
 
-def _extract_option_row(strike, opt_type, ltp, iv_pct, oi, vol, spot, expiry, r):
+def _chg_int(v) -> int:
+    """Parse NSE change-in-OI (may be NaN/None/str) → int, 0 on failure."""
+    try:
+        if v is None or pd.isna(v):
+            return 0
+        return int(float(str(v).replace(",", "")))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _extract_option_row(strike, opt_type, ltp, iv_pct, oi, vol, spot, expiry, r,
+                        forward=None):
     T = time_to_expiry(expiry)
     sigma = iv_pct / 100.0
-    g = greeks(spot, strike, T, r, sigma, option_type=opt_type)
+    g = greeks(spot, strike, T, r, sigma, option_type=opt_type, forward=forward)
     return {
         "Strike": int(round(strike)),
         "Type": opt_type,
@@ -152,17 +363,71 @@ def _extract_option_row(strike, opt_type, ltp, iv_pct, oi, vol, spot, expiry, r)
     }
 
 
-def build_chain(symbol="NIFTY", expiry_date=None, risk_free_rate=None):
-    """Fetch option chain from NSE. Returns (DataFrame, expiry_list, spot_price)."""
+def build_chain(symbol="NIFTY", expiry_date=None, risk_free_rate=None,
+                use_cache=True, refresh=False):
+    """Fetch option chain from NSE. Returns (DataFrame, expiry_list, spot_price).
+
+    Results are cached and shared across all callers/users (see the shared
+    market-data cache above) so the same chain is scraped only once per refresh
+    window regardless of how many users are connected.
+
+    ``use_cache``  — read from / write to the shared cache (default True).
+    ``refresh``    — bypass the *read* but still write-through (the scheduler
+                     uses this so it always broadcasts fresh data while keeping
+                     the cache warm for the REST endpoints in between cycles).
+    """
     if risk_free_rate is None:
         risk_free_rate = RISK_FREE_RATE
+
+    # Only the default risk-free rate participates in the shared cache; a custom
+    # rate is an off-cache, caller-specific computation.
+    cacheable = use_cache and risk_free_rate == RISK_FREE_RATE
+
+    if cacheable and not refresh:
+        hit = _chain_cache_get(symbol, expiry_date)
+        if hit is not None:
+            return hit
 
     nse = NSE()
     kwargs = {}
     if expiry_date:
         kwargs["expiry_date"] = expiry_date
 
-    chain_df, expiries, spot = nse.options.option_chain(symbol, **kwargs)
+    # Index symbols (NIFTY, BANKNIFTY, …) use the Indices option-chain endpoint;
+    # everything else is treated as an individual F&O stock and uses the Equity
+    # endpoint.  Both return the identical wide format, so the rest of the
+    # pipeline (Greeks, forward, cache) is unchanged.
+    #
+    # NSE intermittently returns an empty payload (the equity expiry lookup is
+    # especially flaky under concurrent load — "No expiry dates found"), so retry
+    # a few times with a fresh session before giving up.
+    is_index = symbol.upper() in _INDEX_SYMBOLS
+    chain_df, expiries, spot, last_err = None, [], 0.0, None
+    for attempt in range(3):
+        try:
+            if is_index:
+                chain_df, expiries, spot = nse.options.option_chain(symbol, **kwargs)
+            else:
+                chain_df, expiries, spot = nse.equityOptions.option_chain(symbol, **kwargs)
+            if chain_df is not None and not chain_df.empty:
+                break
+        except Exception as e:
+            last_err = e
+        if attempt < 2:
+            _time.sleep(0.7)
+            nse = NSE()   # fresh session/cookies for the retry
+
+    if chain_df is None or chain_df.empty:
+        # Last resort: serve a previously cached chain (even if just expired)
+        # rather than failing the user's action.
+        with _CACHE_LOCK:
+            stale = _chain_cache.get((symbol, expiry_date))
+        if stale is not None:
+            df0, exp0, spot0 = stale[1]
+            return df0.copy(), list(exp0), spot0
+        if last_err:
+            raise last_err
+        raise ValueError(f"No option chain data returned for {symbol}")
 
     if "strikePrice" in chain_df.columns:
         rows = _process_wide(chain_df, spot, expiry_date or expiries[0], risk_free_rate)
@@ -170,10 +435,34 @@ def build_chain(symbol="NIFTY", expiry_date=None, risk_free_rate=None):
         rows = _process_long(chain_df, spot, expiry_date or expiries[0], risk_free_rate)
 
     result = pd.DataFrame(rows)
+
+    if cacheable:
+        resolved = expiry_date or (str(expiries[0]) if len(expiries) else None)
+        _chain_cache_put(symbol, expiry_date,
+                         (result, list(expiries), float(spot)), resolved)
+        # Hand the caller copies so it can mutate freely.
+        return result.copy(), list(expiries), float(spot)
+
     return result, expiries, float(spot)
 
 
+def _forward_from_wide(df, spot, T, r):
+    """Synthetic forward from the wide chain via parity on near-ATM strikes."""
+    try:
+        tmp = df.copy()
+        tmp["_dist"] = (tmp["strikePrice"].astype(float) - spot).abs()
+        pairs = [
+            (row.get("strikePrice"), row.get("CE_lastPrice"), row.get("PE_lastPrice"))
+            for _, row in tmp.nsmallest(3, "_dist").iterrows()
+        ]
+        return synthetic_forward(spot, pairs, T, r)
+    except Exception:
+        return synthetic_forward(spot, [], T, r)
+
+
 def _process_wide(df, spot, expiry, r):
+    T = time_to_expiry(expiry)
+    forward = _forward_from_wide(df, spot, T, r)
     rows = []
     for _, row in df.iterrows():
         strike = row.get("strikePrice")
@@ -184,13 +473,36 @@ def _process_wide(df, spot, expiry, r):
             vol = row.get(f"{prefix}totalTradedVolume", np.nan)
             if pd.isna(ltp) or ltp == 0:
                 continue
-            rows.append(_extract_option_row(
-                strike, opt_type, ltp, iv_pct or 0, oi, vol, spot, expiry, r
-            ))
+            d = _extract_option_row(
+                strike, opt_type, ltp, iv_pct or 0, oi, vol, spot, expiry, r,
+                forward=forward,
+            )
+            # Additive: day's OI change (for the OI-buildup signal). Extra column —
+            # existing consumers read by name, so this is unaffecting.
+            d["ChgOI"] = _chg_int(row.get(f"{prefix}changeinOpenInterest"))
+            rows.append(d)
     return rows
 
 
 def _process_long(df, spot, expiry, r):
+    T = time_to_expiry(expiry)
+
+    # Pair CE/PE LTPs by strike so we can derive the synthetic forward via parity.
+    ltp_by_strike: dict = {}
+    for _, row in df.iterrows():
+        strike = row.get("strikePrice") or row.get("Strike")
+        opt_type = row.get("optionType") or row.get("Type", "CE")
+        ltp = row.get("lastPrice") or row.get("LTP", np.nan)
+        if strike is None or pd.isna(ltp):
+            continue
+        ltp_by_strike.setdefault(float(strike), {})[opt_type] = float(ltp)
+    pairs = sorted(
+        ((k, v.get("CE"), v.get("PE")) for k, v in ltp_by_strike.items()
+         if v.get("CE") and v.get("PE")),
+        key=lambda kv: abs(kv[0] - spot),
+    )[:3]
+    forward = synthetic_forward(spot, pairs, T, r)
+
     rows = []
     for _, row in df.iterrows():
         strike = row.get("strikePrice") or row.get("Strike")
@@ -201,15 +513,41 @@ def _process_long(df, spot, expiry, r):
         vol = row.get("totalTradedVolume") or row.get("Volume", np.nan)
         if pd.isna(ltp) or ltp == 0:
             continue
-        rows.append(_extract_option_row(
-            strike, opt_type, ltp, iv_pct or 0, oi, vol, spot, expiry, r
-        ))
+        d = _extract_option_row(
+            strike, opt_type, ltp, iv_pct or 0, oi, vol, spot, expiry, r,
+            forward=forward,
+        )
+        d["ChgOI"] = _chg_int(row.get("changeinOpenInterest"))
+        rows.append(d)
     return rows
 
 
 # ── VIX Fetch ───────────────────────────────────────────────────────────────
 
-def fetch_vix(nse=None) -> dict | None:
+def fetch_vix(nse=None, use_cache=True, refresh=False) -> dict | None:
+    """Fetch India VIX + NIFTY 50 change. Cached/shared across users.
+
+    ``refresh`` bypasses the read but still writes through, so the scheduler
+    always broadcasts a fresh value while keeping the cache warm for the REST
+    endpoints between cycles.
+    """
+    if not use_cache:
+        return _fetch_vix_raw(nse)
+
+    ttl = _VIX_TTL_OPEN if _market_is_open() else _VIX_TTL_CLOSED
+    if refresh:
+        value = _fetch_vix_raw(nse)
+        if value:
+            with _CACHE_LOCK:
+                _misc_cache["vix"] = (_now() + ttl, value)
+        return dict(value) if value else None
+
+    cached = _memo("vix", ttl, lambda: _fetch_vix_raw(nse))
+    # Return a copy so callers can't mutate the shared dict.
+    return dict(cached) if cached else None
+
+
+def _fetch_vix_raw(nse=None) -> dict | None:
     try:
         if nse is None:
             nse = NSE()
@@ -474,7 +812,16 @@ def find_oi_sr_levels(chain_df, current_spot: float) -> dict:
 
 
 def fetch_fibonacci_levels(lookback_days: int = 20) -> list[int]:
-    """Compute Fibonacci retracement levels from recent NIFTY OHLC."""
+    """Compute Fibonacci retracement levels from recent NIFTY OHLC.
+
+    Derived from daily OHLC (changes once a day) so it is cached/shared with a
+    long TTL across all users.
+    """
+    return _memo(f"fib:{lookback_days}", _DAILY_TTL,
+                 lambda: _fetch_fibonacci_levels_raw(lookback_days))
+
+
+def _fetch_fibonacci_levels_raw(lookback_days: int = 20) -> list[int]:
     try:
         import yfinance as yf
         nifty = yf.download("^NSEI", period=f"{lookback_days + 5}d",
@@ -499,7 +846,16 @@ def fetch_fibonacci_levels(lookback_days: int = 20) -> list[int]:
 
 
 def fetch_pivot_levels(lookback_days: int = 1) -> dict:
-    """Compute standard pivot points from previous trading day."""
+    """Compute standard pivot points from previous trading day.
+
+    Derived from daily OHLC (changes once a day) so it is cached/shared with a
+    long TTL across all users.
+    """
+    return _memo(f"pivot:{lookback_days}", _DAILY_TTL,
+                 lambda: _fetch_pivot_levels_raw(lookback_days))
+
+
+def _fetch_pivot_levels_raw(lookback_days: int = 1) -> dict:
     try:
         import yfinance as yf
         nifty = yf.download("^NSEI", period=f"{lookback_days + 5}d",
@@ -677,6 +1033,227 @@ def compute_risk_reversal(chain_df) -> dict:
         "pe_strike": pe_strike, "pe_iv": round(pe_iv, 2),
         "rr_value": round(rr, 2),
         "verdict": verdict,
+    }
+
+
+def compute_oi_totals(chain_df, lot_size: int = LOT_SIZE) -> dict:
+    """Aggregate Call vs Put open interest — the dashboard's movement monitor.
+
+    Sums OI across all strikes per side (same basis as ``_pcr_score``).  NSE /
+    pnsea report OI in **contracts**, but Sensibull/NSE display aggregate OI in
+    **shares** (contracts × lot size), e.g. 11.45 Cr — so we multiply by the lot
+    before converting to crore (/1e7).  PCR is unaffected (the lot cancels in the
+    ratio).  High PCR (puts >> calls) reads bullish (puts written as support);
+    low PCR (calls >> puts) reads bearish (calls written as resistance)."""
+    call_contracts = float(chain_df.loc[chain_df["Type"] == "CE", "OI"].sum())
+    put_contracts = float(chain_df.loc[chain_df["Type"] == "PE", "OI"].sum())
+    call_oi = call_contracts * lot_size
+    put_oi = put_contracts * lot_size
+    pcr = round(put_contracts / call_contracts, 2) if call_contracts > 0 else 0.0
+
+    # Previous-day PCR derived from the day's change-in-OI (prev-close OI =
+    # current OI − ChgOI), so the day-over-day PCR change needs no storage and
+    # stays realtime. lot cancels in the ratio, so we work in contracts.
+    pcr_chg = None
+    ce_chg = pe_chg = None
+    if "ChgOI" in chain_df.columns:
+        ce_chg = float(chain_df.loc[chain_df["Type"] == "CE", "ChgOI"].sum())
+        pe_chg = float(chain_df.loc[chain_df["Type"] == "PE", "ChgOI"].sum())
+        prev_call = call_contracts - ce_chg
+        prev_put = put_contracts - pe_chg
+        if prev_call > 0 and prev_put >= 0:
+            prev_pcr = prev_put / prev_call
+            pcr_chg = round(pcr - prev_pcr, 2)
+
+    # Directional conviction: PCR level decides it, with a MINOR nudge from the
+    # day-over-day PCR direction (rising PCR = more put-writing = bullish lean).
+    adj_pcr = pcr + (0.1 * pcr_chg if pcr_chg is not None else 0.0)
+    if adj_pcr >= 1.2:
+        tone, verdict = "BULLISH", "Bullish bias"
+        blurb = "More puts written than calls — sellers expect support to hold."
+    elif 0 < adj_pcr <= 0.8:
+        tone, verdict = "BEARISH", "Bearish bias"
+        blurb = "More calls written than puts — sellers expect upside to stall."
+    else:
+        tone, verdict = "NEUTRAL", "Rangebound"
+        # PCR near 1 = calls and puts converging — an unstable balance that can
+        # break either way (the frontend colours "reversal" by which side of 1).
+        blurb = "Calls and puts nearly balanced — watch for a breakout or reversal either way."
+    return {
+        "call_oi": call_oi, "put_oi": put_oi,
+        "call_oi_cr": round(call_oi / 1e7, 2),
+        "put_oi_cr": round(put_oi / 1e7, 2),
+        "pcr": pcr, "pcr_chg": pcr_chg,
+        # Today's OI writing flow (change-in-OI per side, in contracts) — None when
+        # the chain carries no ChgOI column. Feeds the market-tone "OI Flow" read.
+        "call_chg": ce_chg, "put_chg": pe_chg,
+        "tone": tone, "verdict": verdict, "blurb": blurb,
+    }
+
+
+# NIFTY market-tone weighting — fixed "practical weights" (sum to 100). Each
+# factor casts a bullish (+1) / neutral (0) / bearish (−1) vote; the verdict is the
+# weighted vote. Order here is also the heatmap's row-major 4×2 layout:
+#   row 1 (institutional money) · row 2 (options market)
+_TONE_FACTORS = [
+    {"k": "fii_fut",     "name": "FII Fut",   "weight": 18},
+    {"k": "fii_fut_chg", "name": "FII Fut Δ", "weight": 26},
+    {"k": "fii_cash",    "name": "FII Cash",  "weight": 7},
+    {"k": "dii_cash",    "name": "DII Cash",  "weight": 2},
+    {"k": "oi",          "name": "OI Flow",   "weight": 22},
+    {"k": "pcr",         "name": "PCR ≷1",    "weight": 6},
+    {"k": "pcr_chg",     "name": "PCR Δ",     "weight": 13},
+    {"k": "rr",          "name": "Risk Rev",  "weight": 6},
+]
+
+
+def _sign(x) -> int:
+    """+1 / 0 / −1 for a numeric value (0/None → 0)."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return 0
+    return 1 if v > 0 else (-1 if v < 0 else 0)
+
+
+def compute_market_tone(oi_totals: dict | None, fii_dii: dict | None, rr_value,
+                        nifty_change_pct=None) -> dict:
+    """Composite NIFTY market tone — a fixed 7-factor *weighted* verdict.
+
+    Each factor votes bullish (+1) / neutral (0) / bearish (−1); the verdict is
+    ``score = Σ(weight × vote) / 100`` ∈ [−1, 1], mapped to a tone label by bands.
+    Weights are fixed (see ``_TONE_FACTORS``), not scaled by the realized move.
+
+    Votes:
+      • FII Fut (20) — sign of FII index-futures net position (net long → bullish).
+      • FII Fut Δ (15) — sign of the day's change in that net (adding longs /
+        covering shorts → bullish).
+      • OI Flow (25) — today's option writing: more put-OI added than call-OI
+        (``put_chg > call_chg``) → support building → bullish; else bearish.
+      • PCR ≷1 (10) — PCR above 1 (puts dominate) → bullish, below → bearish.
+      • PCR Δ (10) — sign of the day-over-day PCR change (rising → more put
+        writing → bullish).
+      • Risk Rev (10) — 25Δ RR bands (≥ −1.0 bullish, ≤ −6.0 bearish).
+      • FII Cash (7) / DII Cash (3) — sign of net cash flow.
+
+    ``nifty_change_pct`` is accepted for call-site stability but unused (the
+    heatmap shades by fixed weight + direction, not realized alignment).
+
+    Returns ``tone`` (BULLISH/BEARISH/NEUTRAL), ``label``, ``score``,
+    ``agree_pct`` (% of total weight pointing the verdict's way), ``votes``
+    (per-factor), and ``factors`` (grid-ordered meta + vote, for the heatmap)."""
+    oi = oi_totals or {}
+    fd = fii_dii or {}
+
+    # ── per-factor votes ────────────────────────────────────────────────
+    # FII index-futures position + its CHANGE. The change uses a 3-day EMA (falls
+    # back to the raw 1-day Δ) so a single expiry-day spike can't swing the verdict.
+    fii_fut_vote = _sign(fd.get("fii_fut_net"))
+    fut_chg_val = fd.get("fii_fut_chg_ema3")
+    if fut_chg_val is None:
+        fut_chg_val = fd.get("fii_fut_chg")
+    fii_fut_chg_vote = _sign(fut_chg_val)
+
+    # OI writing flow: more put-OI added than call-OI today → bullish support.
+    call_chg, put_chg = oi.get("call_chg"), oi.get("put_chg")
+    oi_vote = 0
+    if call_chg is not None and put_chg is not None:
+        oi_vote = _sign(put_chg - call_chg)
+
+    # PCR level (≷ 1) with a ±0.1 deadband — middling PCR (≈1) carries little
+    # information, so only a meaningful tilt votes; and its day-over-day change.
+    try:
+        p = float(oi.get("pcr"))
+    except (TypeError, ValueError):
+        p = 0.0
+    pcr_vote = 1 if p >= 1.1 else (-1 if 0 < p <= 0.9 else 0)
+    pcr_chg_vote = _sign(oi.get("pcr_chg"))
+
+    # 25Δ risk reversal — same skew bands as compute_risk_reversal / the RR card.
+    try:
+        rr = float(rr_value) if rr_value is not None else None
+    except (TypeError, ValueError):
+        rr = None
+    rr_vote = 0 if rr is None else (1 if rr >= -1.0 else (-1 if rr <= -6.0 else 0))
+
+    # Cash flows.
+    fii_cash_vote = _sign(fd.get("fii_cash_net"))
+    dii_cash_vote = _sign(fd.get("dii_cash_net"))
+
+    votes = {
+        "fii_fut": fii_fut_vote, "fii_fut_chg": fii_fut_chg_vote,
+        "fii_cash": fii_cash_vote, "dii_cash": dii_cash_vote,
+        "oi": oi_vote, "pcr": pcr_vote, "pcr_chg": pcr_chg_vote, "rr": rr_vote,
+    }
+
+    # ── weighted verdict ────────────────────────────────────────────────
+    score = sum(f["weight"] * votes[f["k"]] for f in _TONE_FACTORS) / 100.0
+    if score >= 0.40:
+        tone, label = "BULLISH", "Bullish"
+    elif score >= 0.12:
+        tone, label = "BULLISH", "Mild Bullish"
+    elif score > -0.12:
+        tone, label = "NEUTRAL", "Neutral / Mixed"
+    elif score > -0.40:
+        tone, label = "BEARISH", "Mild Bearish"
+    else:
+        tone, label = "BEARISH", "Bearish"
+
+    # % of total weight (sums to 100) pointing the verdict's way.
+    sign = 1 if score > 0 else (-1 if score < 0 else 0)
+    agree_pct = (sum(f["weight"] for f in _TONE_FACTORS if votes[f["k"]] == sign)
+                 if sign else 0)
+
+    # Heatmap shade depth — a per-factor `intensity` ∈ [0,1] driven purely by how
+    # extreme the metric's value is within its realistic range (NOT the weight, so
+    # the colour reflects the value). The frontend interpolates light→full by it;
+    # `vote == 0` renders grey regardless. Visual only — does not affect the verdict.
+    def _clamp01(x):
+        return 0.0 if x < 0 else (1.0 if x > 1 else x)
+
+    def _i_sym(v, sat):                       # symmetric magnitude / saturation
+        return _clamp01(abs(v) / sat) if (v is not None and sat) else 0.0
+
+    def _i_asym(v, buy_sat, sell_sat):        # asymmetric buy/sell saturations
+        if v is None:
+            return 0.0
+        return _clamp01(v / buy_sat) if v >= 0 else _clamp01(abs(v) / sell_sat)
+
+    # OI flow: how one-sided today's writing is (self-normalising 0..1).
+    oi_int = 0.0
+    if call_chg is not None and put_chg is not None:
+        denom = abs(put_chg) + abs(call_chg)
+        oi_int = _clamp01(abs(put_chg - call_chg) / denom) if denom else 0.0
+    # PCR level: convex so extremes pop and middling stays faint.
+    pcr_int = _clamp01((abs(p - 1.0) / 0.6) ** 1.5) if p else 0.0
+    # RR: deepens with skew beyond the band edge (±4 IV-pts ≈ full).
+    if rr is None:
+        rr_int = 0.0
+    elif rr_vote > 0:
+        rr_int = _clamp01((rr + 1.0) / 4.0)
+    elif rr_vote < 0:
+        rr_int = _clamp01((-6.0 - rr) / 4.0)
+    else:
+        rr_int = 0.0
+    intensity_map = {
+        "fii_fut":     _i_sym(fd.get("fii_fut_net"), 300000),
+        "fii_fut_chg": _i_sym(fut_chg_val, 17500),          # EMA-smoothed Δ
+        "fii_cash":    _i_asym(fd.get("fii_cash_net"), 2000, 2500),
+        "dii_cash":    _i_asym(fd.get("dii_cash_net"), 6000, 3000),  # softened
+        "oi":          oi_int,
+        "pcr":         pcr_int,
+        "pcr_chg":     _i_sym(oi.get("pcr_chg"), 0.35),
+        "rr":          rr_int,
+    }
+    factors = [{"k": f["k"], "name": f["name"], "weight": f["weight"],
+                "vote": votes[f["k"]],
+                "intensity": round(intensity_map.get(f["k"], 0.0), 3)}
+               for f in _TONE_FACTORS]
+
+    return {
+        "tone": tone, "label": label,
+        "score": round(score, 3), "agree_pct": agree_pct,
+        "votes": votes, "factors": factors,
     }
 
 
@@ -1348,5 +1925,201 @@ def compute_hedge_v2(
         "worst_pnl": worst_pnl,
         "best_pnl": best_pnl,
         "confidence": confidence,
+        "rationale": rationale,
+    }
+
+
+# ── Margin: scenario-based SPAN + Exposure ──────────────────────────────────
+#
+# Implements the standard NSE SPAN methodology rather than the old flat-percent
+# proxies.  SPAN is the worst-case loss of the *whole portfolio* revalued across
+# a grid of price + volatility scenarios (the exchange's "risk array"); Exposure
+# is the exchange's flat % of notional buffer that sits on top.  This is exactly
+# the reference formula:
+#
+#   TOTAL_MARGIN = SPAN + EXPOSURE
+#   SPAN         = max over scenarios of  −Σ(qty × Δvalueₛcₑₙₐᵣᵢₒ × multiplier)
+#   EXPOSURE     = exposure_rate × short notional
+#
+# Because every leg is repriced with Black-76, hedges/spreads/strangles net out
+# automatically: a long leg's gain in a scenario offsets the short leg's loss in
+# that same scenario, so a defined-risk spread is charged far less than a naked
+# short — without any per-strategy special-casing.  The two extreme ±2×PSR
+# scenarios (counted at 35%) embed the extreme-loss component inside SPAN.
+
+# Tunable SPAN parameters (approximate NSE NIFTY settings; centralised here so
+# they can be adjusted in one place as the exchange revises them).
+SPAN_PRICE_SCAN_PCT  = 0.06   # price scan range as a fraction of the forward
+SPAN_VOL_SCAN_PCT    = 0.10   # ± relative shift applied to each leg's IV
+SPAN_EXTREME_PCT     = 2.0    # extreme move = ±this × price-scan-range
+SPAN_EXTREME_WEIGHT  = 0.35   # extreme scenarios counted at 35% of their loss
+EXPOSURE_MARGIN_RATE = 0.02   # 2% of short notional (NSE index exposure margin)
+
+
+def black76_price(F, K, T, r, sigma, option_type="CE") -> float:
+    """Black-76 (forward-based) European option price.  Falls back to intrinsic
+    value when there is no time/vol left."""
+    if F <= 0 or K <= 0:
+        return 0.0
+    if T <= 0 or sigma <= 0:
+        return max(F - K, 0.0) if option_type == "CE" else max(K - F, 0.0)
+    sqrtT = np.sqrt(T)
+    d1 = (np.log(F / K) + 0.5 * sigma ** 2 * T) / (sigma * sqrtT)
+    d2 = d1 - sigma * sqrtT
+    disc = np.exp(-r * T)
+    if option_type == "CE":
+        return float(disc * (F * norm.cdf(d1) - K * norm.cdf(d2)))
+    return float(disc * (K * norm.cdf(-d2) - F * norm.cdf(-d1)))
+
+
+def forward_from_chain(chain_df, spot, T=0.0, r=RISK_FREE_RATE) -> float:
+    """Synthetic forward (futures) price derived from put-call parity on the
+    near-ATM strikes of a *processed* chain (Strike/Type/LTP columns)."""
+    try:
+        strikes = sorted(chain_df["Strike"].unique(), key=lambda k: abs(k - spot))[:3]
+        pairs = []
+        for k in strikes:
+            ce = chain_df[(chain_df["Strike"] == k) & (chain_df["Type"] == "CE")]
+            pe = chain_df[(chain_df["Strike"] == k) & (chain_df["Type"] == "PE")]
+            ce_ltp = float(ce["LTP"].iloc[0]) if not ce.empty else None
+            pe_ltp = float(pe["LTP"].iloc[0]) if not pe.empty else None
+            pairs.append((k, ce_ltp, pe_ltp))
+        return synthetic_forward(spot, pairs, T, r)
+    except Exception:
+        return synthetic_forward(spot, [], T, r)
+
+
+def compute_span_margin(
+    legs, forward, T, r=RISK_FREE_RATE, lot_size=LOT_SIZE,
+    price_scan_pct=SPAN_PRICE_SCAN_PCT, vol_scan_pct=SPAN_VOL_SCAN_PCT,
+    extreme_mult=SPAN_EXTREME_PCT, extreme_weight=SPAN_EXTREME_WEIGHT,
+) -> tuple[float, dict]:
+    """Scenario-based SPAN margin for an options portfolio.
+
+    ``legs`` — list of dicts: {strike, option_type 'CE'/'PE', action 'BUY'/'SELL',
+    lots, iv (as a fraction, e.g. 0.14)}.
+
+    Returns (span_margin, worst_scenario_info).
+    """
+    if forward <= 0 or not legs:
+        return 0.0, {}
+
+    psr = forward * price_scan_pct
+
+    # The 16-scenario SPAN risk array: 7 price moves × {vol up, vol down}, plus
+    # two extreme moves weighted at `extreme_weight`.
+    fractions = [0.0, 1 / 3, -1 / 3, 2 / 3, -2 / 3, 1.0, -1.0]
+    scenarios = []
+    for f in fractions:
+        scenarios.append((f, +vol_scan_pct, 1.0))
+        scenarios.append((f, -vol_scan_pct, 1.0))
+    scenarios.append((+extreme_mult, 0.0, extreme_weight))
+    scenarios.append((-extreme_mult, 0.0, extreme_weight))
+
+    # Base (current) theoretical value of each leg.
+    base_vals = [
+        black76_price(forward, leg["strike"], T, r, max(leg.get("iv", 0.0), 0.0),
+                      leg["option_type"])
+        for leg in legs
+    ]
+
+    worst_loss = 0.0
+    worst_info = {}
+    for frac, dvol, weight in scenarios:
+        f_scen = max(forward + frac * psr, 0.01)
+        pnl = 0.0
+        for i, leg in enumerate(legs):
+            sigma = max(leg.get("iv", 0.0) * (1 + dvol), 0.0)
+            v = black76_price(f_scen, leg["strike"], T, r, sigma, leg["option_type"])
+            sign = 1.0 if leg["action"] == "BUY" else -1.0
+            qty = leg["lots"] * lot_size
+            pnl += sign * (v - base_vals[i]) * qty
+        loss = max(-pnl, 0.0) * weight
+        if loss > worst_loss:
+            worst_loss = loss
+            worst_info = {
+                "price_move_pct": round(frac * price_scan_pct * 100, 2),
+                "vol_shift_pct": round(dvol * 100, 1),
+                "scenario_forward": round(f_scen, 2),
+            }
+    return round(worst_loss, 2), worst_info
+
+
+# ── Alternative hedge: protective short in the NEXT expiry ───────────────────
+
+def compute_protective_short_hedge(
+    side, sold_strike, current_spot, next_chain_df,
+    qty_lots=1, max_delta=0.10, lot_size=LOT_SIZE,
+):
+    """Suggest a further-OTM short in the *next* expiry as an alternative hedge.
+
+    For a risky short (e.g. a 23000 PE going in-the-money), this finds a strike
+    further out-of-the-money in the next expiry — lower for PE, higher for CE —
+    that has a low delta (|Δ| < ``max_delta``, default 0.10) and good open
+    interest.  Selling it collects additional premium that cushions the existing
+    position while staying far from the money.
+
+    Returns a dict (strike, ltp, delta, oi, iv, qty_lots, premium_collected,
+    rationale) or None when no suitable strike exists.
+    """
+    if next_chain_df is None or next_chain_df.empty:
+        return None
+
+    sub = next_chain_df[(next_chain_df["Type"] == side) & (next_chain_df["LTP"] > 0)].copy()
+    if sub.empty:
+        return None
+
+    # Only strikes further OTM than the sold strike, in the safe direction.
+    if side == "PE":
+        sub = sub[sub["Strike"] < sold_strike]
+    else:
+        sub = sub[sub["Strike"] > sold_strike]
+    if sub.empty:
+        return None
+
+    sub["_absdelta"] = sub["delta"].abs()
+
+    # Primary filter: delta under the cap.  Relax once if nothing qualifies.
+    qual = sub[sub["_absdelta"] <= max_delta]
+    relaxed = False
+    if qual.empty:
+        qual = sub[sub["_absdelta"] <= max_delta + 0.05]
+        relaxed = True
+    if qual.empty:
+        return None
+
+    # Require decent liquidity — OI at or above the median of the qualifying set.
+    oi_floor = qual["OI"].median()
+    liquid = qual[qual["OI"] >= oi_floor]
+    if liquid.empty:
+        liquid = qual
+
+    # Among the low-delta, liquid, OTM candidates, pick the one closest to the
+    # money (highest premium → most cushion) while still under the delta cap.
+    best = liquid.loc[liquid["LTP"].idxmax()]
+    strike = int(best["Strike"])
+    ltp = float(best["LTP"])
+    delta = float(best["delta"])
+    oi = int(best["OI"])
+    iv = float(best["IV"])
+
+    premium_collected = round(ltp * qty_lots * lot_size, 2)
+    dist = abs(strike - sold_strike)
+
+    rationale = (
+        f"Sell {strike}{side} (next expiry) | Δ={abs(delta):.2f}, "
+        f"OI={oi:,}, {dist}pt further OTM — collect ₹{premium_collected:,.0f} cushion"
+    )
+    if relaxed:
+        rationale += " (no strike under 0.10Δ — relaxed)"
+
+    return {
+        "strike": strike,
+        "ltp": round(ltp, 2),
+        "delta": round(delta, 4),
+        "oi": oi,
+        "iv": round(iv, 2),
+        "qty_lots": qty_lots,
+        "premium_collected": premium_collected,
         "rationale": rationale,
     }

@@ -8,6 +8,9 @@ backend/__pycache__/
 
 Sheet_dashboard_codes/
 
+# Off-hours close snapshots (regenerated at runtime each session)
+backend/_snapshots/
+
 # ── Virtual environments ─────────────────────────────────────────────────────
 venv/
 .venv/

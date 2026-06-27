@@ -44,6 +44,32 @@ def get_latest_snapshot(db: Session = Depends(get_db), _=Depends(get_current_use
     snap = db.query(MarketSnapshot).order_by(MarketSnapshot.timestamp.desc()).first()
     if not snap:
         return {"data": None}
+
+    # Analysis-board metrics — not persisted on the snapshot row, so derive them
+    # live from the (cached) chain + the cached daily FII/DII flows.  The chain
+    # build is normally warm from the scheduler's last refresh, so this is cheap.
+    oi_totals, fii_dii_data, market_tone = {}, {}, {}
+    try:
+        from market_data import build_chain, compute_oi_totals, compute_market_tone
+        # Nearest-expiry chain (no expiry arg) — the "current expiry" OI view that
+        # NSE/Sensibull show; not the dashboard's rolled active expiry.
+        cdf, _exp, _spot = build_chain("NIFTY")
+        if cdf is not None and len(cdf) > 0:
+            oi_totals = compute_oi_totals(cdf)
+    except Exception:
+        oi_totals = {}
+    try:
+        from fii_dii import get_fii_dii
+        fii_dii_data = get_fii_dii()
+    except Exception:
+        fii_dii_data = {}
+    try:
+        market_tone = compute_market_tone(
+            oi_totals, fii_dii_data, snap.rr_value,
+            nifty_change_pct=snap.nifty_change_pct)
+    except Exception:
+        market_tone = {}
+
     return {
         "data": {
             "timestamp": snap.timestamp.isoformat() if snap.timestamp else None,
@@ -76,12 +102,21 @@ def get_latest_snapshot(db: Session = Depends(get_db), _=Depends(get_current_use
                 "rr_value": snap.rr_value,
                 "verdict": snap.rr_verdict,
             },
+            "total_call_oi_cr": _py(oi_totals.get("call_oi_cr", 0)),
+            "total_put_oi_cr": _py(oi_totals.get("put_oi_cr", 0)),
+            "pcr": _py(oi_totals.get("pcr", 0)),
+            "pcr_chg": _py(oi_totals.get("pcr_chg")),
+            "oi_verdict": oi_totals.get("verdict", ""),
+            "oi_tone": oi_totals.get("tone", ""),
+            "oi_blurb": oi_totals.get("blurb", ""),
+            "fii_dii": fii_dii_data,
+            "market_tone": market_tone,
         }
     }
 
 
 @router.get("/expiries")
-def list_expiries(_=Depends(get_current_user)):
+def list_expiries(symbol: str = Query("NIFTY"), _=Depends(get_current_user)):
     """Live list of available NIFTY expiries from NSE — works in market-closed hours too.
 
     Also returns `default_expiry` — the nearest expiry with ≥ 2 trading days
@@ -93,11 +128,15 @@ def list_expiries(_=Depends(get_current_user)):
     """
     from market_data import build_chain, pick_active_expiry
     try:
-        _, expiries, spot = build_chain("NIFTY")
+        _, expiries, spot = build_chain(symbol)
         ex_strs = [str(e) for e in expiries]
+        # Index expiries get the ≥2-trading-day rollover default; stocks are
+        # monthly, so just default to the nearest expiry.
+        is_index = symbol.upper() == "NIFTY"
         return {
+            "symbol": symbol.upper(),
             "expiries": ex_strs,
-            "default_expiry": pick_active_expiry(ex_strs),
+            "default_expiry": pick_active_expiry(ex_strs) if is_index else (ex_strs[0] if ex_strs else None),
             "spot": _py(spot),
         }
     except Exception as e:
@@ -228,6 +267,24 @@ def compute_for_expiry(
     sr_supports = _sr(oi_fib_sup, "OI_FIB") + _sr(pivot_sup, "PIVOT_OI")
     sr_resistances = _sr(oi_fib_res, "OI_FIB") + _sr(pivot_res, "PIVOT_OI")
 
+    # Analysis-board metrics for this expiry
+    try:
+        from market_data import compute_oi_totals, compute_market_tone
+        oi_totals = compute_oi_totals(chain_df)
+    except Exception:
+        oi_totals = {}
+    try:
+        from fii_dii import get_fii_dii
+        fii_dii_data = get_fii_dii()
+    except Exception:
+        fii_dii_data = {}
+    try:
+        market_tone = compute_market_tone(
+            oi_totals, fii_dii_data, rr.get("rr_value"),
+            nifty_change_pct=nifty_change_pct)
+    except Exception:
+        market_tone = {}
+
     return {
         "nifty_spot": _py(spot),
         "nifty_change": _py(nifty_change),
@@ -249,6 +306,15 @@ def compute_for_expiry(
         "risk_reversal": rr,
         "rr_zscore": rr_zscore,
         "sr_levels": {"supports": sr_supports, "resistances": sr_resistances},
+        "total_call_oi_cr": _py(oi_totals.get("call_oi_cr", 0)),
+        "total_put_oi_cr": _py(oi_totals.get("put_oi_cr", 0)),
+        "pcr": _py(oi_totals.get("pcr", 0)),
+        "pcr_chg": _py(oi_totals.get("pcr_chg")),
+        "oi_verdict": oi_totals.get("verdict", ""),
+        "oi_tone": oi_totals.get("tone", ""),
+        "oi_blurb": oi_totals.get("blurb", ""),
+        "fii_dii": fii_dii_data,
+        "market_tone": market_tone,
     }
 
 
@@ -285,13 +351,15 @@ def get_sr_levels(
 @router.get("/option-chain")
 def get_option_chain(
     expiry: str = Query(None, description="Expiry in DD-Mon-YYYY format"),
+    symbol: str = Query("NIFTY", description="Underlying symbol (NIFTY or a stock)"),
     _=Depends(get_current_user),
 ):
-    """Fetch live option chain from NSE."""
-    from market_data import build_chain, compute_risk_reversal, premium_ranking
+    """Fetch live option chain from NSE (NIFTY index or any F&O stock)."""
+    from market_data import build_chain, compute_risk_reversal, premium_ranking, get_lot_size
 
+    symbol = (symbol or "NIFTY").upper()
     try:
-        chain_df, expiries, spot = build_chain("NIFTY", expiry)
+        chain_df, expiries, spot = build_chain(symbol, expiry)
     except Exception as e:
         return {"error": str(e), "data": [], "expiries": [], "spot": 0}
 
@@ -336,6 +404,8 @@ def get_option_chain(
     return {
         "data": chain,
         "spot": _py(spot),
+        "symbol": symbol,
+        "lot_size": get_lot_size(symbol),
         "expiries": [str(e) for e in expiries],
         "risk_reversal": rr,
         "selected_expiry": expiry or (str(expiries[0]) if expiries else ""),
@@ -345,15 +415,16 @@ def get_option_chain(
 @router.get("/strike-lookup")
 def strike_lookup(
     strike: int = Query(...),
-    option_type: str = Query(..., regex="^(CE|PE)$"),
+    option_type: str = Query(..., pattern="^(CE|PE)$"),
     expiry: str = Query(None),
+    symbol: str = Query("NIFTY"),
     _=Depends(get_current_user),
 ):
     """Look up details for a specific strike."""
     from market_data import build_chain, premium_ranking
 
     try:
-        chain_df, expiries, spot = build_chain("NIFTY", expiry)
+        chain_df, expiries, spot = build_chain((symbol or "NIFTY").upper(), expiry)
     except Exception as e:
         return {"error": str(e)}
 
@@ -377,20 +448,72 @@ def strike_lookup(
     }
 
 
-# ── IV Rank / IV Percentile ───────────────────────────────────────────────────
-
-@router.get("/iv-rank")
-def get_iv_rank(
-    days: int = Query(252, ge=5, le=1000),
-    db: Session = Depends(get_db),
+@router.get("/compute-for-symbol")
+def compute_for_symbol(
+    symbol: str = Query(..., description="Underlying symbol (e.g. RELIANCE)"),
+    expiry: str = Query(None),
     _=Depends(get_current_user),
 ):
-    """Return IV Rank and IV Percentile from historical IVDailyRecord data.
+    """Lightweight per-symbol snapshot for the dashboard chart search: CMP
+    (spot), synthetic forward, expiries, and OI-based support/resistance."""
+    from market_data import (
+        build_chain, forward_from_chain, find_oi_sr_levels,
+        time_to_expiry, compute_max_pain, get_lot_size,
+    )
 
-    IV Rank   = (current - min) / (max - min) × 100
-    IV %ile   = % of historical days where ATM IV < current
-    Signal    = dual-threshold: BOTH rank AND percentile must exceed cutoffs.
-    Data quality warning shown when history < 30 days.
+    symbol = (symbol or "").upper()
+    try:
+        chain_df, expiries, spot = build_chain(symbol, expiry)
+    except Exception as e:
+        return {"error": str(e)}
+    if chain_df is None or chain_df.empty or spot <= 0:
+        return {"error": f"No option chain for {symbol}"}
+
+    sel_expiry = expiry or (str(expiries[0]) if expiries else "")
+    forward = forward_from_chain(chain_df, spot, time_to_expiry(sel_expiry) if sel_expiry else 0.0)
+    try:
+        oi_sr = find_oi_sr_levels(chain_df, spot)
+    except Exception:
+        oi_sr = {"supports": [], "resistances": []}
+    try:
+        max_pain = compute_max_pain(chain_df)
+    except Exception:
+        max_pain = 0
+
+    # Live IV percentile (same metric the dashboard shows for NIFTY), sourced
+    # live from Sensibull per stock.
+    ivp = None
+    try:
+        from sensibull import get_iv_percentile
+        live = get_iv_percentile(symbol, sel_expiry)
+        if live:
+            ivp = live["ivp"]
+    except Exception:
+        ivp = None
+
+    return {
+        "symbol": symbol,
+        "spot": _py(spot),
+        "forward": _py(round(forward, 2)),
+        "max_pain": _py(max_pain),
+        "ivp": ivp,
+        "lot_size": get_lot_size(symbol),
+        "expiry_date": sel_expiry,
+        "expiries": [str(e) for e in expiries],
+        "supports": [{"strike": _py(s["strike"]), "oi": _py(s.get("oi"))} for s in oi_sr["supports"]],
+        "resistances": [{"strike": _py(r["strike"]), "oi": _py(r.get("oi"))} for r in oi_sr["resistances"]],
+    }
+
+
+# ── IV Rank / IV Percentile ───────────────────────────────────────────────────
+
+def compute_iv_tile(db, days: int = 252) -> dict:
+    """IV Rank / Percentile / composite verdict from IVDailyRecord — the single
+    source behind the dashboard's IV tile. Exposed as a plain function so the
+    Strategy Builder consumes the SAME read (no second IV model). Output is
+    identical to what the /iv-rank endpoint returns.
+
+    IV Rank = (current − min)/(max − min)×100 ; IV %ile = % of days IV < current.
     """
     import statistics
     from sqlalchemy import desc as _desc
@@ -408,6 +531,10 @@ def get_iv_rank(
             "current_atm_iv": None,
             "iv_rank": None,
             "iv_percentile": None,
+            "iv_score": None,
+            "iv_verdict": None,
+            "iv_premium": None,
+            "iv_5d_change_pct": None,
             "iv_52wk_high": None,
             "iv_52wk_low": None,
             "iv_mean": None,
@@ -429,7 +556,28 @@ def get_iv_rank(
     iv_rank = round((current_iv - iv_min) / (iv_max - iv_min) * 100, 1) if iv_max > iv_min else 50.0
     iv_pct = round(sum(1 for v in iv_values if v < current_iv) / n * 100, 1)
 
-    # Dual-threshold signal — both rank AND percentile must agree
+    # Composite IV score — IV Percentile is the more robust read (whole
+    # distribution, spike-resistant) so it carries 70%; IV Rank (position between
+    # the 52-wk extremes) carries 30%.
+    iv_score = round(0.70 * iv_pct + 0.30 * iv_rank, 1)
+    if iv_score >= 80:
+        iv_verdict, iv_premium = "Very Elevated IV", "Premium Rich"
+    elif iv_score >= 60:
+        iv_verdict, iv_premium = "Elevated IV", "Premium Expensive"
+    elif iv_score >= 40:
+        iv_verdict, iv_premium = "Neutral IV", "Fairly Priced"
+    elif iv_score >= 20:
+        iv_verdict, iv_premium = "Low IV", "Premium Cheap"
+    else:
+        iv_verdict, iv_premium = "Very Low IV", "Premium Compressed"
+
+    # 5-day IV trend — current ATM IV vs the value 5 trading days back (relative %).
+    iv_5d_change_pct = None
+    if n >= 6 and iv_values[5] > 0:
+        iv_5d_change_pct = round((current_iv - iv_values[5]) / iv_values[5] * 100, 1)
+
+    # Legacy dual-threshold signal — retained for back-compat (unused by the new
+    # IV tile, but kept so any other consumer still gets a value).
     if iv_rank >= 70 and iv_pct >= 70:
         signal = "Elevated – Selling favoured"
     elif iv_rank <= 30 and iv_pct <= 30:
@@ -451,6 +599,10 @@ def get_iv_rank(
         "current_atm_iv": round(current_iv, 2),
         "iv_rank": iv_rank,
         "iv_percentile": iv_pct,
+        "iv_score": iv_score,
+        "iv_verdict": iv_verdict,
+        "iv_premium": iv_premium,
+        "iv_5d_change_pct": iv_5d_change_pct,
         "iv_52wk_high": round(iv_max, 2),
         "iv_52wk_low": round(iv_min, 2),
         "iv_mean": round(iv_mean, 2),
@@ -461,6 +613,16 @@ def get_iv_rank(
         "is_proxy_data": any_proxy,
         "low_data_warning": low_data,
     }
+
+
+@router.get("/iv-rank")
+def get_iv_rank(
+    days: int = Query(252, ge=5, le=1000),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """IV Rank / Percentile tile (thin wrapper over compute_iv_tile)."""
+    return compute_iv_tile(db, days)
 
 
 # ── Margin Calculator ─────────────────────────────────────────────────────────
@@ -496,7 +658,10 @@ def calculate_margin(
     Total = SPAN + Exposure − net_premium_credit
     Expiry day = Total × 1.75
     """
-    from market_data import build_chain
+    from market_data import (
+        build_chain, time_to_expiry, forward_from_chain,
+        compute_span_margin, EXPOSURE_MARGIN_RATE, RISK_FREE_RATE,
+    )
     from config import LOT_SIZE
 
     # Get current spot
@@ -509,12 +674,37 @@ def calculate_margin(
         chain_df = None
         expiries = []
 
-    # Get current LTP for each leg from chain
+    # Resolve expiry → time-to-expiry and the synthetic forward (futures) price,
+    # which SPAN scenarios scan and Black-76 prices off (NOT spot).
+    resolved_expiry = req.expiry or (str(expiries[0]) if expiries else "")
+    try:
+        T = time_to_expiry(resolved_expiry) if resolved_expiry else 0.0
+    except Exception:
+        T = 0.0
+    forward = (forward_from_chain(chain_df, spot, T)
+               if chain_df is not None and not chain_df.empty else spot)
+
+    # Get current LTP / IV for each leg from the chain
     def get_ltp(strike, opt_type):
         if chain_df is None or chain_df.empty:
             return 0.0
         row = chain_df[(chain_df["Strike"] == strike) & (chain_df["Type"] == opt_type)]
         return float(row["LTP"].iloc[0]) if not row.empty else 0.0
+
+    def get_iv(strike, opt_type):
+        """Implied vol as a fraction (e.g. 0.14).  Falls back to the nearest
+        strike's IV when an exact strike has no quote, then to a flat 15%."""
+        if chain_df is None or chain_df.empty:
+            return 0.15
+        side = chain_df[chain_df["Type"] == opt_type]
+        row = side[side["Strike"] == strike]
+        if not row.empty and float(row["IV"].iloc[0]) > 0:
+            return float(row["IV"].iloc[0]) / 100.0
+        if not side.empty:
+            nearest = side.iloc[(side["Strike"] - strike).abs().argmin()]
+            if float(nearest["IV"]) > 0:
+                return float(nearest["IV"]) / 100.0
+        return 0.15
 
     qty_per_lot = LOT_SIZE
     legs = req.legs
@@ -567,108 +757,65 @@ def calculate_margin(
             ),
         }
 
+    # ── Scenario-based SPAN ────────────────────────────────────────────────
+    # Build the portfolio of legs and revalue it across the SPAN price/vol
+    # scenario grid (see compute_span_margin).  Hedges/spreads net out
+    # automatically — no per-strategy special-casing needed.
+    span_legs = []
     breakdown = []
-    span_amounts = []
     net_premium = 0.0
+    short_notional = 0.0
+    for leg in legs:
+        qty = leg.lots * qty_per_lot
+        ltp = get_ltp(leg.strike, leg.option_type)
+        iv = get_iv(leg.strike, leg.option_type)
+        sign = 1.0 if leg.action == "BUY" else -1.0
+        # Net premium: credit (+) for shorts, debit (−) for longs.
+        net_premium += -sign * ltp * qty
+        if leg.action == "SELL":
+            short_notional += qty * forward
+        span_legs.append({
+            "strike": leg.strike, "option_type": leg.option_type,
+            "action": leg.action, "lots": leg.lots, "iv": iv,
+        })
+        breakdown.append({
+            "label": f"{leg.option_type} {leg.action} @ {leg.strike}",
+            "ltp": round(ltp, 2),
+            "iv": round(iv * 100, 2),
+            "qty": qty,
+            "premium_credit": round(-sign * ltp * qty, 2),
+        })
 
-    def _compute_spread(sell_leg, buy_leg, label):
-        qty = sell_leg.lots * qty_per_lot
-        spread_w = abs(sell_leg.strike - buy_leg.strike)
-        span = spread_w * qty * 0.85
-        sell_ltp = get_ltp(sell_leg.strike, sell_leg.option_type)
-        buy_ltp  = get_ltp(buy_leg.strike,  buy_leg.option_type)
-        premium_credit = (sell_ltp - buy_ltp) * qty
-        return {"label": label, "span": round(span, 2),
-                "sell_ltp": round(sell_ltp, 2), "buy_ltp": round(buy_ltp, 2),
-                "premium_credit": round(premium_credit, 2), "qty": qty,
-                "spread_width": spread_w}
+    total_span, worst = compute_span_margin(
+        span_legs, forward, T, r=RISK_FREE_RATE, lot_size=qty_per_lot,
+    )
 
-    if ce_sells and ce_buys:
-        for s, b in zip(ce_sells, ce_buys):
-            entry = _compute_spread(s, b, "CE Spread (Bear Call)")
-            breakdown.append(entry)
-            span_amounts.append(("CE", entry["span"]))
-            net_premium += entry["premium_credit"]
+    # Exposure margin — exchange flat 2% of short notional (not netted across
+    # CE/PE; the directional hedge benefit is already captured inside SPAN).
+    exposure = round(short_notional * EXPOSURE_MARGIN_RATE, 2)
 
-    if pe_sells and pe_buys:
-        for s, b in zip(pe_sells, pe_buys):
-            entry = _compute_spread(s, b, "PE Spread (Bull Put)")
-            breakdown.append(entry)
-            span_amounts.append(("PE", entry["span"]))
-            net_premium += entry["premium_credit"]
-
-    # Handle naked shorts (no paired buy)
-    # NSE charges ~5% of notional as SPAN for naked index short options
-    # (no spread/hedge discount — the 0.85 factor only applies to paired spreads)
-    for sell_leg in ce_sells[len(ce_buys):]:
-        qty = sell_leg.lots * qty_per_lot
-        span = spot * qty * 0.05
-        sell_ltp = get_ltp(sell_leg.strike, sell_leg.option_type)
-        entry = {"label": "CE Naked Short (est.)", "span": round(span, 2),
-                 "sell_ltp": round(sell_ltp, 2), "buy_ltp": 0,
-                 "premium_credit": round(sell_ltp * qty, 2), "qty": qty, "spread_width": 0}
-        breakdown.append(entry)
-        span_amounts.append(("CE", span))
-        net_premium += sell_ltp * qty
-
-    for sell_leg in pe_sells[len(pe_buys):]:
-        qty = sell_leg.lots * qty_per_lot
-        span = spot * qty * 0.05
-        sell_ltp = get_ltp(sell_leg.strike, sell_leg.option_type)
-        entry = {"label": "PE Naked Short (est.)", "span": round(span, 2),
-                 "sell_ltp": round(sell_ltp, 2), "buy_ltp": 0,
-                 "premium_credit": round(sell_ltp * qty, 2), "qty": qty, "spread_width": 0}
-        breakdown.append(entry)
-        span_amounts.append(("PE", span))
-        net_premium += sell_ltp * qty
-
-    # SPAN aggregation — structure-based, not strategy_type-based
-    ce_span = sum(v for k, v in span_amounts if k == "CE")
-    pe_span = sum(v for k, v in span_amounts if k == "PE")
-
-    # Whether each side is fully paired (sell + buy) — determines IC vs strangle logic
-    ce_is_spread = len(ce_buys) >= len(ce_sells) > 0
-    pe_is_spread = len(pe_buys) >= len(pe_sells) > 0
-    is_paired_ic = ce_is_spread and pe_is_spread
-    has_both_sides = ce_span > 0 and pe_span > 0
-
-    # NSE one-side SPAN benefit:
-    #   - Applies whenever BOTH CE and PE sides exist (IC *and* strangle both get it)
-    #   - Exchange charges max(CE SPAN, PE SPAN) since Nifty can only breach one side
-    #   - Confirmed by exchange data: total SPAN shown = max of the two legs' SPAN
-    if has_both_sides:
-        total_span = max(ce_span, pe_span)
-        span_note = "One-side SPAN benefit: max(CE, PE) — NSE charges riskier side only"
-    else:
-        total_span = ce_span + pe_span
-        span_note = "SPAN on single side"
-
-    # Exposure margin: 2% of notional per sell leg
-    #   - IC (both sides paired): exposure on one (riskier) side only
-    #   - Strangle / naked / custom: exposure on every sell leg independently
-    #   Confirmed: exchange shows ₹3,11,966 per leg × 2 for a strangle
-    ce_sell_qty = sum(l.lots * qty_per_lot for l in legs if l.action == "SELL" and l.option_type == "CE")
-    pe_sell_qty = sum(l.lots * qty_per_lot for l in legs if l.action == "SELL" and l.option_type == "PE")
-
-    if is_paired_ic and ce_sell_qty > 0 and pe_sell_qty > 0:
-        exposure = round(spot * max(ce_sell_qty, pe_sell_qty) * 0.02, 2)
-    else:
-        exposure = round(spot * (ce_sell_qty + pe_sell_qty) * 0.02, 2)
-
-    # Exchange gross margin = SPAN + Exposure (premium is NOT deducted from margin requirement)
-    # Premium received reduces the cash the trader needs to bring, but the
-    # full SPAN + Exposure is always the exchange's margin block.
+    # Exchange gross margin = SPAN + Exposure.  Premium received is NOT deducted
+    # from the margin block; it only reduces the cash the trader must bring.
     total_margin = round(total_span + exposure, 2)
     effective_cost = round(max(total_margin - net_premium, 0), 2)
     expiry_day_margin = round(total_margin * 1.75, 2)
 
-    # Per-lot and ROI metrics (ROI relative to effective cash outlay)
     total_sell_lots = sum(l.lots for l in legs if l.action == "SELL")
     margin_per_lot = round(total_margin / total_sell_lots, 2) if total_sell_lots > 0 else 0
     roi_on_margin = round(net_premium / effective_cost * 100, 2) if effective_cost > 0 else 0
 
+    if worst:
+        span_note = (
+            f"Scenario SPAN: worst case = {worst['price_move_pct']:+.1f}% move, "
+            f"{worst['vol_shift_pct']:+.0f}% IV (16-scenario risk array, "
+            f"forward {forward:,.0f})"
+        )
+    else:
+        span_note = f"Scenario SPAN off forward {forward:,.0f}"
+
     return {
         "spot": round(spot, 2),
+        "forward": round(forward, 2),
         "span": round(total_span, 2),
         "span_note": span_note,
         "exposure": exposure,

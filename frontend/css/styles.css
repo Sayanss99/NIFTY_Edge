@@ -1,4 +1,4 @@
-/* NiftyEdge — Global Styles
+/* Stratovex — Global Styles
    Bloomberg Terminal meets modern SaaS dashboard */
 
 /* ── CSS Variables ──────────────────────────────────────────────────────── */
@@ -1936,7 +1936,7 @@ html[data-ne-refine="on"] .nav-item:hover {
     transform: none;
 }
 
-/* === Refinement: monogram — proper "NE" mark, not a bare "N" =========== */
+/* === Refinement: monogram — proper "SV" mark, not a bare "S" =========== */
 html[data-ne-refine="on"] .sidebar-logo {
     margin-bottom: 24px;
     position: relative;
@@ -1948,7 +1948,7 @@ html[data-ne-refine="on"] .sidebar-logo {
     font-size: 0;
 }
 html[data-ne-refine="on"] .sidebar-logo::before {
-    content: 'NE';
+    content: 'SV';
     display: inline-flex;
     align-items: center;
     justify-content: center;

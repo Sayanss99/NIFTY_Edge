@@ -1,5 +1,5 @@
 /**
- * NiftyEdge — Living Terminal layer (ne-live.js)
+ * Stratovex — Living Terminal layer (ne-live.js)
  *
  *  Read-only enhancement over whatever your existing JS pushes into the DOM:
  *   • Detects when .metric-value / .pnl-value / .price text changes and

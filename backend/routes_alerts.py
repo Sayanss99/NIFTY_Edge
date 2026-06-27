@@ -181,6 +181,7 @@ def alert_history(
         result.append({
             "id": log.id,
             "alert_id": rule.id,
+            "symbol": (rule.trade.symbol or "NIFTY") if rule.trade else "NIFTY",
             "metric": rule.metric,
             "condition": rule.condition,
             "threshold": rule.threshold,
@@ -220,6 +221,7 @@ def _rule_dict(r):
         "last_triggered_at": r.last_triggered_at.isoformat() if r.last_triggered_at else None,
         "created_at": r.created_at.isoformat() if r.created_at else None,
         "trade_info": {
+            "symbol": r.trade.symbol or "NIFTY",
             "trade_type": r.trade.trade_type,
             "strike": r.trade.strike,
             "expiry_date": r.trade.expiry_date,

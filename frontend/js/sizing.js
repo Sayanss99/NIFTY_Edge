@@ -1,5 +1,5 @@
 /**
- * NiftyEdge — Position Sizing Calculator
+ * Stratovex — Position Sizing Calculator
  *
  *  Self-contained modal that computes "how many lots can I afford?" from a
  *  ₹-at-risk budget, the option premium, and a stop-loss percentage.

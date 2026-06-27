@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NiftyEdge — Positions</title>
+    <title>Stratovex — Positions</title>
     <link rel="stylesheet" href="/css/styles.css">
     <style>
         .positions-header {
@@ -164,11 +164,15 @@
                             <option value="CLOSED">Closed</option>
                             <option value="">All</option>
                         </select>
-                        <button class="btn btn-primary" onclick="openAddModal()">+ Add Trade</button>
+                        <button class="btn btn-primary" onclick="openAddModalManual()">+ Add Trade</button>
                         <button class="btn btn-secondary" onclick="openMarginModal()" style="margin-left:8px">&#8382; Margin Calc</button>
                     </div>
                 </div>
 
+                <div id="pos-closed-banner" style="display:none;margin-bottom:12px;padding:8px 12px;border-radius:8px;
+                     background:rgba(217,119,6,0.12);border:1px solid rgba(217,119,6,0.35);color:#D97706;font-size:12px;font-weight:600">
+                    Markets closed — showing P&amp;L as of the last close (3:30 PM). Live updates resume when the market reopens.
+                </div>
                 <div id="positions-container">
                     <div class="text-muted text-center" style="padding:40px">Loading positions...</div>
                 </div>
@@ -202,7 +206,7 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label">Strike</label>
-                    <input type="number" id="add-strike" class="form-input" step="50" required>
+                    <input type="number" id="add-strike" class="form-input" step="any" required>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Entry Premium</label>
@@ -225,6 +229,8 @@
                 <!-- Auto-captured fields -->
                 <input type="hidden" id="add-iv" value="0">
                 <input type="hidden" id="add-delta" value="0">
+                <input type="hidden" id="add-symbol" value="NIFTY">
+                <input type="hidden" id="add-lot" value="">
 
                 <!-- Live trade summary -->
                 <div class="trade-summary" id="trade-summary">
@@ -337,6 +343,20 @@
             <div class="modal-actions">
                 <button class="btn btn-secondary" onclick="closeMarginModal()">Close</button>
                 <button class="btn btn-primary" onclick="calculateMargin()">Calculate</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Choose Hedge Style Modal -->
+    <div class="modal-overlay" id="hedge-choice-modal" style="display:none">
+        <div class="modal" style="max-width:660px">
+            <div class="modal-title">Choose How to Hedge</div>
+            <div id="hedge-choice-pos" style="font-size:13px;padding:10px;background:var(--bg-secondary);border-radius:6px;margin-bottom:14px"></div>
+            <div id="hedge-choice-body">
+                <div class="text-center text-muted" style="padding:30px">Loading hedge options…</div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeHedgeChoiceModal()">Close</button>
             </div>
         </div>
     </div>
@@ -480,6 +500,8 @@
                 document.getElementById('add-expiry').value  = params.get('expiry')  || '';
                 document.getElementById('add-iv').value      = params.get('iv')      || '0';
                 document.getElementById('add-delta').value   = params.get('delta')   || '0';
+                document.getElementById('add-symbol').value  = params.get('symbol')  || 'NIFTY';
+                document.getElementById('add-lot').value     = params.get('lot_size') || '';
                 const prefilledPremium = params.get('premium') || '';
                 document.getElementById('add-premium').value = prefilledPremium;
                 if (prefilledPremium) {
@@ -504,12 +526,36 @@
             }
         }
 
+        // Seed live P&L from /api/trades/risk. During market hours the WS keeps
+        // it fresh (this is just an immediate first paint); when the market is
+        // closed the endpoint returns the frozen close snapshot, so positions show
+        // their last-close P&L instead of going blank. `_posClosed` gates the
+        // off-hours refresh so market-hours behaviour (WS-driven) is unchanged.
+        let _posClosed = false;
+        async function loadLivePnl() {
+            try {
+                const r = await API.getRiskScores();
+                _posClosed = !!(r && r.closed_snapshot);
+                const banner = document.getElementById('pos-closed-banner');
+                if (banner) banner.style.display = _posClosed ? '' : 'none';
+                if (r && r.positions) {
+                    for (const p of r.positions) livePositions[p.trade_id] = p;
+                    renderPositions();
+                }
+            } catch (e) { /* leave WS-driven values in place */ }
+        }
+
         // Initial load
         (async () => {
             await Utils.initHeader();
             await loadPositions();
+            await loadLivePnl();          // immediate P&L (and the close snapshot off-hours)
             WS.connect();
         })();
+
+        // Off-hours, the WS is silent — refresh the frozen snapshot periodically.
+        // During market hours (_posClosed=false) the WS handles updates, so this idles.
+        setInterval(() => { if (_posClosed) loadLivePnl(); }, 60000);
 
         // ── WebSocket: live position updates ───────────────────────────
 
@@ -606,6 +652,7 @@
                 <div class="position-card ${cardClass}" data-trade-id="${trade.id}">
                     <div class="position-header">
                         <div style="display:flex;align-items:center;gap:10px">
+                            <span class="fw-700" style="font-size:15px;letter-spacing:0.3px">${trade.symbol || 'NIFTY'}</span>
                             <span class="badge ${Utils.tradeTypeClass(trade.trade_type)}">${trade.trade_type.replace('_', ' ')}</span>
                             ${dirBadge}
                             <span class="fw-700 font-mono" style="font-size:16px">${trade.strike}</span>
@@ -694,6 +741,7 @@
                 <div class="position-card ${cardClass}" data-trade-id="${trade.id}">
                     <div class="position-header">
                         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                            <span class="fw-700" style="font-size:15px;letter-spacing:0.3px">${trade.symbol || 'NIFTY'}</span>
                             <span class="badge" style="background:${sideBg};color:${sideCol};border:1px solid ${sideCol}55;font-weight:700;letter-spacing:0.4px">FUT · ${sideTxt}</span>
                             ${isHedge ? '<span class="badge badge-neutral" style="font-size:10px">DELTA HEDGE</span>' : ''}
                             <span class="text-muted font-mono" style="font-size:11px">${trade.expiry_date}</span>
@@ -773,7 +821,9 @@
         function _syncTradeType() {
             const combined = `${_tradeOptType}_${_tradeAction}`;
             document.getElementById('add-type').value = combined;
-            document.getElementById('trade-type-display').textContent = TRADE_DESCRIPTIONS[combined] || '';
+            const _sym = (document.getElementById('add-symbol').value || 'NIFTY').toUpperCase();
+            document.getElementById('trade-type-display').textContent =
+                `${_sym} · ${TRADE_DESCRIPTIONS[combined] || ''}`;
             const isBuy = _tradeAction === 'BUY';
             document.getElementById('add-parent-group').style.display = isBuy ? 'block' : 'none';
             if (isBuy) populateParentSelect();
@@ -853,6 +903,14 @@
             document.getElementById('add-modal').classList.add('active');
         }
 
+        // Manual "+ Add Trade" — reset to NIFTY so a prior stock-options prefill
+        // doesn't leak its symbol/lot into a fresh manual entry.
+        function openAddModalManual() {
+            document.getElementById('add-symbol').value = 'NIFTY';
+            document.getElementById('add-lot').value = '';
+            openAddModal();
+        }
+
         // Sizing calculator wired to the Add Trade modal — pulls the current
         // tradeType / strike / premium from the live form and writes the
         // suggested lots straight back into the qty input on Apply.
@@ -895,7 +953,10 @@
                 quantity: parseInt(document.getElementById('add-qty').value),
                 entry_iv: parseFloat(document.getElementById('add-iv').value) || 0,
                 entry_delta: parseFloat(document.getElementById('add-delta').value) || 0,
+                symbol: (document.getElementById('add-symbol').value || 'NIFTY').toUpperCase(),
             };
+            const lotVal = parseInt(document.getElementById('add-lot').value);
+            if (lotVal) trade.lot_size_override = lotVal;
 
             const parentId = document.getElementById('add-parent').value;
             if (parentId) trade.parent_trade_id = parseInt(parentId);
@@ -945,11 +1006,155 @@
 
         function openAddHedge(parentId, parentType, expiry) {
             const optType = parentType.includes('CE') ? 'CE' : 'PE';
+            // SELL (short) positions get the hedge-style chooser. BUY positions
+            // ("Pair into Spread") keep the manual add-trade form as before.
+            if (parentType.includes('SELL')) {
+                openHedgeChoice(parentId);
+                return;
+            }
             selectTradeAction('BUY');
             selectOptionType(optType);
             document.getElementById('add-expiry').value = expiry;
             document.getElementById('add-parent').value = parentId;
+            // Carry the parent's symbol/lot so a spread leg matches its underlying.
+            const parent = findTrade(parentId);
+            document.getElementById('add-symbol').value = (parent && parent.symbol) || 'NIFTY';
+            document.getElementById('add-lot').value = (parent && parent.lot_size_override) || '';
             openAddModal();
+        }
+
+        // ── Hedge-style chooser ────────────────────────────────────────────
+        let _hedgeChoices = null;
+
+        function closeHedgeChoiceModal() {
+            document.getElementById('hedge-choice-modal').style.display = 'none';
+            _hedgeChoices = null;
+        }
+
+        async function openHedgeChoice(parentId) {
+            const modal = document.getElementById('hedge-choice-modal');
+            const body = document.getElementById('hedge-choice-body');
+            document.getElementById('hedge-choice-pos').textContent = '';
+            body.innerHTML = '<div class="text-center text-muted" style="padding:30px">Loading hedge options…</div>';
+            modal.style.display = 'flex';
+
+            const res = await API.getHedgeSuggestions(parentId);
+            if (!res || res.detail || res.error) {
+                body.innerHTML = `<div class="text-center" style="padding:24px;color:#DC2626">${res?.detail || res?.error || 'Could not load hedge options'}</div>`;
+                return;
+            }
+            _hedgeChoices = { parentId, ...res };
+
+            const p = res.position || {};
+            document.getElementById('hedge-choice-pos').innerHTML =
+                `Hedging <strong>${p.symbol || 'NIFTY'} ${(p.trade_type || '').replace('_', ' ')} ${p.strike}</strong> ` +
+                `(${p.expiry}, ${p.quantity} lot${p.quantity > 1 ? 's' : ''}) · Spot ${Utils.formatNum(res.spot, 2)}`;
+
+            body.innerHTML = `
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                    ${renderBuyProtectCard(res.buy_protect)}
+                    ${renderSellNextCard(res.sell_next_expiry, res.next_expiry)}
+                </div>`;
+        }
+
+        function renderBuyProtectCard(h) {
+            if (!h) {
+                return `<div style="border:1px solid var(--border);border-radius:8px;padding:14px">
+                    <div style="font-weight:700;margin-bottom:6px">Buy Protection</div>
+                    <div class="text-muted" style="font-size:12px">No suitable protective buy found right now.</div></div>`;
+            }
+            const conf = h.confidence >= 60 ? '#16A34A' : h.confidence >= 40 ? '#D97706' : '#DC2626';
+            return `
+                <div style="border:1px solid var(--border);border-radius:8px;padding:14px;display:flex;flex-direction:column">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                        <span style="font-weight:700">Buy Protection <span class="badge badge-neutral" style="font-size:9px">DEFAULT</span></span>
+                        <span style="font-size:10px;color:${conf};font-weight:600">Conf: ${h.confidence}%</span>
+                    </div>
+                    <div style="font-size:13px;font-family:var(--font-mono);margin-bottom:6px">
+                        BUY <strong>${h.strike} ${h.option_type}</strong> @ ${h.ltp.toFixed(1)} × ${h.qty_lots} lot${h.qty_lots > 1 ? 's' : ''}
+                    </div>
+                    <div style="font-size:11px;color:var(--text-secondary);display:flex;flex-wrap:wrap;gap:10px;margin-bottom:6px">
+                        <span>Cost: ${Utils.formatINR(h.cost)}</span>
+                        <span>Worst P&L: ${Utils.formatINR(h.worst_pnl)}</span>
+                        <span>Best P&L: ${Utils.formatINR(h.best_pnl)}</span>
+                    </div>
+                    <div style="font-size:10px;color:var(--text-muted);margin-bottom:10px;flex:1">Same expiry (${h.expiry}). ${h.rationale || ''}</div>
+                    <button class="btn btn-sm btn-primary" onclick="applyHedgeChoice('buy')">Apply — Buy Hedge</button>
+                </div>`;
+        }
+
+        function renderSellNextCard(h, nextExpiry) {
+            if (!h) {
+                return `<div style="border:1px solid var(--border);border-radius:8px;padding:14px">
+                    <div style="font-weight:700;margin-bottom:6px">Sell Next-Expiry OTM</div>
+                    <div class="text-muted" style="font-size:12px">${nextExpiry ? 'No low-delta strike with good OI found in ' + nextExpiry + '.' : 'No next expiry available.'}</div></div>`;
+            }
+            return `
+                <div style="border:1px solid var(--border);border-radius:8px;padding:14px;display:flex;flex-direction:column">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                        <span style="font-weight:700">Sell Next-Expiry OTM</span>
+                        <span style="font-size:10px;color:#2563EB;font-weight:600">|Δ| ${Math.abs(h.delta).toFixed(2)}</span>
+                    </div>
+                    <div style="font-size:13px;font-family:var(--font-mono);margin-bottom:6px">
+                        SELL <strong>${h.strike} ${h.option_type}</strong> @ ${h.ltp.toFixed(1)} × ${h.qty_lots} lot${h.qty_lots > 1 ? 's' : ''}
+                    </div>
+                    <div style="font-size:11px;color:var(--text-secondary);display:flex;flex-wrap:wrap;gap:10px;margin-bottom:6px">
+                        <span>Premium: ${Utils.formatINR(h.premium_collected)}</span>
+                        <span>OI: ${Utils.formatNum(h.oi)}</span>
+                        <span>IV: ${h.iv.toFixed(1)}%</span>
+                    </div>
+                    <div style="font-size:10px;color:var(--text-muted);margin-bottom:10px;flex:1">Next expiry (${h.expiry}). Placed as a new short position. ${h.rationale || ''}</div>
+                    <button class="btn btn-sm btn-primary" onclick="applyHedgeChoice('sell')">Apply — Sell Next Expiry</button>
+                </div>`;
+        }
+
+        async function applyHedgeChoice(kind) {
+            if (!_hedgeChoices) return;
+            const side = _hedgeChoices.side;
+            let trade;
+            if (kind === 'buy') {
+                const h = _hedgeChoices.buy_protect;
+                if (!h) return;
+                trade = {
+                    trade_type: `${side}_BUY`,
+                    strike: h.strike,
+                    expiry_date: h.expiry,
+                    entry_premium: h.ltp,
+                    quantity: h.qty_lots,
+                    entry_iv: h.entry_iv || 0,
+                    entry_delta: h.entry_delta || 0,
+                    parent_trade_id: _hedgeChoices.parentId,   // child hedge of the short
+                };
+            } else {
+                const h = _hedgeChoices.sell_next_expiry;
+                if (!h) return;
+                // Standalone new short in the next expiry — gets its own risk
+                // scoring rather than being hidden as a nested hedge.
+                trade = {
+                    trade_type: `${side}_SELL`,
+                    strike: h.strike,
+                    expiry_date: h.expiry,
+                    entry_premium: h.ltp,
+                    quantity: h.qty_lots,
+                    entry_iv: h.entry_iv || 0,
+                    entry_delta: h.entry_delta || 0,
+                };
+            }
+
+            const resp = await API.addTrade(trade);
+            if (resp && resp.requires_override) {
+                const lost = Math.abs(resp.today_pnl || 0), lim = resp.threshold || 0;
+                const ok = confirm(`Daily loss ₹${Math.round(lost).toLocaleString('en-IN')} exceeds your ₹${Math.round(lim).toLocaleString('en-IN')} limit.\n\nPlace this hedge anyway?`);
+                if (!ok) { Utils.toast('Hedge cancelled', 'success'); return; }
+                const resp2 = await API.addTrade({ ...trade, confirm_override: true });
+                if (!(resp2 && resp2.id)) { Utils.toast(resp2?.detail || 'Failed to place hedge', 'error'); return; }
+            } else if (!(resp && resp.id)) {
+                Utils.toast(resp?.detail || 'Failed to place hedge', 'error');
+                return;
+            }
+            Utils.toast(kind === 'buy' ? 'Protective buy hedge added' : 'Next-expiry short placed', 'success');
+            closeHedgeChoiceModal();
+            await loadPositions();
         }
 
         // ── Close Trade Modal ──────────────────────────────────────────
@@ -963,6 +1168,7 @@
 
             // Summary
             document.getElementById('close-summary').innerHTML = `
+                <strong style="margin-right:8px">${trade.symbol || 'NIFTY'}</strong>
                 <span class="badge ${Utils.tradeTypeClass(trade.trade_type)}">${trade.trade_type.replace('_', ' ')}</span>
                 <strong class="font-mono" style="margin-left:8px">${trade.strike}</strong>
                 <span class="text-muted" style="margin-left:8px">${trade.expiry_date} | ${trade.quantity} lot(s)</span>

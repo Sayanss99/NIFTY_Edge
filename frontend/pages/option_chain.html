@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NiftyEdge — Option Chain</title>
+    <title>Stratovex — Option Chain</title>
     <link rel="stylesheet" href="/css/styles.css">
     <style>
         .lookup-panel {
@@ -19,8 +19,9 @@
             padding: 16px;
             box-shadow: var(--shadow-sm);
         }
-        .lookup-card.ce { border-top: 3px solid var(--red); }
-        .lookup-card.pe { border-top: 3px solid var(--blue); }
+        /* CE = soft-cyan, PE = muted coral (consistent with Stock Options). */
+        .lookup-card.ce { border-top: 3px solid #26C6DA; }
+        .lookup-card.pe { border-top: 3px solid #F0857A; }
         .lookup-input-row {
             display: flex;
             gap: 8px;
@@ -79,11 +80,11 @@
             border-bottom: 2px solid var(--border);
             background: var(--bg-card);
         }
-        .chain-table th.ce-header { background: #FEF2F2; color: var(--red); text-align: right; }
-        .chain-table th.pe-header { background: #EFF6FF; color: var(--blue); text-align: left; }
+        .chain-table th.ce-header { background: #ECFCFF; color: #0E7C8C; text-align: right; }
+        .chain-table th.pe-header { background: #FFF1ED; color: #C25749; text-align: left; }
         .chain-table th.strike-header { background: var(--bg-table-header); text-align: center; }
-        [data-theme="dark"] .chain-table th.ce-header { background: #2A1520; color: #FCA5A5; }
-        [data-theme="dark"] .chain-table th.pe-header { background: #15202E; color: #93C5FD; }
+        [data-theme="dark"] .chain-table th.ce-header { background: #0E2A30; color: #67E8F9; }
+        [data-theme="dark"] .chain-table th.pe-header { background: #2E1A17; color: #F6A99F; }
         [data-theme="dark"] .chain-table th.strike-header { background: var(--bg-secondary); }
         .chain-table td { padding: 5px 8px; border-bottom: 1px solid var(--border-light); }
         .chain-table td.ce-cell { text-align: right; }
@@ -108,6 +109,10 @@
             align-items: center;
             margin-bottom: 12px;
         }
+        .seg-toggle { display:inline-flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+        .seg-toggle .seg { border:none; background:transparent; padding:5px 12px; font-size:12px;
+            font-weight:700; cursor:pointer; color:var(--text-secondary); line-height:1.4; }
+        .seg-toggle .seg.active { background:var(--primary,#2563EB); color:#fff; }
         .btn-success { background:#16A34A; color:#fff; border:none; }
         .btn-success:hover { background:#15803D; }
         .btn-danger  { background:#DC2626; color:#fff; border:none; }
@@ -125,7 +130,7 @@
                     <!-- CE Lookup -->
                     <div class="lookup-card ce">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                            <span class="fw-600" style="color:#991B1B">CE Lookup</span>
+                            <span class="fw-600" style="color:#1796A8">CE Lookup</span>
                             <div id="ce-add-row" class="hidden" style="display:none;align-items:center;gap:6px">
                                 <button class="btn btn-sm btn-secondary" onclick="openSizingFromLookup('CE')" title="How many lots fit my risk budget?">⚖ Size</button>
                                 <button class="btn btn-sm btn-danger" onclick="setAndAdd('CE','SELL')">↓ Sell</button>
@@ -147,7 +152,7 @@
                     <!-- PE Lookup -->
                     <div class="lookup-card pe">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                            <span class="fw-600" style="color:#1E3A8A">PE Lookup</span>
+                            <span class="fw-600" style="color:#C25749">PE Lookup</span>
                             <div id="pe-add-row" class="hidden" style="display:none;align-items:center;gap:6px">
                                 <button class="btn btn-sm btn-secondary" onclick="openSizingFromLookup('PE')" title="How many lots fit my risk budget?">⚖ Size</button>
                                 <button class="btn btn-sm btn-danger" onclick="setAndAdd('PE','SELL')">↓ Sell</button>
@@ -169,6 +174,17 @@
 
                 <!-- Filter Bar -->
                 <div class="filter-bar">
+                    <div class="seg-toggle" id="chain-mode-toggle" title="Index vs Stock symbol">
+                        <button type="button" id="chain-mode-ind" class="seg active" onclick="setChainMode('IND')">IND</button>
+                        <button type="button" id="chain-mode-sym" class="seg" onclick="setChainMode('SYM')">SYM</button>
+                    </div>
+                    <div id="oc-search-wrap" style="display:none;align-items:center;gap:6px">
+                        <input list="symbol-options" id="symbol-search" placeholder="Type a symbol… (e.g. RELIANCE)" autocomplete="off"
+                               style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:var(--font-mono);width:240px"
+                               onchange="onSymbolPicked()" onkeydown="if(event.key==='Enter')onSymbolPicked()">
+                        <datalist id="symbol-options"></datalist>
+                    </div>
+                    <span style="font-size:12px;color:var(--text-secondary)">Symbol: <strong id="chain-symbol">NIFTY</strong></span>
                     <span style="font-size:12px;color:var(--text-secondary)">Spot: <strong class="font-mono" id="chain-spot">-</strong></span>
                     <label style="font-size:12px;display:flex;align-items:center;gap:4px">
                         <input type="checkbox" id="filter-range" onchange="renderChain()">
@@ -218,6 +234,35 @@
         let chainData = [];
         let currentSpot = 0;
         let currentExpiry = '';
+        let currentSymbol = 'NIFTY';
+        let currentLot = null;
+        // Last stock the user searched (remembered for the session so the SYM
+        // toggle can restore it). NIFTY index stays the default backbone.
+        let lastStockSymbol = sessionStorage.getItem('oc_last_symbol') || '';
+
+        // IND/SYM toggle: IND hides the search bar (NIFTY index), SYM shows it.
+        function _setOcToggle(mode) {
+            document.getElementById('chain-mode-ind').classList.toggle('active', mode === 'IND');
+            document.getElementById('chain-mode-sym').classList.toggle('active', mode === 'SYM');
+            document.getElementById('oc-search-wrap').style.display = mode === 'SYM' ? 'flex' : 'none';
+        }
+
+        // Toggle handler: IND → NIFTY index; SYM → last searched symbol (or focus
+        // the search bar to pick one).
+        function setChainMode(mode) {
+            if (mode === 'IND') {
+                document.getElementById('symbol-search').value = '';
+                loadChain('NIFTY', null);
+                return;
+            }
+            _setOcToggle('SYM');
+            if (lastStockSymbol) {
+                document.getElementById('symbol-search').value = lastStockSymbol;
+                loadChain(lastStockSymbol, null);
+            } else {
+                document.getElementById('symbol-search').focus();
+            }
+        }
         let lookupData = { CE: null, PE: null };
         // Default action is SELL (most common for option writers)
         let lookupAction = { CE: 'SELL', PE: 'SELL' };
@@ -245,48 +290,99 @@
             });
         }
 
-        // ── Load initial data ──────────────────────────────────────────
+        // ── Symbol + chain loading ─────────────────────────────────────
 
+        // Core loader — fetches the chain for a symbol/expiry, repopulates the
+        // expiry dropdown, and re-renders. Used by initial load, expiry change
+        // and symbol search alike.
+        async function loadChain(symbol, expiry) {
+            const r = await API.getOptionChain(expiry || null, symbol);
+            if (!r || r.error) { Utils.toast(r?.error || `No chain for ${symbol}`, 'error'); return false; }
+            chainData = r.data;
+            currentSpot = r.spot;
+            currentExpiry = r.selected_expiry;
+            currentSymbol = (r.symbol || symbol || 'NIFTY').toUpperCase();
+            currentLot = r.lot_size || null;
+            document.getElementById('chain-symbol').textContent = currentSymbol;
+            // Repopulate the expiry dropdown for this symbol
+            const sel = document.getElementById('expiry-selector');
+            if (sel && r.expiries) {
+                sel.innerHTML = r.expiries.map(e => `<option value="${e}">${e}</option>`).join('');
+                sel.value = currentExpiry || r.expiries[0];
+            }
+            renderChain();
+            Utils.updateRefreshInfo(new Date().toISOString());
+            // Persist the last-viewed chain for the whole browser session, so it
+            // survives refreshes and page changes until the tab is closed.
+            try {
+                sessionStorage.setItem('oc_symbol', currentSymbol);
+                sessionStorage.setItem('oc_expiry', currentExpiry || '');
+            } catch (e) {}
+            // Reflect the IND/SYM toggle from whatever is now loaded.
+            if (currentSymbol === 'NIFTY') {
+                _setOcToggle('IND');
+            } else {
+                lastStockSymbol = currentSymbol;
+                try { sessionStorage.setItem('oc_last_symbol', currentSymbol); } catch (e) {}
+                document.getElementById('symbol-search').value = currentSymbol;
+                _setOcToggle('SYM');
+            }
+            return true;
+        }
+
+        // Triggered when the user picks a datalist suggestion or presses Enter —
+        // no separate Search button needed.
+        async function onSymbolPicked() {
+            const sym = (document.getElementById('symbol-search').value || '').trim().toUpperCase();
+            if (!sym || sym === currentSymbol) return;
+            await loadChain(sym, null);
+        }
+
+        // Populate the symbol datalist for autocomplete
         (async () => {
-            const resp = await API.getOptionChain();
-            if (resp && !resp.error) {
-                chainData = resp.data;
-                currentSpot = resp.spot;
-                currentExpiry = resp.selected_expiry;
+            const f = await API.getFnoList();
+            if (f && f.symbols) {
+                document.getElementById('symbol-options').innerHTML =
+                    f.symbols.map(s => `<option value="${s}">`).join('');
+            }
+        })();
 
-                // Update expiry selector
-                if (resp.expiries) {
-                    const sel = document.getElementById('expiry-selector');
-                    sel.innerHTML = resp.expiries.map(e =>
-                        `<option value="${e}">${e}</option>`
-                    ).join('');
-                    // Restore user's last selection; fall back to nearest expiry
-                    const resolved = Utils.resolveExpiry(resp.expiries);
-                    sel.value = resolved;
-                    // If restored expiry differs from the default chain data, reload
-                    if (resolved !== currentExpiry) {
-                        const r = await API.getOptionChain(resolved);
-                        if (r && !r.error) {
-                            chainData = r.data;
-                            currentSpot = r.spot;
-                            currentExpiry = r.selected_expiry;
-                        }
-                    }
-                    sel.addEventListener('change', async () => {
-                        const newExpiry = sel.value;
-                        Utils.saveExpiry(newExpiry);
-                        const r = await API.getOptionChain(newExpiry);
-                        if (r && !r.error) {
-                            chainData = r.data;
-                            currentSpot = r.spot;
-                            currentExpiry = r.selected_expiry;
-                            renderChain();
-                        }
-                    });
+        // ── Load initial data ──────────────────────────────────────────
+        (async () => {
+            const qp = new URLSearchParams(window.location.search);
+            // Priority: explicit URL deep-link → last session-viewed chain → NIFTY.
+            let initSymbol = (qp.get('symbol') || '').toUpperCase();
+            let initExpiry = qp.get('expiry');
+            if (!initSymbol) {
+                initSymbol = (sessionStorage.getItem('oc_symbol') || 'NIFTY').toUpperCase();
+                if (!initExpiry) initExpiry = sessionStorage.getItem('oc_expiry') || null;
+            }
+
+            // loadChain sets the IND/SYM toggle + search field based on what loads.
+            await loadChain(initSymbol, initExpiry);
+
+            // Deep-link from the Most-Active "Trade" button: pre-fill the CE/PE
+            // lookup with the card's strike/side so it's ready to trade (the
+            // Sell/Buy buttons appear with live LTP/delta/IV for that strike).
+            const dlStrike = parseInt(qp.get('strike'));
+            const dlSide = (qp.get('side') || '').toUpperCase();
+            if (dlStrike && (dlSide === 'CE' || dlSide === 'PE')) {
+                const inp = document.getElementById(dlSide.toLowerCase() + '-lookup-strike');
+                if (inp) {
+                    inp.value = dlStrike;
+                    await lookupStrike(dlSide);
+                    inp.scrollIntoView({ block: 'center', behavior: 'smooth' });
                 }
+            }
 
-                renderChain();
-                Utils.updateRefreshInfo(new Date().toISOString());
+            // Expiry change handler (uses whichever symbol is active)
+            const sel = document.getElementById('expiry-selector');
+            if (sel) {
+                sel.addEventListener('change', async () => {
+                    const newExpiry = sel.value;
+                    if (currentSymbol === 'NIFTY') Utils.saveExpiry(newExpiry);
+                    await loadChain(currentSymbol, newExpiry);
+                });
             }
 
             WS.connect();
@@ -296,6 +392,11 @@
 
         WS.on('chain_update', (data) => {
             if (!data || !data.rows) return;
+            // The scheduler only broadcasts the NIFTY active expiry. Ignore it
+            // entirely when viewing a stock symbol, and ignore mismatched expiry
+            // so the table isn't repainted with the wrong series.
+            if (currentSymbol !== 'NIFTY') return;
+            if (data.expiry && currentExpiry && data.expiry !== currentExpiry) return;
             chainData = data.rows.map(r => ({
                 strike: r.strike,
                 ce_oi: r.ce_oi || 0, ce_iv: r.ce_iv || 0,
@@ -397,7 +498,7 @@
             const strike = parseInt(input.value);
             if (!strike) return;
 
-            const resp = await API.strikeLookup(strike, side, currentExpiry);
+            const resp = await API.strikeLookup(strike, side, currentExpiry, currentSymbol);
             if (resp && !resp.error) {
                 lookupData[side] = resp;
                 const prefix = side.toLowerCase();
@@ -440,7 +541,9 @@
                 iv: data.iv,
                 delta: data.delta,
                 expiry: currentExpiry,
+                symbol: currentSymbol,
             });
+            if (currentLot) params.set('lot_size', currentLot);
             window.location.href = `/positions?${params.toString()}`;
         }
     </script>

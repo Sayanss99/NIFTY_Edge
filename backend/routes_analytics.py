@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 @router.get("/performance")
 def performance_overview(
     months: int = Query(0, description="Filter last N months, 0=all"),
+    symbol: str = Query(None, description="Scope to one underlying; None/empty = all"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -40,7 +41,37 @@ def performance_overview(
         cutoff = datetime.utcnow() - timedelta(days=months * 30)
         query = query.filter(Trade.exit_date >= cutoff)
 
-    trades = query.order_by(Trade.exit_date.asc()).all()
+    # All closed trades in window (drives the global "P&L by Underlying" heatmap,
+    # which must stay symbol-agnostic so it can offer every symbol to filter by).
+    all_trades = query.order_by(Trade.exit_date.asc()).all()
+
+    # symbol_pnl is computed from ALL trades (global attribution), regardless of
+    # the active symbol filter.
+    symbol_agg = defaultdict(lambda: {"pnl": 0.0, "trades": 0, "wins": 0})
+    for t in all_trades:
+        sym = t.symbol or "NIFTY"
+        p = t.realized_pnl or 0
+        a = symbol_agg[sym]
+        a["pnl"] += p
+        a["trades"] += 1
+        if p > 0:
+            a["wins"] += 1
+    symbol_pnl = [
+        {
+            "symbol": sym,
+            "pnl": round(a["pnl"], 2),
+            "trades": a["trades"],
+            "win_rate": round(a["wins"] / a["trades"] * 100, 1) if a["trades"] else 0,
+        }
+        for sym, a in symbol_agg.items()
+        if round(a["pnl"], 2) != 0   # skip underlyings with a flat ₹0 net P&L
+    ]
+    symbol_pnl.sort(key=lambda x: x["pnl"], reverse=True)
+
+    # The rest of the page (summary, curves, heatmaps) respects the symbol filter.
+    sym_filter = (symbol or "").upper().strip()
+    trades = ([t for t in all_trades if (t.symbol or "NIFTY") == sym_filter]
+              if sym_filter else all_trades)
 
     if not trades:
         return {
@@ -48,6 +79,9 @@ def performance_overview(
             "cumulative_pnl": [],
             "expiry_pnl": [],
             "monthly_pnl": [],
+            "side_pnl": [],
+            "symbol_pnl": symbol_pnl,
+            "active_symbol": sym_filter or None,
         }
 
     # Summary metrics
@@ -96,6 +130,23 @@ def performance_overview(
         for m, p in sorted(monthly_map.items())
     ]
 
+    # P&L by side (CE vs PE) per underlying — respects the active symbol filter.
+    side_agg = defaultdict(lambda: {"ce": 0.0, "pe": 0.0, "ce_n": 0, "pe_n": 0})
+    for t in trades:
+        sym = t.symbol or "NIFTY"
+        p = t.realized_pnl or 0
+        s = side_agg[sym]
+        if "CE" in t.trade_type:
+            s["ce"] += p; s["ce_n"] += 1
+        elif "PE" in t.trade_type:
+            s["pe"] += p; s["pe_n"] += 1
+    side_pnl = [
+        {"symbol": sym, "ce_pnl": round(v["ce"], 2), "pe_pnl": round(v["pe"], 2),
+         "ce_trades": v["ce_n"], "pe_trades": v["pe_n"]}
+        for sym, v in side_agg.items()
+    ]
+    side_pnl.sort(key=lambda x: (x["ce_pnl"] + x["pe_pnl"]), reverse=True)
+
     return {
         "summary": {
             "total_pnl": round(sum(pnls), 2),
@@ -107,19 +158,27 @@ def performance_overview(
         "cumulative_pnl": cumulative,
         "expiry_pnl": expiry_pnl,
         "monthly_pnl": monthly_pnl,
+        "symbol_pnl": symbol_pnl,       # global attribution (all trades)
+        "side_pnl": side_pnl,           # CE vs PE per underlying (filtered)
+        "active_symbol": sym_filter or None,
     }
 
 
 @router.get("/strike-patterns")
 def strike_patterns(
+    symbol: str = Query(None, description="Scope to one underlying; None/empty = all"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Strike distance analysis and VIX regime breakdown."""
-    trades = db.query(Trade).filter(
+    q = db.query(Trade).filter(
         Trade.user_id == user.id,
         Trade.status == TradeStatus.CLOSED.value,
-    ).order_by(Trade.exit_date.asc()).all()
+    )
+    sym_filter = (symbol or "").upper().strip()
+    if sym_filter:
+        q = q.filter(Trade.symbol == sym_filter)
+    trades = q.order_by(Trade.exit_date.asc()).all()
 
     if not trades:
         return {"ce_distances": [], "pe_distances": [], "vix_regime": [], "insights": []}
@@ -312,6 +371,7 @@ def _generate_insights(ce_data, pe_data, vix_regime):
 @router.get("/mistake-breakdown")
 def mistake_breakdown(
     months: int = Query(0, description="Filter last N months, 0=all"),
+    symbol: str = Query(None, description="Scope to one underlying; None/empty = all"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -331,6 +391,9 @@ def mistake_breakdown(
     if months > 0:
         cutoff = datetime.utcnow() - timedelta(days=months * 30)
         q = q.filter(Trade.exit_date >= cutoff)
+    sym_filter = (symbol or "").upper().strip()
+    if sym_filter:
+        q = q.filter(Trade.symbol == sym_filter)
 
     rows = q.all()
 
@@ -446,6 +509,7 @@ def eod_summary(
             return None
         return {
             "trade_id":    t.id,
+            "symbol":      t.symbol or "NIFTY",
             "trade_type":  t.trade_type,
             "strike":      t.strike,
             "expiry_date": t.expiry_date,

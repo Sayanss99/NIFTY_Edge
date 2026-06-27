@@ -3,7 +3,7 @@
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, Float, String, DateTime, Date, Boolean,
-    ForeignKey, JSON, Text, Enum as SQLEnum
+    ForeignKey, JSON, Text, Enum as SQLEnum, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from database import Base
@@ -54,10 +54,14 @@ class Trade(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Underlying symbol. Defaults to NIFTY so every existing/legacy row and the
+    # entire NIFTY flow behave exactly as before; individual stocks set this
+    # (e.g. "RELIANCE") plus their own lot_size_override.
+    symbol = Column(String, default="NIFTY", nullable=False, index=True)
     trade_type = Column(String, nullable=False)  # CE_SELL, PE_SELL, CE_BUY, PE_BUY,
                                                   # FUT_BUY, FUT_SELL  (futures hedges)
     instrument_type = Column(String, default="OPT", nullable=False)  # OPT | FUT
-    lot_size_override = Column(Integer, nullable=True)   # for futures if NSE bumps the lot
+    lot_size_override = Column(Integer, nullable=True)   # per-symbol lot (stocks) or futures lot
     strike = Column(Integer, nullable=False)             # 0 for futures (no strike)
     expiry_date = Column(String, nullable=False)  # DD-Mon-YYYY format
     entry_premium = Column(Float, nullable=False)
@@ -271,6 +275,60 @@ class IVTermStructureRecord(Base):
     dte = Column(Integer, nullable=True)
     atm_iv = Column(Float, nullable=True)
     atm_straddle = Column(Float, nullable=True)
+
+
+# ── Stock IV History (per-symbol ATM IV / HV for stock-options IVP) ───────────
+
+class StockIVHistory(Base):
+    __tablename__ = "stock_iv_history"
+    __table_args__ = (UniqueConstraint("symbol", "date", name="uq_stock_iv_symbol_date"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)
+    atm_iv = Column(Float, nullable=True)     # ATM IV from the stock option chain
+    hv = Column(Float, nullable=True)         # annualised historical volatility (%)
+    spot = Column(Float, nullable=True)
+    dte = Column(Integer, nullable=True)
+
+
+# ── Stock Confirmed Log (screener confirmed-suggestion lifecycle) ─────────────
+# A row per confirmation *episode* of a stock-options suggestion. While the
+# episode is < 2 days old it shows in the live "Confirmed" tab; from day 3 it
+# graduates to the "Track Record" sub-page, where its current tradability is
+# re-evaluated live. entry_* fields snapshot the metrics at first confirmation.
+
+class StockConfirmedLog(Base):
+    __tablename__ = "stock_confirmed_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, nullable=False, index=True)
+    side = Column(String, nullable=True)            # CE / PE
+    strike = Column(Integer, nullable=True)
+    expiry = Column(String, nullable=True)
+    trade_type = Column(String, nullable=True)      # CE_SELL / PE_SELL
+    entry_rsi_d = Column(Float, nullable=True)
+    entry_rsi_w = Column(Float, nullable=True)
+    entry_rsi_h = Column(Float, nullable=True)
+    entry_ivp = Column(Float, nullable=True)
+    entry_iv = Column(Float, nullable=True)
+    entry_delta = Column(Float, nullable=True)
+    entry_oi = Column(Integer, nullable=True)
+    entry_premium_yield = Column(Float, nullable=True)
+    entry_demark = Column(Integer, nullable=True)
+    entry_demark_tf = Column(String, nullable=True)
+    entry_demark_perfected = Column(Boolean, nullable=True)
+    entry_spot = Column(Float, nullable=True)
+    entry_forward = Column(Float, nullable=True)
+    # The low of the day the DeMark 9 fired (episode start). A later daily close
+    # below this level breaks the bullish setup → the pick is invalidated and
+    # moved to the log even before the normal 2-day graduation.
+    demark9_low = Column(Float, nullable=True)
+    invalidated = Column(Boolean, default=False)
+    invalidated_at = Column(DateTime, nullable=True)
+    invalidated_close = Column(Float, nullable=True)
+    first_confirmed = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    last_confirmed = Column(DateTime, nullable=True)
 
 
 # ── IV Skew Daily (25-delta risk reversal + butterfly at EOD) ─────────────────

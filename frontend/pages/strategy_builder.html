@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NiftyEdge — Strategy Builder</title>
+    <title>Stratovex — Strategy Builder</title>
     <link rel="stylesheet" href="/css/styles.css">
     <style>
         /* ── Analytics Bar wrapper (60/40 split) ───────────────────── */
@@ -362,6 +362,23 @@
             padding: 8px;
             font-size: 11px;
         }
+        /* ── Strategy Guide overlay ─────────────────────────────────── */
+        .sg-intro { font-size:12px; color:var(--text-secondary); line-height:1.5; max-width:760px; }
+        .sg-tabs { display:inline-flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+        .sg-tab { border:1px solid var(--border); background:transparent; color:var(--text-secondary);
+            padding:6px 16px; border-radius:18px; font-size:12.5px; font-weight:700; cursor:pointer; }
+        .sg-tab.active { color:#fff; border-color:transparent; }
+        .sg-tab.bull.active { background:#16A34A; }
+        .sg-tab.bear.active { background:#DC2626; }
+        .sg-tab.neutral.active { background:#D97706; }
+        .sg-tab.other.active { background:var(--primary,#2563EB); }
+        .sg-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:13px; }
+        .sg-card { background:var(--bg-secondary,#F9FAFB); border:1px solid var(--border-light); border-radius:10px; padding:11px 12px; }
+        [data-theme="dark"] .sg-card { background:rgba(255,255,255,0.03); }
+        .sg-card .sg-name { font-weight:700; font-size:13px; margin:4px 0 3px; }
+        .sg-card .sg-use { font-size:10.5px; color:var(--text-muted); line-height:1.45; min-height:30px; }
+        .sg-chart { background:var(--bg-card); border-radius:7px; padding:2px 0; }
+        [data-theme="dark"] .sg-chart { background:rgba(0,0,0,0.18); }
     </style>
 </head>
 <body>
@@ -387,6 +404,15 @@
                             <span style="color:var(--text-muted);font-size:11px">Loading outlook...</span>
                         </div>
                     </div>
+                </div>
+
+                <!-- Opens the in-page strategy guide overlay (no redirect) -->
+                <div style="display:flex;justify-content:flex-start;margin:-2px 0 10px">
+                    <button class="btn btn-secondary" style="padding:4px 12px;font-size:11.5px;font-weight:600;border-radius:7px"
+                            onclick="openStrategyGuide()"
+                            title="A visual guide to every option strategy — payoff shapes & when to use them">
+                        &#9432;&nbsp; Explore Strategies
+                    </button>
                 </div>
 
                 <!-- Main layout: Rankings | Wizard -->
@@ -517,6 +543,24 @@
         </div>
     </div>
 
+    <!-- Strategy Guide (in-page overlay — never leaves the builder) -->
+    <div class="modal-overlay" id="sg-modal" style="display:none" onclick="if(event.target===this)closeStrategyGuide()">
+        <div class="modal" style="max-width:980px;width:96%;max-height:86vh;display:flex;flex-direction:column;padding:0;overflow:hidden">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--border)">
+                <div>
+                    <div class="modal-title" style="margin:0">Strategy Guide</div>
+                    <div class="sg-intro" style="margin:6px 0 0">An options <strong>strategy</strong> combines option legs so the combined payoff fits your view. Each tile sketches profit/loss at expiry — <span style="color:#16A34A;font-weight:700">green = profit</span>, <span style="color:#DC2626;font-weight:700">red = loss</span>, dashed = breakeven — with a one-line note on when it's used.</div>
+                </div>
+                <button onclick="closeStrategyGuide()" aria-label="Close" title="Close"
+                        style="background:transparent;border:none;font-size:24px;line-height:1;cursor:pointer;color:var(--text-muted);padding:0 2px">&times;</button>
+            </div>
+            <div style="padding:14px 18px;overflow:auto">
+                <div class="sg-tabs" id="sg-tabs"></div>
+                <div class="sg-grid" id="sg-grid"></div>
+            </div>
+        </div>
+    </div>
+
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
@@ -553,6 +597,7 @@
         let selectedStrategy = null; // {strategy_type, confidence_score, ...}
         let currentExpiry = '';
         let payoffData = null;      // from /api/strategies/{id}/payoff (after create)
+        let wizardLegCount = 0;     // # of leg inputs currently rendered in the wizard
 
         // Default strike suggestions per strategy type (populated from analytics).
         // Offsets below are *fallback* widths used only when analytics are
@@ -580,6 +625,23 @@
             CALENDAR_SPREAD: [
                 { label: 'CE SELL (near)', optType: 'CE', action: 'SELL', offset: 0 },
                 { label: 'CE BUY (far)',   optType: 'CE', action: 'BUY',  offset: 0, useFarExpiry: true },
+            ],
+            // Fallbacks only — the backend normally supplies OI-anchored legs per ranking.
+            BULL_CALL_SPREAD: [
+                { label: 'CE BUY',  optType: 'CE', action: 'BUY',  offset: 0 },
+                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +250 },
+            ],
+            BEAR_PUT_SPREAD: [
+                { label: 'PE BUY',  optType: 'PE', action: 'BUY',  offset: 0 },
+                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -250 },
+            ],
+            LONG_STRANGLE: [
+                { label: 'CE BUY', optType: 'CE', action: 'BUY', offset: +350 },
+                { label: 'PE BUY', optType: 'PE', action: 'BUY', offset: -350 },
+            ],
+            SHORT_STRANGLE: [
+                { label: 'CE SELL', optType: 'CE', action: 'SELL', offset: +350 },
+                { label: 'PE SELL', optType: 'PE', action: 'SELL', offset: -350 },
             ],
         };
 
@@ -636,12 +698,9 @@
                 : '';
             const spotDist   = d.spot && d.max_pain ? d.spot - d.max_pain : null;
 
-            const factorsAgree = d.factors_agree || 0;
-            const bCount  = d.bullish_count || 0;
-            const beCount = d.bearish_count || 0;
-            const dirFactorsSub = d.direction === 'NEUTRAL'
-                ? `${bCount}↑·${beCount}↓ · ${d.conviction || ''}`
-                : `${factorsAgree}/8 · ${d.conviction || ''}`;
+            // Direction & agreement come straight from the dashboard Market Tone.
+            const agreePct = d.agreement_pct != null ? d.agreement_pct : 0;
+            const dirFactorsSub = `${agreePct}% agree`;
             const rrZs = d.rr_zscore?.z_score ?? null;
             // Skew color: use z-score (relative to history) when available; absolute direction as fallback
             const skewColor = rrZs !== null
@@ -660,6 +719,9 @@
                     ivRankSub, ivRankColor)}
                 ${pill('IV %ile',
                     d.iv_percentile != null ? d.iv_percentile.toFixed(1) + '%' : '-')}
+                ${pill('5-Day IV',
+                    d.iv_5d_change_pct != null ? (d.iv_5d_change_pct > 0 ? '+' : '') + d.iv_5d_change_pct.toFixed(1) + '%' : '-',
+                    '', d.iv_5d_change_pct > 0 ? '#DC2626' : d.iv_5d_change_pct < 0 ? '#16A34A' : '')}
                 ${pill('ATM IV',
                     d.atm_iv != null ? d.atm_iv.toFixed(2) + '%' : '-')}
                 ${pill('52W Hi/Lo',
@@ -692,6 +754,9 @@
                 ${pill('PCR (OI)',
                     d.pcr_oi != null ? d.pcr_oi.toFixed(2) : '-',
                     d.pcr_oi > 1.2 ? 'Bullish' : d.pcr_oi < 0.8 ? 'Bearish' : 'Neutral')}
+                ${pill('PCR Δ',
+                    d.pcr_chg != null ? (d.pcr_chg > 0 ? '+' : '') + d.pcr_chg.toFixed(2) : '-',
+                    d.pcr_chg > 0 ? 'rising' : d.pcr_chg < 0 ? 'falling' : '')}
                 ${pill('Vol PCR',
                     d.vol_pcr != null ? d.vol_pcr.toFixed(2) : '-',
                     'Near-ATM')}
@@ -725,86 +790,48 @@
             </div>`;
         }
 
-        // Build a 3–4 sentence human-readable market outlook from all analytics parameters
+        // Human-readable outlook — DIRECTION is the dashboard Market Tone and
+        // VOLATILITY the dashboard IV tile (no independent verdict is computed here,
+        // so the builder can never disagree with the dashboard). The closing line
+        // is the regime-appropriate strategy lean, mirroring the backend matrix.
         function generateMarketOutlook(d) {
             if (!d) return { html: 'No analytics data available.', sig: 'sig-mute' };
+            const dir = d.direction || 'NEUTRAL';
+            const agree = d.agreement_pct != null ? d.agreement_pct : 0;
+            const hi = d.iv_percentile != null && d.iv_percentile >= 60;
+            const lo = d.iv_percentile != null && d.iv_percentile <= 40;
+            const sigCls = dir === 'BULLISH' ? 'sig-bull' : dir === 'BEARISH' ? 'sig-bear'
+                : (hi ? 'sig-warn' : 'sig-mute');
 
             const parts = [];
-            const _rrZ  = d.rr_zscore?.z_score ?? null;
-            const _vixC = d.vix_change_pct ?? 0;
-            const _mpDist = (d.spot && d.max_pain) ? d.spot - d.max_pain : null;
-            const _ts   = d.term_structure?.shape;
+            // 1. Direction — straight from the dashboard Market Tone
+            parts.push(`Market Tone: <strong>${d.verdict || dir}</strong> (${agree}% of weight agrees).`);
+            // 2. Volatility — straight from the dashboard IV tile
+            if (d.iv_verdict) {
+                parts.push(`Volatility: ${d.iv_verdict} (IV %ile ${d.iv_percentile != null ? d.iv_percentile.toFixed(0) : '-'}%`
+                    + (d.iv_5d_change_pct != null ? `, 5-day ${d.iv_5d_change_pct > 0 ? '+' : ''}${d.iv_5d_change_pct.toFixed(1)}%` : '') + ').');
+            }
+            // 3. OI structure + PCR change + term structure
+            const struct = [];
+            if (d.oi_support) struct.push(`support ${Utils.formatNum(d.oi_support)}`);
+            if (d.oi_resistance) struct.push(`resistance ${Utils.formatNum(d.oi_resistance)}`);
+            if (d.pcr_chg != null) struct.push(`PCR ${d.pcr_chg > 0 ? 'rising' : d.pcr_chg < 0 ? 'falling' : 'flat'}`);
+            if (d.term_structure && d.term_structure.shape && d.term_structure.shape !== 'N/A')
+                struct.push(d.term_structure.shape.toLowerCase());
+            if (struct.length) parts.push('Structure: ' + struct.join(', ') + '.');
 
-            // 1. Vol environment
-            const volLine = d.iv_rank > 70
-                ? `IV Rank ${d.iv_rank?.toFixed(0)}% — premium selling conditions (IV %ile ${d.iv_percentile?.toFixed(0)}%).`
-                : d.iv_rank < 30
-                    ? `IV Rank ${d.iv_rank?.toFixed(0)}% — vol is cheap, favour long options over short premium.`
-                    : `IV Rank ${d.iv_rank?.toFixed(0)}% — mid-range vol, no strong edge on premium direction.`;
-            parts.push(volLine);
+            // 4. Regime-appropriate lean (Direction × Volatility) — NOT a new model
+            let lean;
+            if (dir === 'BULLISH') lean = hi ? 'Favour Bull Put Spread (sell premium near support)'
+                : lo ? 'Favour Bull Call Spread (buy premium)' : 'Bullish — defined-risk bull spread';
+            else if (dir === 'BEARISH') lean = hi ? 'Favour Bear Call Spread (sell premium near resistance)'
+                : lo ? 'Favour Bear Put Spread (buy premium)' : 'Bearish — defined-risk bear spread';
+            else lean = hi ? 'Range-bound, high IV — Iron Condor'
+                : lo ? 'Range-bound, low IV — Calendar (sell near / buy next)' : 'Neutral — defined-risk premium play';
 
-            // 2. Directional read: Signal + PCR + IV Skew + VIX trend
-            const dirStr = d.direction === 'BULLISH'
-                ? `${d.conviction ? d.conviction.toLowerCase() + ' ' : ''}bullish signal (${d.factors_agree}/8 factors)`
-                : d.direction === 'BEARISH'
-                    ? `${d.conviction ? d.conviction.toLowerCase() + ' ' : ''}bearish signal (${d.factors_agree}/8 factors)`
-                    : `neutral signal (${d.factors_agree || 0}/8)`;
-            const pcrStr = d.pcr_oi > 1.2 ? '; PCR bullish' : d.pcr_oi < 0.8 ? '; PCR bearish' : '';
-            const volPcrStr = d.vol_pcr > 1.2 ? '; vol-PCR bullish' : d.vol_pcr < 0.8 ? '; vol-PCR bearish' : '';
-            const skewStr = d.iv_skew > 3 ? '; put skew elevated — hedging demand'
-                : d.iv_skew < -1 ? '; call skew — speculative bullish flow' : '';
-            const vixTrendStr = _vixC < -3 ? '; VIX falling — fear subsiding'
-                : _vixC > 5 ? '; VIX surging — risk-off' : '';
-            parts.push(`Direction: ${dirStr}${pcrStr}${volPcrStr}${skewStr}${vixTrendStr}.`);
-
-            // 3. Structure: GEX + Term Structure + Max Pain
-            const gexStr = (d.gex || 0) > 5e5
-                ? `+GEX (mean-reverting, dealers long gamma)`
-                : (d.gex || 0) < -5e5
-                    ? `−GEX (dealers short gamma, may amplify moves)`
-                    : null;
-            const tsStr = _ts === 'Backwardation' ? `term structure inverted — near-term stress`
-                : _ts === 'Contango' ? `term structure normal` : null;
-            const pinStr = _mpDist !== null
-                ? `max pain ${Utils.formatNum(d.max_pain)}` + (_mpDist < -50 ? ' — spot below, upward pull' : _mpDist > 100 ? ' — spot above, downward pull' : ' — near current price')
-                : null;
-            const structParts = [gexStr, tsStr, pinStr].filter(Boolean);
-            if (structParts.length) parts.push(structParts.join('; ') + '.');
-
-            // 4. Comprehensive verdict scoring across all directionally-relevant parameters
-            // RR uses z-score (relative to history) to avoid structural Nifty put-skew bias.
-            // Needs ≥3 out of 8 bullish / ≥3 out of 9 bearish factors for a clear verdict.
-            const bullScore = [
-                d.direction === 'BULLISH',                      // 8-factor signal says up
-                d.pcr_oi > 1.1,                                 // OI-PCR: put writers bullish
-                d.vol_pcr > 1.0,                                // volume-PCR: put volume active
-                (d.gex || 0) > 0,                               // positive GEX: mean-reverting
-                _rrZ !== null && _rrZ > 1.0,                    // RR above hist mean: less put skew
-                _vixC < -3,                                     // VIX falling: fear subsiding
-                _ts === 'Contango',                             // normal term structure
-                _mpDist !== null && _mpDist < -50,              // spot below max pain: upward pull
-            ].filter(Boolean).length;
-
-            const bearScore = [
-                d.direction === 'BEARISH',                      // 8-factor signal says down
-                d.pcr_oi < 0.9,                                 // OI-PCR: call bias
-                d.vol_pcr < 0.8,                                // volume-PCR: call volume heavy
-                (d.gex || 0) < 0,                               // negative GEX: dealers amplify moves
-                _rrZ !== null && _rrZ < -1.5,                   // RR below hist mean: elevated put skew
-                _vixC > 5,                                      // VIX surging: fear rising
-                d.iv_skew > 3,                                  // elevated put premium
-                _ts === 'Backwardation',                        // inverted curve: stress
-                _mpDist !== null && _mpDist > 100,              // spot well above max pain: downward pull
-            ].filter(Boolean).length;
-
-            let overallSig, sigCls;
-            if (bullScore >= 3)     { overallSig = 'Mildly bullish setup — favour PE selling / bull spreads'; sigCls = 'sig-bull'; }
-            else if (bearScore >= 3){ overallSig = 'Mildly bearish setup — favour CE selling / bear spreads'; sigCls = 'sig-bear'; }
-            else if (d.iv_rank > 60){ overallSig = 'Range-bound with high IV — ideal for premium collection'; sigCls = 'sig-warn'; }
-            else                    { overallSig = 'Mixed signals — no strong directional or vol edge'; sigCls = 'sig-mute'; }
-
-            const html = parts.join(' ')
-                + `<span class="outlook-signal ${sigCls}">${overallSig}</span>`;
+            const stale = (d.staleness && d.staleness.length)
+                ? ` <span style="color:#D97706">(stale: ${d.staleness.join(', ')})</span>` : '';
+            const html = parts.join(' ') + `<span class="outlook-signal ${sigCls}">${lean}</span>` + stale;
             return { html, sig: sigCls };
         }
 
@@ -829,18 +856,18 @@
             c.innerHTML = rankingsData.map((r, i) => {
                 const badgeCls = r.confidence_score >= 70 ? 'badge-green' : r.confidence_score >= 45 ? 'badge-amber' : 'badge-red';
                 const isSelected = selectedStrategy && selectedStrategy.strategy_type === r.strategy_type;
-                const isStrangle = r.strategy_type === 'STRANGLE' || r.strategy_type === 'SHORT_STRANGLE';
+                const isUnlimited = r.risk_type === 'unlimited';
                 const cardClass = isSelected ? 'selected' : '';
 
                 const rankLabel = `<span style="font-size:12px;color:var(--text-muted);min-width:16px">${i + 1}.</span>`;
 
-                // Risk note for unlimited-risk strategies
-                const riskNote = isStrangle
-                    ? `<div class="risk-note">⚠ Unlimited risk on both wings — size carefully and keep a hedge plan</div>`
+                // Risk note for unlimited-risk strategies (defined-risk picks omit it)
+                const riskNote = isUnlimited
+                    ? `<div class="risk-note">⚠ Unlimited risk — defined-risk alternatives are preferred</div>`
                     : '';
 
-                // Per-card recommended strike configuration line
-                const recText = _recommendedStrikesText(r.strategy_type);
+                // Per-card recommended strike configuration line (OI-anchored backend legs)
+                const recText = _recommendedStrikesText(r);
                 const recLine = recText
                     ? `<div class="ranking-recommended">&#9679; Recommended: ${recText}</div>`
                     : '';
@@ -989,50 +1016,107 @@
          * sees the app's suggested legs upfront. Returns '' if analytics aren't
          * loaded yet.
          */
-        function _recommendedStrikesText(strategyType) {
+        function _recommendedStrikesText(r) {
+            // Prefer the backend's OI-anchored legs (with per-leg expiry for calendars).
+            if (r && r.legs && r.legs.length) {
+                return r.legs.map(l =>
+                    `${l.action} ${l.option_type} ${l.strike}` + (l.expiry ? ` (${_shortExp(l.expiry)})` : '')
+                ).join(' · ');
+            }
             if (!analyticsData) return '';
+            const strategyType = (r && r.strategy_type) || r;
             const template = strategyLegsTemplate[strategyType] || [];
             if (!template.length) return '';
             const off = _computeStrikeOffsets(analyticsData, strategyType);
-            const parts = template.map(leg => {
+            return template.map(leg => {
                 const roleKey = `${leg.optType}_${leg.action === 'SELL' ? 'SHORT' : 'LONG'}`;
                 const dyn = off[roleKey] != null ? off[roleKey] : leg.offset;
                 const strike = Math.round((off.atm + dyn) / 50) * 50;
                 return `${leg.action} ${leg.optType} ${strike}`;
-            });
-            return parts.join(' · ');
+            }).join(' · ');
+        }
+
+        function _shortExp(e) { return e ? String(e).slice(0, 6) : ''; }
+        // Next expiry after `exp` in the wizard's expiry list (the BUY leg of a calendar).
+        function _nextExpiryAfter(exp) {
+            const sel = document.getElementById('wizard-expiry');
+            if (!sel) return null;
+            const opts = Array.from(sel.options).map(o => o.value);
+            const i = opts.indexOf(exp);
+            return (i >= 0 && i + 1 < opts.length) ? opts[i + 1] : (opts[1] || null);
+        }
+        // Collect the rendered leg inputs into API legs, stamping per-leg expiry:
+        // a calendar's BUY leg uses the NEXT expiry (sell current / buy next); all
+        // other legs use the wizard (near) expiry.
+        function _collectWizardLegs(lots) {
+            const stype = selectedStrategy.strategy_type;
+            const wexp = document.getElementById('wizard-expiry')?.value || currentExpiry;
+            const isCal = stype === 'CALENDAR_SPREAD';
+            const legs = [];
+            for (let i = 0; i < wizardLegCount; i++) {
+                const optEl = document.getElementById('leg-opt-' + i);
+                if (!optEl) continue;
+                const action = document.getElementById('leg-action-' + i)?.value || 'SELL';
+                const strike = parseInt(document.getElementById('leg-strike-' + i)?.value) || 0;
+                if (!strike) continue;
+                let exp = wexp;
+                if (isCal) exp = (action === 'BUY') ? (_nextExpiryAfter(wexp) || wexp) : wexp;
+                legs.push({ action, option_type: optEl.value, strike, lots, expiry: exp });
+            }
+            return legs;
         }
 
         function loadStrikeSuggestions() {
             if (!selectedStrategy || !analyticsData) return;
-            const template = strategyLegsTemplate[selectedStrategy.strategy_type] || [];
-            const off = _computeStrikeOffsets(analyticsData, selectedStrategy.strategy_type);
-            const atm = off.atm;
+            const stype = selectedStrategy.strategy_type;
+            const wexp = document.getElementById('wizard-expiry')?.value || currentExpiry;
+            // Primary: OI-anchored legs computed by the backend (with per-leg expiry
+            // for calendars). Fallback: client-side template/offsets.
+            let defs;
+            if (selectedStrategy.legs && selectedStrategy.legs.length) {
+                defs = selectedStrategy.legs.map(l => ({
+                    optType: l.option_type, action: l.action, strike: l.strike,
+                    expiry: l.expiry || wexp,
+                }));
+            } else {
+                const off = _computeStrikeOffsets(analyticsData, stype);
+                defs = (strategyLegsTemplate[stype] || []).map(t => {
+                    const roleKey = `${t.optType}_${t.action === 'SELL' ? 'SHORT' : 'LONG'}`;
+                    const dyn = off[roleKey] != null ? off[roleKey] : t.offset;
+                    return {
+                        optType: t.optType, action: t.action,
+                        strike: Math.round((off.atm + dyn) / 50) * 50,
+                        expiry: t.useFarExpiry ? _nextExpiryAfter(wexp) : wexp,
+                    };
+                });
+            }
+            wizardLegCount = defs.length;
 
-            // Rationale line — shown above leg inputs so the user sees the why
-            const mpDir = off.mpBias > 0.1 ? '↑ (MP above)' : off.mpBias < -0.1 ? '↓ (MP below)' : '→ (balanced)';
-            const rationale = `ATM ${atm} · 1-SD ≈ ±${Math.round(off.oneSD)} pts · MP drift ${mpDir}`;
+            const off2 = _computeStrikeOffsets(analyticsData, stype);
+            const isCal = stype === 'CALENDAR_SPREAD';
+            const rationale = isCal
+                ? `Calendar — sell current / buy next expiry · ATM ${off2.atm}`
+                : `Strikes anchored to OI support/resistance · ATM ${off2.atm} · 1-SD ≈ ±${Math.round(off2.oneSD)} pts`;
 
             const c = document.getElementById('wizard-legs-container');
             c.innerHTML = `<div style="grid-column:1/-1;font-size:10px;color:var(--text-muted);margin-bottom:2px">${rationale}</div>` +
-                template.map((leg, i) => {
-                const roleKey = `${leg.optType}_${leg.action === 'SELL' ? 'SHORT' : 'LONG'}`;
-                const dynOffset = off[roleKey] != null ? off[roleKey] : leg.offset;
-                const strike = atm + dynOffset;
-                const rounded = Math.round(strike / 50) * 50;
-                const badgeCls = leg.action === 'SELL' ? 'badge-sell' : 'badge-buy';
-                return `<div class="leg-chip">
-                    <span class="leg-badge ${badgeCls}">${leg.action}</span>
-                    <select class="form-select" id="leg-opt-${i}" onchange="previewPayoff()"
-                            style="padding:2px 4px;font-size:11px;width:48px">
-                        <option value="CE" ${leg.optType === 'CE' ? 'selected' : ''}>CE</option>
-                        <option value="PE" ${leg.optType === 'PE' ? 'selected' : ''}>PE</option>
-                    </select>
-                    <input type="number" class="form-input" id="leg-strike-${i}" value="${rounded}" step="50"
-                           onchange="previewPayoff()" style="padding:2px 4px;font-size:11px;width:70px">
-                    <input type="hidden" id="leg-action-${i}" value="${leg.action}">
-                </div>`;
-            }).join('');
+                defs.map((leg, i) => {
+                    const badgeCls = leg.action === 'SELL' ? 'badge-sell' : 'badge-buy';
+                    const expTag = (isCal && leg.expiry)
+                        ? `<span style="font-size:9px;color:var(--text-muted);margin-left:3px">${_shortExp(leg.expiry)}</span>` : '';
+                    return `<div class="leg-chip">
+                        <span class="leg-badge ${badgeCls}">${leg.action}</span>
+                        <select class="form-select" id="leg-opt-${i}" onchange="previewPayoff()"
+                                style="padding:2px 4px;font-size:11px;width:48px">
+                            <option value="CE" ${leg.optType === 'CE' ? 'selected' : ''}>CE</option>
+                            <option value="PE" ${leg.optType === 'PE' ? 'selected' : ''}>PE</option>
+                        </select>
+                        <input type="number" class="form-input" id="leg-strike-${i}" value="${leg.strike}" step="50"
+                               onchange="previewPayoff()" style="padding:2px 4px;font-size:11px;width:70px">
+                        <input type="hidden" id="leg-action-${i}" value="${leg.action}">
+                        <input type="hidden" id="leg-expiry-${i}" value="${leg.expiry || ''}">${expTag}
+                    </div>`;
+                }).join('');
             previewPayoff();
         }
 
@@ -1047,13 +1131,7 @@
             const expiry = document.getElementById('wizard-expiry')?.value
                         || (analyticsData.expiries && analyticsData.expiries[0])
                         || '';
-            const template = strategyLegsTemplate[selectedStrategy.strategy_type] || [];
-            const legs = template.map((_, i) => {
-                const action = document.getElementById('leg-action-' + i)?.value || 'SELL';
-                const optType = document.getElementById('leg-opt-' + i)?.value || 'CE';
-                const strike = parseInt(document.getElementById('leg-strike-' + i)?.value) || 0;
-                return { action, option_type: optType, strike, lots };
-            }).filter(l => l.strike > 0);
+            const legs = _collectWizardLegs(lots);   // per-leg expiry (calendar = sell near / buy next)
 
             if (!legs.length || !expiry) return;
 
@@ -1064,7 +1142,8 @@
             clearTimeout(_payoffDebounce);
             _payoffDebounce = setTimeout(async () => {
                 try {
-                    const res = await API.post('/api/strategies/payoff-preview', { expiry, legs });
+                    const res = await API.post('/api/strategies/payoff-preview',
+                        { expiry, legs, strategy_type: selectedStrategy.strategy_type });
                     if (!res || !res.curve) return;
                     _lastPayoffMeta = res;
                     const steps = res.curve.map(p => ({ s: p.spot, pnl: p.pnl }));
@@ -1433,15 +1512,15 @@
             const expiry = document.getElementById('wizard-expiry').value;
             if (!expiry) { Utils.toast('Select an expiry', 'warning'); return; }
 
-            const template = strategyLegsTemplate[selectedStrategy.strategy_type] || [];
-            const legs = template.map((_, i) => ({
-                option_type: document.getElementById('leg-opt-' + i)?.value || 'CE',
-                action: document.getElementById('leg-action-' + i)?.value || 'SELL',
-                strike: parseInt(document.getElementById('leg-strike-' + i)?.value) || 0,
-                lots,
-            })).filter(l => l.strike > 0);
+            const legs = _collectWizardLegs(lots);   // per-leg expiry (calendar = sell near / buy next)
 
             if (!legs.length) { Utils.toast('Configure legs first', 'warning'); return; }
+            // A calendar must span two expiries — block a degenerate single-expiry build.
+            if (selectedStrategy.strategy_type === 'CALENDAR_SPREAD'
+                && new Set(legs.map(l => l.expiry)).size < 2) {
+                Utils.toast('Calendar needs two expiries — pick an expiry that has a later one available.', 'warning');
+                return;
+            }
 
             // Summarise before confirmation
             const netCreditEst = (typeof payoffData === 'object' && payoffData?.net_premium != null)
@@ -1449,7 +1528,8 @@
                 : null;
             const rows = legs.map(l =>
                 `<tr><td style="padding:4px 8px">${l.action}</td>
-                     <td style="padding:4px 8px;font-weight:600">${l.option_type} ${l.strike}</td>
+                     <td style="padding:4px 8px;font-weight:600">${l.option_type} ${l.strike}
+                         <span style="color:var(--text-muted);font-weight:400">${_shortExp(l.expiry)}</span></td>
                      <td style="padding:4px 8px;text-align:right">${l.lots} lot(s)</td></tr>`).join('');
             const body = `
                 <div style="color:var(--text-muted);margin-bottom:8px">
@@ -1476,8 +1556,8 @@
                 try {
                     const resp = await API.createStrategy({
                         strategy_type: selectedStrategy.strategy_type,
-                        expiry_date: expiry,
-                        legs,
+                        expiry_date: expiry,            // near (short) expiry
+                        legs,                            // each leg carries its own expiry
                     });
                     Utils.toast(`Strategy created: ${resp.name} (${resp.legs_created} legs)`, 'success');
                     showWizardTab('active');
@@ -1659,6 +1739,120 @@
                 io.observe(_payoffCanvas);
             }
         }
+
+        // ── Strategy Guide overlay (in-page; no redirect) ──────────────────
+        const SG_GROUPS = {
+            Bullish: [
+                { n:'Buy Call', u:'Bet on a strong up-move; risk capped to the premium paid.', p:[[0,-0.4],[46,-0.4],[100,0.95]] },
+                { n:'Sell Put', u:'Earn premium expecting price to stay above the strike.', p:[[0,-0.95],[46,0.4],[100,0.4]] },
+                { n:'Bull Call Spread', u:'Defined-risk bullish bet, cheaper than a naked call.', p:[[0,-0.45],[34,-0.45],[64,0.5],[100,0.5]] },
+                { n:'Bull Put Spread', u:'Collect a credit betting price holds above the short put.', p:[[0,-0.5],[34,-0.5],[64,0.42],[100,0.42]] },
+                { n:'Call Ratio Back Spread', u:'Profit big on a sharp rally; small risk if it stays flat.', p:[[0,0.2],[30,0.2],[52,-0.45],[100,0.95]] },
+                { n:'Long Calendar with Calls', u:'Gain from time decay while leaning mildly bullish.', p:[[0,-0.35],[50,0.6],[100,-0.35]] },
+                { n:'Bull Condor', u:'Bank a range-bound rise into a defined upper zone.', p:[[0,-0.3],[28,-0.3],[48,0.5],[74,0.5],[100,-0.1]] },
+                { n:'Bull Butterfly', u:'Pinpoint a modest rise to a target price, at low cost.', p:[[0,-0.2],[54,-0.2],[70,0.8],[86,-0.2],[100,-0.2]] },
+                { n:'Range Forward', u:'Near-zero-cost bullish tilt within a price band.', p:[[0,-0.45],[32,-0.1],[58,-0.1],[100,0.7]] },
+                { n:'Long Synthetic Future', u:'Replicate a long future using options.', p:[[0,-0.85],[100,0.85]] },
+            ],
+            Bearish: [
+                { n:'Buy Put', u:'Bet on a sharp drop; risk capped to the premium paid.', p:[[0,0.95],[54,-0.4],[100,-0.4]] },
+                { n:'Sell Call', u:'Earn premium expecting price to stay below the strike.', p:[[0,0.4],[54,0.4],[100,-0.95]] },
+                { n:'Bear Call Spread', u:'Collect a credit betting price stays below the short call.', p:[[0,0.5],[36,0.5],[66,-0.45],[100,-0.45]] },
+                { n:'Bear Put Spread', u:'Defined-risk bearish bet, cheaper than a naked put.', p:[[0,0.5],[36,0.5],[66,-0.45],[100,-0.45]] },
+                { n:'Put Ratio Back Spread', u:'Profit big on a sharp fall; small risk if it stays flat.', p:[[0,0.95],[48,-0.45],[70,0.2],[100,0.2]] },
+                { n:'Long Calendar with Puts', u:'Gain from time decay while leaning mildly bearish.', p:[[0,-0.35],[50,0.6],[100,-0.35]] },
+                { n:'Bear Condor', u:'Bank a range-bound fall into a defined lower zone.', p:[[0,-0.1],[26,0.5],[52,0.5],[72,-0.3],[100,-0.3]] },
+                { n:'Bear Butterfly', u:'Pinpoint a modest fall to a target price, at low cost.', p:[[0,-0.2],[14,-0.2],[30,0.8],[46,-0.2],[100,-0.2]] },
+                { n:'Risk Reversal', u:'Cheap bearish exposure: sell a call to fund a put.', p:[[0,0.7],[42,0.1],[68,0.1],[100,-0.55]] },
+                { n:'Short Synthetic Future', u:'Replicate a short future using options.', p:[[0,0.85],[100,-0.85]] },
+            ],
+            Neutral: [
+                { n:'Short Straddle', u:'Profit if price stays pinned near the strike.', p:[[0,-0.95],[50,0.6],[100,-0.95]] },
+                { n:'Iron Butterfly', u:'Defined-risk version of a short straddle.', p:[[0,-0.4],[30,-0.4],[50,0.6],[70,-0.4],[100,-0.4]] },
+                { n:'Short Strangle', u:'Earn premium while price stays within a range.', p:[[0,-0.95],[30,0.42],[70,0.42],[100,-0.95]] },
+                { n:'Short Iron Condor', u:'Capped-risk range play collecting net credit.', p:[[0,-0.4],[20,-0.4],[34,0.42],[66,0.42],[80,-0.4],[100,-0.4]] },
+                { n:'Batman', u:'Twin-peak range play profiting around two zones.', p:[[0,-0.2],[20,0.42],[38,0.05],[50,0.05],[62,0.05],[80,0.42],[100,-0.2]] },
+                { n:'Double Plateau', u:'Wide flat-profit zone for a quiet, range-bound market.', p:[[0,-0.3],[18,0.35],[34,0.35],[46,0.0],[54,0.0],[66,0.35],[82,0.35],[100,-0.3]] },
+                { n:'Jade Lizard', u:'Net credit with no upside risk if sized right.', p:[[0,-0.6],[30,0.32],[64,0.32],[80,0.16],[100,0.16]] },
+                { n:'Reverse Jade Lizard', u:'Net credit with no downside risk if sized right.', p:[[0,0.16],[20,0.16],[36,0.32],[70,0.32],[100,-0.6]] },
+            ],
+            Others: [
+                { n:'Call Ratio Spread', u:'Mildly bullish with extra premium; risk if it rallies hard.', p:[[0,-0.1],[30,0.32],[56,0.32],[100,-0.7]] },
+                { n:'Put Ratio Spread', u:'Mildly bearish with extra premium; risk if it falls hard.', p:[[0,-0.7],[44,0.32],[70,0.32],[100,-0.1]] },
+                { n:'Long Straddle', u:'Profit from a big move either way; needs volatility.', p:[[0,0.95],[50,-0.5],[100,0.95]] },
+                { n:'Long Iron Butterfly', u:'Defined-risk bet on a large move either way.', p:[[0,0.42],[30,0.42],[50,-0.5],[70,0.42],[100,0.42]] },
+                { n:'Long Strangle', u:'A cheaper big-move bet than a long straddle.', p:[[0,0.95],[30,-0.4],[70,-0.4],[100,0.95]] },
+                { n:'Long Iron Condor', u:'Capped-risk bet on price breaking out of a range.', p:[[0,0.42],[20,0.42],[34,-0.4],[66,-0.4],[80,0.42],[100,0.42]] },
+                { n:'Strip', u:'A big-move bet biased to the downside.', p:[[0,1.0],[50,-0.5],[100,0.7]] },
+                { n:'Strap', u:'A big-move bet biased to the upside.', p:[[0,0.7],[50,-0.5],[100,1.0]] },
+            ],
+        };
+
+        function _sgPayoffSVG(pts) {
+            const W = 130, padX = 9, top = 9, bot = 63, mid = (top + bot) / 2;
+            const xs = x => padX + (x / 100) * (W - 2 * padX);
+            const ys = y => mid - y * ((bot - top) / 2);
+            const col = y => y >= 0 ? '#16A34A' : '#DC2626';   // above line = green, below = red
+            let seg = '';
+            const draw = (x1, y1, x2, y2, c) => {
+                seg += `<line x1="${xs(x1)}" y1="${ys(y1)}" x2="${xs(x2)}" y2="${ys(y2)}"
+                    stroke="${c}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`;
+            };
+            for (let i = 0; i < pts.length - 1; i++) {
+                const [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
+                if ((y1 >= 0) === (y2 >= 0) || y1 === 0 || y2 === 0) {
+                    // Same side of the breakeven line — one colour by that side.
+                    draw(x1, y1, x2, y2, col(y1 !== 0 ? y1 : y2));
+                } else {
+                    // Crosses the line — split at the zero crossing so the part
+                    // below is red and the part above is green.
+                    const xc = x1 + (-y1 / (y2 - y1)) * (x2 - x1);
+                    draw(x1, y1, xc, 0, col(y1));
+                    draw(xc, 0, x2, y2, col(y2));
+                }
+            }
+            return `<svg viewBox="0 0 ${W} 72" width="100%" height="72" preserveAspectRatio="xMidYMid meet">
+                <line x1="${padX}" y1="${mid}" x2="${W - padX}" y2="${mid}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
+                <line x1="${padX}" y1="${top - 2}" x2="${padX}" y2="${bot + 3}" stroke="var(--border)" stroke-width="1"/>
+                ${seg}</svg>`;
+        }
+
+        function _sgRenderGroup(name) {
+            document.getElementById('sg-grid').innerHTML = (SG_GROUPS[name] || []).map(s => `
+                <div class="sg-card">
+                    <div class="sg-chart">${_sgPayoffSVG(s.p)}</div>
+                    <div class="sg-name">${s.n}</div>
+                    <div class="sg-use">${s.u}</div>
+                </div>`).join('');
+        }
+
+        let _sgInited = false;
+        function _sgInit() {
+            if (_sgInited) return;
+            const cls = { Bullish:'bull', Bearish:'bear', Neutral:'neutral', Others:'other' };
+            const names = Object.keys(SG_GROUPS);
+            const tabs = document.getElementById('sg-tabs');
+            tabs.innerHTML = names.map((n, i) =>
+                `<button class="sg-tab ${cls[n]} ${i === 0 ? 'active' : ''}" data-g="${n}">${n}</button>`).join('');
+            tabs.querySelectorAll('.sg-tab').forEach(btn => btn.addEventListener('click', () => {
+                tabs.querySelectorAll('.sg-tab').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                _sgRenderGroup(btn.dataset.g);
+            }));
+            _sgRenderGroup(names[0]);
+            _sgInited = true;
+        }
+
+        function openStrategyGuide() {
+            _sgInit();
+            document.getElementById('sg-modal').style.display = 'flex';
+        }
+        function closeStrategyGuide() {
+            document.getElementById('sg-modal').style.display = 'none';
+        }
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && document.getElementById('sg-modal').style.display === 'flex') closeStrategyGuide();
+        });
     </script>
 </body>
 </html>

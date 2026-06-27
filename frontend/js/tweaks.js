@@ -1,5 +1,5 @@
 /**
- * NiftyEdge — Tweaks panel
+ * Stratovex — Tweaks panel
  * Injects a refinement controller on every page. State persists in localStorage.
  * Drives data attributes on <html> consumed by the v3 refinement layer in styles.css.
  */
@@ -93,7 +93,7 @@
         const body = el('div', { class: 'ne-tweaks-body' });
 
         body.appendChild(buildSegRow(
-            'Refinement', 'NiftyEdge v3 visual layer',
+            'Refinement', 'Stratovex v3 visual layer',
             [['on', 'On'], ['off', 'Off']],
             state.refine, v => updateOne('refine', v)
         ));

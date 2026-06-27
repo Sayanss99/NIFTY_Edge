@@ -3,39 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NiftyEdge — Dashboard</title>
+    <title>Stratovex — Dashboard</title>
     <link rel="stylesheet" href="/css/styles.css">
     <style>
-        .vix-offset-control {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 12px;
-            background: var(--bg-secondary, #F9FAFB);
-            padding: 6px 10px;
-            border-radius: 10px;
-            border: 1px solid var(--border);
-        }
-        .vix-offset-control label {
-            font-weight: 600;
-            color: var(--text-secondary, #6B7280);
-            white-space: nowrap;
-        }
-        .vix-offset-control input {
-            width: 56px;
-            padding: 4px 6px;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            font-size: 12px;
-            font-family: var(--font-mono);
-            text-align: center;
-            background: var(--bg-card);
-        }
-        .vix-offset-control input:focus {
-            outline: none;
-            border-color: var(--primary, #3B82F6);
-            box-shadow: 0 0 0 2px rgba(59,130,246,0.15);
-        }
         .range-chart {
             height: 440px !important;
             border-radius: 16px;
@@ -74,8 +44,12 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;   /* keep all controls on one line above the chart */
         }
+        .seg-toggle { display:inline-flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+        .seg-toggle .seg { border:none; background:transparent; padding:4px 11px; font-size:12px;
+            font-weight:700; cursor:pointer; color:var(--text-secondary); line-height:1.4; }
+        .seg-toggle .seg.active { background:var(--primary,#2563EB); color:#fff; }
         .chart-zoom {
             display: flex;
             align-items: center;
@@ -449,73 +423,140 @@
                     </style>
                 </div>
 
-                <!-- Market Overview Strip -->
+                <!-- Analysis Board -->
+                <style>
+                    .analysis-row { display:grid; grid-template-columns:1.35fr 1.2fr 1.5fr; gap:8px; margin-bottom:8px; }
+                    #metrics-strip { grid-template-columns:repeat(5, 1fr) !important; }
+                    @media (max-width:1280px){ .analysis-row{grid-template-columns:1fr 1fr;} #metrics-strip{grid-template-columns:repeat(3,1fr) !important;} }
+                    @media (max-width:680px){ .analysis-row{grid-template-columns:1fr;} #metrics-strip{grid-template-columns:repeat(2,1fr) !important;} }
+                    /* Hover = border glow only.  The global .metric-card:hover uses
+                       transform: translateY() which promotes the card to its own
+                       composite layer and makes the text render blurry — kill the
+                       transform here and glow the border instead. */
+                    .analysis-row .metric-card, #metrics-strip .metric-card {
+                        transition: box-shadow .18s ease, border-color .18s ease; }
+                    .analysis-row .metric-card:hover, #metrics-strip .metric-card:hover {
+                        transform: none;
+                        border-color: var(--primary, #2563EB);
+                        box-shadow: 0 0 0 1px var(--primary,#2563EB), 0 0 16px rgba(37,99,235,0.32); }
+                    .analysis-row .metric-label, #metrics-strip .metric-label { font-size:11px; }
+                    .ab-blurb { font-size:12.5px; color:var(--text-muted); margin-top:8px; line-height:1.45; }
+                    #m-fii-verdict { font-weight:600; }
+                    #m-oi-blurb { font-size:13.5px; line-height:1.5; }
+                    /* OI monitor */
+                    .ab-oi-vals { display:flex; justify-content:space-between; gap:10px; margin:6px 0 9px; font-family:var(--font-mono); }
+                    .ab-oi-vals .ab-call { color:#1796A8; font-size:14px; font-weight:600; }
+                    .ab-oi-vals .ab-put  { color:#C25749; font-size:14px; font-weight:600; }
+                    .ab-oi-vals b { font-size:20px; font-weight:700; }
+                    .ab-oi-bar { display:flex; height:11px; border-radius:6px; overflow:hidden; background:var(--bg-table-header,#1c2433); }
+                    .ab-bar-call { background:#26C6DA; transition:width .4s ease; }
+                    .ab-bar-put  { background:#F0857A; transition:width .4s ease; }
+                    .ab-oi-foot { font-size:13px; margin-top:11px; }
+                    .ab-oi-verd { font-weight:700; font-size:14.5px; }
+                    .ab-oi-foot .ab-pcr { color:var(--text-muted); }
+                    .ab-oi-foot .ab-pcr b { color:var(--text-primary); font-family:var(--font-mono); }
+                    .ab-sub-date { font-size:10px; color:var(--text-muted); font-weight:400; }
+                    /* FII/DII sentiment bars */
+                    .ab-fii-rows { margin-top:12px; display:flex; flex-direction:column; gap:15px; }
+                    .fd-row { display:grid; grid-template-columns:80px 1fr 108px; align-items:center; gap:11px; font-size:13.5px; }
+                    .fd-label { color:var(--text-muted); font-size:13px; }
+                    .fd-bar { position:relative; height:12px; border-radius:6px;
+                        background:linear-gradient(to right, rgba(220,38,38,0.30), rgba(148,163,184,0.16) 50%, rgba(22,163,74,0.30)); }
+                    .fd-bar::before { content:''; position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background:var(--border); }
+                    .fd-mark { position:absolute; top:50%; left:50%; width:15px; height:15px; border-radius:50%;
+                        transform:translate(-50%,-50%); border:2px solid var(--bg-card); box-shadow:0 0 0 1px rgba(0,0,0,0.15); }
+                    .fd-val { text-align:right; font-family:var(--font-mono); font-weight:600; font-size:13.5px; }
+                    /* Market tone — verdict + factor heatmap */
+                    .ab-tone-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+                    .ab-tone-help { background:transparent; border:1px solid var(--border-light); color:var(--text-secondary);
+                        font-size:10.5px; font-weight:600; padding:3px 9px; border-radius:14px; cursor:pointer; white-space:nowrap; }
+                    .ab-tone-help:hover { color:var(--text-primary); border-color:var(--text-muted); }
+                    .ab-tone-head { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin:6px 0 11px; }
+                    .ab-tone-sub { font-size:11px; color:var(--text-muted); }
+                    .ab-heatmap { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+                    .ab-heat-cell { min-height:46px; border-radius:7px; display:flex; align-items:center; justify-content:center;
+                        text-align:center; padding:4px 5px; border:1px solid transparent; }
+                    /* Diverging scale red↔grey↔green — shade depth set inline per cell
+                       (continuous, by each metric's intensity). Neutral = grey. */
+                    .ab-heat-cell.neutral { background:rgba(148,163,184,0.16); border-color:rgba(148,163,184,0.24); }
+                    .ab-heat-lbl { font-size:12px; font-weight:600; letter-spacing:0.2px; color:#fff; }
+                    .ab-heat-cell.neutral .ab-heat-lbl { color:var(--text-muted); }
+                    .ab-heat-empty { grid-column:1/-1; color:var(--text-muted); font-size:12px; padding:16px; text-align:center; }
+                    /* "How this works" overlay */
+                    .tg-intro { font-size:12px; color:var(--text-secondary); line-height:1.5; max-width:560px; margin:6px 0 0; }
+                    .tg-list { display:grid; grid-template-columns:1fr 1fr; gap:10px 16px; }
+                    .tg-row { display:flex; gap:9px; align-items:flex-start; }
+                    .tg-dot { width:11px; height:11px; border-radius:3px; flex:0 0 auto; margin-top:3px; }
+                    .tg-dot.up { background:#16A34A; } .tg-dot.down { background:#DC2626; } .tg-dot.flat { background:#94A3B8; }
+                    .tg-name { font-weight:700; font-size:12.5px; }
+                    .tg-wt { font-family:var(--font-mono); font-size:11px; color:var(--text-muted); font-weight:600; }
+                    .tg-tip { font-size:10.5px; color:var(--text-muted); line-height:1.4; margin-top:1px; }
+                    .tg-note { font-size:11px; color:var(--text-secondary); line-height:1.5; margin-top:14px;
+                        padding-top:12px; border-top:1px solid var(--border-light); }
+                    @media (max-width:560px){ .tg-list { grid-template-columns:1fr; } }
+                </style>
+                <div class="analysis-row">
+                    <div class="metric-card ab-oi" data-ne-tilt="1" title="Aggregate open interest across all strikes — the wider the gap, the stronger the directional conviction. Put-heavy reads bullish (puts written as support); call-heavy reads bearish (calls written as resistance).">
+                        <div class="metric-label">Nifty Call vs Put OI <span style="font-size:9px;color:var(--text-muted);font-weight:400">(movement monitor)</span></div>
+                        <div class="ab-oi-vals">
+                            <span class="ab-call">Call <b id="m-call-oi">-</b> Cr</span>
+                            <span class="ab-put">Put <b id="m-put-oi">-</b> Cr</span>
+                        </div>
+                        <div class="ab-oi-bar"><div class="ab-bar-call" id="m-oi-bar-call" style="width:50%"></div><div class="ab-bar-put" id="m-oi-bar-put" style="width:50%"></div></div>
+                        <div class="ab-oi-foot"><span class="ab-oi-verd" id="m-oi-verdict">-</span> <span class="ab-pcr">· PCR <b id="m-pcr">-</b><span id="m-pcr-chg" style="font-weight:600"></span></span></div>
+                        <div class="ab-blurb" id="m-oi-blurb"></div>
+                    </div>
+                    <div class="metric-card ab-fii" data-ne-tilt="1" title="Provisional FII/DII flows from NSE — cash net buy/sell plus FII index-futures positioning. Released after the close, so this is the latest available institutional read. The dot shows lean (left = selling/bearish, right = buying/bullish).">
+                        <div class="metric-label">FII / DII <span class="ab-sub-date" id="m-fii-date"></span></div>
+                        <div class="ab-fii-rows">
+                            <div class="fd-row"><span class="fd-label">FII cash</span><div class="fd-bar"><span class="fd-mark" id="m-fii-cash-mark"></span></div><span class="fd-val" id="m-fii-cash">—</span></div>
+                            <div class="fd-row"><span class="fd-label">DII cash</span><div class="fd-bar"><span class="fd-mark" id="m-dii-cash-mark"></span></div><span class="fd-val" id="m-dii-cash">—</span></div>
+                        </div>
+                        <div class="ab-blurb" id="m-fii-verdict"></div>
+                    </div>
+                    <div class="metric-card ab-tone" data-ne-tilt="1">
+                        <div class="ab-tone-top">
+                            <div class="metric-label">Nifty Market Tone</div>
+                            <button class="ab-tone-help" onclick="openToneGuide()" title="How this verdict is built">&#9432; How this works</button>
+                        </div>
+                        <div class="ab-tone-head">
+                            <span id="m-tone">-</span>
+                            <span class="ab-tone-sub" id="m-tone-sub"></span>
+                        </div>
+                        <div class="ab-heatmap" id="m-tone-heat"></div>
+                    </div>
+                </div>
+
+                <!-- Context Strip -->
                 <div class="metrics-strip" id="metrics-strip">
                     <div class="metric-card">
                         <div class="metric-label">Nifty Spot</div>
                         <div class="metric-value" id="m-spot">-</div>
-                        <div class="metric-change neutral" id="m-spot-change"></div>
+                        <div class="metric-change neutral" id="m-spot-change" style="font-size:12px"></div>
+                        <div class="metric-change neutral" style="font-size:11px;margin-top:3px"><span id="m-dte">-</span>d to expiry · <span id="m-expiry-date"></span></div>
                     </div>
-                    <div class="metric-card">
-                        <div class="metric-label">India VIX</div>
-                        <div class="metric-value" id="m-vix">-</div>
-                        <div class="metric-change neutral" id="m-vix-change"></div>
+                    <div class="metric-card" id="fii-fut-card" data-ne-tilt="1" title="Day-over-day change in FII index-futures Open Interest (Long − Short). Positive = FII bought futures (bullish lean); negative = sold (bearish). Provisional NSE data, published after market close.">
+                        <div class="metric-label">FII Fut OI <span style="font-size:9px;color:var(--text-muted);font-weight:400">(Δ vs prev day)</span></div>
+                        <div class="metric-value" id="m-fii-fut-chg">-</div>
+                        <div id="m-fii-fut-oi" style="font-size:12.5px;color:var(--text-muted);font-family:var(--font-mono);margin-top:1px"></div>
+                        <div class="metric-change neutral" id="m-fii-fut-verdict" style="font-size:11.5px"></div>
                     </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Days to Expiry</div>
-                        <div class="metric-value" id="m-dte">-</div>
-                        <div class="metric-change neutral" id="m-expiry-date"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                            <span>Calc Range</span>
-                            <span title="A 1-SD move (the formula behind Calc Range) statistically captures ~68% of expected price action by expiry"
-                                  style="font-size:9px;font-weight:700;letter-spacing:0.4px;
-                                         background:rgba(37,99,235,0.15);color:var(--primary,#2563EB);
-                                         border:1px solid rgba(37,99,235,0.35);border-radius:10px;
-                                         padding:1px 6px;text-transform:none">~68% CHANCE</span>
-                        </div>
-                        <div class="metric-value" id="m-calc-range" style="font-size:16px">-</div>
-                        <div style="margin-top:6px;display:flex;flex-direction:column;gap:2px">
-                            <span id="m-vix-range-prob"
-                                  title="Probability that NIFTY ends inside the offset-scaled range, derived from a normal distribution with sigma = (1 + offset/100)"
-                                  style="font-size:9px;font-weight:700;letter-spacing:0.4px;
-                                         background:rgba(37,99,235,0.15);color:var(--primary,#2563EB);
-                                         border:1px solid rgba(37,99,235,0.35);border-radius:10px;
-                                         padding:1px 6px;align-self:flex-start"></span>
-                            <span id="m-vix-range" style="font-size:11.5px;font-weight:600;font-family:var(--font-mono);color:var(--text-primary)"></span>
-                        </div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Skew</div>
-                        <div id="m-tendency" style="margin-top:4px">-</div>
-                        <div class="metric-change neutral" id="m-tendency-sub" style="font-size:10px"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Max Pain</div>
-                        <div class="metric-value" id="m-maxpain">-</div>
-                        <div class="metric-change neutral" id="m-maxpain-sub" style="font-size:10px"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Signal</div>
-                        <div id="m-directional" style="margin-top:4px">-</div>
-                        <div class="metric-change neutral" id="m-dir-detail" style="font-size:10px"></div>
-                        <div id="m-news-context" style="font-size:9px;margin-top:3px;color:var(--text-muted)"></div>
+                    <div class="metric-card" id="rr-strip-card" title="25-delta Risk Reversal on Nifty — CE IV minus PE IV. Positive = calls pricier (bullish skew); negative = puts pricier (bearish skew). Full detail in the RR panel on the right.">
+                        <div class="metric-label">Nifty RR <span style="font-size:9px;color:var(--text-muted);font-weight:400">(25Δ)</span></div>
+                        <div class="metric-value" id="m-rr-strip">-</div>
+                        <div class="metric-change neutral" id="m-rr-strip-verdict" style="font-size:11.5px"></div>
                     </div>
                     <div class="metric-card" id="iv-rank-card">
-                        <div class="metric-label">IV Rank</div>
-                        <div class="metric-value" id="m-iv-rank">-</div>
-                        <div class="metric-change neutral" id="m-iv-rank-signal" style="font-size:10px"></div>
-                    </div>
-                    <div class="metric-card" id="verdict-card" title="Aggregated read across all 18 analytics parameters — same logic as Strategy Builder's Market Outlook">
-                        <div class="metric-label">Market Verdict <span style="font-size:9px;color:var(--text-muted);font-weight:400">(18-param)</span></div>
-                        <div id="m-verdict" style="margin-top:4px;font-size:12px;font-weight:600;line-height:1.35">-</div>
-                        <div class="metric-change neutral" id="m-verdict-sub" style="font-size:10px"></div>
+                        <div class="metric-label">Nifty IV</div>
+                        <div class="metric-value" id="m-iv-verdict" style="font-size:15px">-</div>
+                        <div class="metric-change neutral" id="m-iv-state" style="font-size:11.5px"></div>
+                        <div id="m-iv-reads" style="font-size:12.5px;color:var(--text-muted);font-family:var(--font-mono);margin-top:2px"></div>
+                        <div id="m-iv-trend" style="font-size:12.5px;margin-top:2px"></div>
                     </div>
                     <div class="metric-card" id="news-tone-card" title="Majority direction of HIGH/MEDIUM news items in the last 4 hours — from News Desk">
                         <div class="metric-label">News Tone <span style="font-size:9px;color:var(--text-muted);font-weight:400">(4h)</span></div>
                         <div id="m-news-tone" style="margin-top:4px">-</div>
-                        <div class="metric-change neutral" id="m-news-tone-sub" style="font-size:10px"></div>
+                        <div class="metric-change neutral" id="m-news-tone-sub" style="font-size:11.5px"></div>
                     </div>
                 </div>
 
@@ -527,12 +568,17 @@
                         <div class="card">
                             <div class="card-header">
                                 <span class="card-title">Range & Spot Monitor</span>
+                                <span id="chart-active-symbol" style="display:none;margin-left:8px;font-size:12px;font-weight:700;color:var(--primary,#2563EB)"></span>
                                 <div class="chart-controls">
-                                    <div class="vix-offset-control">
-                                        <label for="vix-offset-input">VIX Offset %</label>
-                                        <input type="number" id="vix-offset-input" value="50" min="0" max="200" step="10"
-                                               onchange="onVixOffsetChange()" oninput="onVixOffsetChange()" onkeyup="onVixOffsetChange()">
-                                        <span id="vix-offset-display" style="font-family:var(--font-mono);font-weight:700;font-size:13px;color:var(--primary,#2563EB);min-width:38px;text-align:right">50%</span>
+                                    <div class="seg-toggle" id="chart-mode-toggle" title="Index vs Stock symbol">
+                                        <button type="button" id="chart-mode-ind" class="seg active" onclick="setChartMode('IND')">IND</button>
+                                        <button type="button" id="chart-mode-sym" class="seg" onclick="setChartMode('SYM')">SYM</button>
+                                    </div>
+                                    <div id="dash-search-wrap" style="display:none;align-items:center;gap:4px">
+                                        <input list="dash-symbol-options" id="dash-symbol-search" placeholder="Stock…" autocomplete="off"
+                                               style="width:104px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:var(--font-mono)"
+                                               onchange="loadStockSnapshot()" onkeydown="if(event.key==='Enter')loadStockSnapshot()">
+                                        <datalist id="dash-symbol-options"></datalist>
                                     </div>
                                     <div class="chart-zoom">
                                         <label for="y-zoom-input">Y Zoom</label>
@@ -540,16 +586,19 @@
                                                oninput="onYZoomChange()">
                                         <span class="chart-zoom-value" id="y-zoom-value">100%</span>
                                     </div>
+                                    <!-- Symbol-mode actions (shown only when viewing a stock).
+                                         The IND toggle handles "back to NIFTY", so no extra button. -->
+                                    <div id="chart-symbol-actions" style="display:none;align-items:center;gap:6px">
+                                        <a id="chart-open-chain" class="btn btn-sm btn-secondary" href="#">Open Chain</a>
+                                    </div>
                                 </div>
                             </div>
                             <div class="range-chart" id="range-chart">
                                 <canvas id="range-canvas" style="width:100%;height:100%"></canvas>
                             </div>
+                            <!-- Stock snapshot panel (shown when a stock is searched) -->
+                            <div id="stock-snapshot" style="display:none;border-top:1px solid var(--border);margin-top:10px;padding-top:10px"></div>
                             <div class="chart-legend" id="chart-legend">
-                                <button type="button" class="legend-chip" data-key="showVix" onclick="toggleChartLayer('showVix')">
-                                    <span class="legend-swatch band" style="color:#D97706"></span>
-                                    <span>VIX Band</span>
-                                </button>
                                 <button type="button" class="legend-chip" data-key="showCalc" onclick="toggleChartLayer('showCalc')">
                                     <span class="legend-swatch band" style="color:#2563EB"></span>
                                     <span>1 SD</span>
@@ -581,6 +630,7 @@
                         <div class="card">
                             <div class="card-header">
                                 <span class="card-title">Support & Resistance</span>
+                                <span id="sr-active-symbol" style="font-size:12px;font-weight:700;color:var(--primary,#2563EB)">NIFTY</span>
                             </div>
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
                                 <div>
@@ -772,6 +822,32 @@
         </div>
     </div>
 
+    <!-- Market Tone "How this works" overlay (in-page, mirrors the strategy guide) -->
+    <div class="modal-overlay" id="tone-modal" style="display:none" onclick="if(event.target===this)closeToneGuide()">
+        <div class="modal" style="max-width:680px;width:96%;max-height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--border)">
+                <div>
+                    <div class="modal-title" style="margin:0">How the Market Tone is built</div>
+                    <div class="tg-intro">The verdict blends <strong>7 reads</strong> into one bullish/bearish call. Each read votes
+                        <span style="color:#16A34A;font-weight:700">up</span>,
+                        <span style="color:#DC2626;font-weight:700">down</span> or neutral, and counts by a fixed weight —
+                        the bigger the weight, the more it moves the verdict (and the brighter its tile).</div>
+                </div>
+                <button onclick="closeToneGuide()" aria-label="Close" title="Close"
+                        style="background:transparent;border:none;font-size:24px;line-height:1;cursor:pointer;color:var(--text-muted);padding:0 2px">&times;</button>
+            </div>
+            <div style="padding:14px 18px;overflow:auto">
+                <div class="tg-list" id="tone-guide-list"></div>
+                <div class="tg-note">
+                    <b>Reading the tiles:</b> green = that read points up today, red = points down, grey = neutral.
+                    Brighter = heavier weight. <b>The verdict</b> adds up every read by its weight; the badge shows the
+                    net lean and “% of weight agrees” is how much of the total weighting points that way.
+                    Numbers refresh live with the option chain &amp; institutional flows.
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
@@ -794,9 +870,27 @@
         let defaultExpiry = null;      // nearest expiry (auto-updated by WS)
         let currentPositions = [];     // user's open positions
         let currentSRLevels = null;    // S/R level data
+        let chartSymbol = 'NIFTY';     // active chart underlying (default NIFTY)
+        let symbolChartData = null;    // {nifty_spot, max_pain, _srLevels, _positions} for symbol mode
+
+        // Central chart router — NIFTY mode renders the live snapshot (unchanged);
+        // symbol mode renders the selected stock's overlays. Every redraw path
+        // goes through here so symbol mode is never clobbered by NIFTY data.
+        function redrawChart() {
+            if (chartSymbol === 'NIFTY' || !symbolChartData) {
+                if (currentSnapshot) drawRangeChart(currentSnapshot);
+                return;
+            }
+            // Refresh the symbol's position overlays from the live positions feed.
+            symbolChartData._positions = currentPositions.filter(
+                p => (p.symbol || 'NIFTY') === chartSymbol
+            );
+            drawRangeChart(symbolChartData);
+        }
+
         const chartState = {
             yZoom: 1,
-            showVix: true,
+            showVix: false,   // VIX-offset band removed; keep flag false so it never draws
             showCalc: true,
             showCmp: true,
             showPivot: true,
@@ -809,10 +903,6 @@
         (async () => {
             syncChartLegend();
 
-            // VIX offset always defaults to 50
-            vixOffset = 50;
-            document.getElementById('vix-offset-input').value = 50;
-            API.put('/api/auth/settings', { vix_offset: 50 }).catch(() => {});
 
             // Check market status
             try {
@@ -937,6 +1027,9 @@
                 }
             } catch (e) {}
 
+            // Point the chart at the latest trade's underlying (toggle follows).
+            initChartFromLatestTrade();
+
             // Margin & capital tracker (independent of market hours)
             loadMarginSummary();
             setInterval(loadMarginSummary, 60000);
@@ -947,28 +1040,49 @@
             loadEodSummary();
             setInterval(loadEodSummary, 5 * 60 * 1000);
 
-            // Load IV Rank (independent of market hours — uses DB history)
+            // Load IV tile (independent of market hours — uses DB history). Verdict
+            // is the composite IV score (70% IV-percentile + 30% IV-rank); also shows
+            // the underlying reads and the 5-day IV trend.
             try {
                 const ivResp = await API.fetch('/api/market/iv-rank');
-                const ivRankEl = document.getElementById('m-iv-rank');
-                const ivSignalEl = document.getElementById('m-iv-rank-signal');
-                if (ivResp && ivResp.status === 'ok' && ivRankEl) {
-                    const rankVal = ivResp.iv_rank;
-                    // Show rank% with ATM IV in parentheses
-                    ivRankEl.textContent = rankVal != null ? rankVal.toFixed(1) + '%' : '-';
-                    if (ivSignalEl) {
-                        const dataQuality = ivResp.low_data_warning ? ` (${ivResp.data_days}d)` : '';
-                        ivSignalEl.textContent = (ivResp.signal || '') + dataQuality;
-                        ivSignalEl.style.color = rankVal > 70 ? '#DC2626' : rankVal < 30 ? '#16A34A' : '#D97706';
+                const vEl = document.getElementById('m-iv-verdict');
+                const stEl = document.getElementById('m-iv-state');
+                const rdEl = document.getElementById('m-iv-reads');
+                const trEl = document.getElementById('m-iv-trend');
+                if (ivResp && ivResp.status === 'ok' && vEl) {
+                    // Elevated IV (rich/expensive) → warm; cheap/compressed → green; fair → amber.
+                    const sc = ivResp.iv_score;
+                    const col = sc >= 60 ? '#DC2626' : (sc < 40 ? '#16A34A' : '#D97706');
+                    vEl.textContent = ivResp.iv_premium || '-';
+                    vEl.style.color = col;
+                    if (stEl) {
+                        const dq = ivResp.low_data_warning ? ` (${ivResp.data_days}d)` : '';
+                        // High IV (red) favours selling premium; low IV (green) favours
+                        // buying; neutral band gets no call. Inherits the verdict's font.
+                        const pref = sc >= 60 ? ' (selling preferred)' : (sc < 40 ? ' (buying preferred)' : '');
+                        stEl.textContent = (ivResp.iv_verdict || '') + pref + dq;
+                        stEl.style.color = col;
                     }
-                    // Show tooltip with ATM IV and data quality
+                    if (rdEl) rdEl.textContent = `IVP ${ivResp.iv_percentile} · Rank ${ivResp.iv_rank}`;
+                    if (trEl) {
+                        const ch = ivResp.iv_5d_change_pct;
+                        // The "5-Day IV:" label stays neutral — only the % value is colour-coded.
+                        trEl.style.color = 'var(--text-muted)';
+                        if (ch == null) { trEl.textContent = '5-Day IV: —'; }
+                        else {
+                            const c = ch > 0 ? '#DC2626' : (ch < 0 ? '#16A34A' : 'var(--text-muted)');
+                            trEl.innerHTML = `5-Day IV: <span style="color:${c}">${ch >= 0 ? '+' : '−'}${Math.abs(ch)}%</span>`;
+                        }
+                    }
                     const card = document.getElementById('iv-rank-card');
                     if (card && ivResp.current_atm_iv) {
-                        card.title = `ATM IV: ${ivResp.current_atm_iv.toFixed(2)}%  |  ${ivResp.data_days}d history  |  52wk: ${ivResp.iv_52wk_low}–${ivResp.iv_52wk_high}`;
+                        card.title = `ATM IV ${ivResp.current_atm_iv.toFixed(2)}%  ·  IV score ${ivResp.iv_score} (70% percentile + 30% rank)  ·  ${ivResp.data_days}d history  ·  52wk ${ivResp.iv_52wk_low}–${ivResp.iv_52wk_high}`;
                     }
-                } else if (ivResp && ivResp.status === 'no_data' && ivRankEl) {
-                    ivRankEl.textContent = '-';
-                    if (ivSignalEl) { ivSignalEl.textContent = 'No history'; ivSignalEl.style.color = '#9CA3AF'; }
+                } else if (ivResp && ivResp.status === 'no_data' && vEl) {
+                    vEl.textContent = '—';
+                    if (stEl) { stEl.textContent = 'No history'; stEl.style.color = '#9CA3AF'; }
+                    if (rdEl) rdEl.textContent = '';
+                    if (trEl) trEl.textContent = '';
                 }
             } catch (e) {}
 
@@ -1001,20 +1115,24 @@
             }
             updatePositionsSummary(data);
             updateRiskMeter(data);
-            if (currentSnapshot) drawRangeChart(currentSnapshot);
+            redrawChart();
         });
 
         WS.on('sr_update', (data) => {
-            currentSRLevels = data;
-            if (data.oi_fib) {
-                renderSRPills('sr-oi-supports', data.oi_fib.supports || [], 'support');
-                renderSRPills('sr-oi-resistances', data.oi_fib.resistances || [], 'resistance');
+            currentSRLevels = data;   // always keep the latest NIFTY S/R for when we return
+            // Only repaint the S/R card with NIFTY levels when NIFTY is active;
+            // in symbol mode the card shows the selected stock's S/R.
+            if (chartSymbol === 'NIFTY') {
+                if (data.oi_fib) {
+                    renderSRPills('sr-oi-supports', data.oi_fib.supports || [], 'support');
+                    renderSRPills('sr-oi-resistances', data.oi_fib.resistances || [], 'resistance');
+                }
+                if (data.pivot) {
+                    renderSRPills('sr-pivot-supports', data.pivot.supports || [], 'support');
+                    renderSRPills('sr-pivot-resistances', data.pivot.resistances || [], 'resistance');
+                }
             }
-            if (data.pivot) {
-                renderSRPills('sr-pivot-supports', data.pivot.supports || [], 'support');
-                renderSRPills('sr-pivot-resistances', data.pivot.resistances || [], 'resistance');
-            }
-            if (currentSnapshot) drawRangeChart(currentSnapshot);
+            redrawChart();
         });
 
         WS.on('risk_reversal_update', (data) => {
@@ -1151,7 +1269,7 @@
                             resistances: res.filter(r => r.source && r.source.includes('PIVOT')),
                         },
                     };
-                    if (typeof drawRangeChart === 'function' && currentSnapshot) drawRangeChart(currentSnapshot);
+                    if (typeof drawRangeChart === 'function') redrawChart();
                 }
                 // Resume WS pushes only when the user lands back on the default
                 // expiry; otherwise stay in custom mode so background ticks
@@ -1172,45 +1290,18 @@
             }
         });
 
-        // ── VIX Offset change ──────────────────────────────────────────
-
-        async function onVixOffsetChange() {
-            vixOffset = parseFloat(document.getElementById('vix-offset-input').value) || 0;
-            const displayEl = document.getElementById('vix-offset-display');
-            if (displayEl) displayEl.textContent = `${vixOffset}%`;
-            // Probability badge is purely a function of the offset — refresh
-            // it unconditionally so it tracks the slider even before the
-            // first market snapshot arrives.
-            _refreshVixRangeProb();
-            // Save to user settings (debounced via .catch — no need to await)
-            API.put('/api/auth/settings', { vix_offset: vixOffset }).catch(() => {});
-            // Recalculate VIX range numbers + chart against current snapshot.
-            if (currentSnapshot) {
-                recalcRangesLocally(currentSnapshot);
-                drawRangeChart(currentSnapshot);
-            }
-        }
-
-        function _refreshVixRangeProb() {
-            const el = document.getElementById('m-vix-range-prob');
-            if (!el) return;
-            const sigma = Math.max(0, 1 + (vixOffset || 0) / 100);
-            const prob = Math.round(_normProb(sigma) * 100);
-            el.textContent = `~${prob}% CHANCE`;
-        }
-
         function onYZoomChange() {
             const val = parseInt(document.getElementById('y-zoom-input').value, 10) || 100;
             chartState.yZoom = val / 100;
             document.getElementById('y-zoom-value').textContent = `${val}%`;
-            if (currentSnapshot) drawRangeChart(currentSnapshot);
+            redrawChart();
         }
 
         function toggleChartLayer(key) {
             chartState[key] = !chartState[key];
             const chip = document.querySelector(`.legend-chip[data-key="${key}"]`);
             if (chip) chip.classList.toggle('off', !chartState[key]);
-            if (currentSnapshot) drawRangeChart(currentSnapshot);
+            redrawChart();
         }
 
         function syncChartLegend() {
@@ -1236,21 +1327,8 @@
             data.calc_range_bottom = Math.floor((spot - move) / 100) * 100;
             data.vix_range_top = Math.ceil((spot + offsetMove) / 100) * 100;
             data.vix_range_bottom = Math.floor((spot - offsetMove) / 100) * 100;
-
-            // Update metric card
-            document.getElementById('m-calc-range').textContent =
-                `${Utils.formatNum(data.calc_range_bottom)} - ${Utils.formatNum(data.calc_range_top)}`;
-            // Probability that the offset-scaled range will contain spot at
-            // expiry — derived from a normal distribution where the band is
-            // (1 + offset/100) standard deviations wide.
-            //   offset =   0%  → 1.0σ → ~68%
-            //   offset = +50%  → 1.5σ → ~87%
-            //   offset = +100% → 2.0σ → ~95%
-            const sigma = Math.max(0, 1 + (vixOffset || 0) / 100);
-            const prob = Math.round(_normProb(sigma) * 100);
-            document.getElementById('m-vix-range-prob').textContent = `~${prob}% CHANCE`;
-            document.getElementById('m-vix-range').textContent =
-                `${Utils.formatNum(data.vix_range_bottom)} – ${Utils.formatNum(data.vix_range_top)}`;
+            // (The Calc Range card was retired from the analysis board; these
+            //  values still feed the Range & Spot chart's bands below.)
         }
 
         // P(|Z| ≤ sigma) for a standard normal — Abramowitz erf approximation.
@@ -1266,6 +1344,266 @@
 
         // ── Update functions ───────────────────────────────────────────
 
+        const _toneColor = t => t === 'BULLISH' ? '#16A34A' : t === 'BEARISH' ? '#DC2626' : 'var(--text-muted)';
+        const _toneBadge = t => t === 'BULLISH' ? 'badge-safe' : t === 'BEARISH' ? 'badge-danger' : 'badge-neutral';
+
+        // PCR trend tracker for the rangebound "reversal" colour: rising PCR →
+        // green (bullish reversal), falling → red (bearish). A small deadzone keeps
+        // tick jitter from flipping it, so the colour holds while PCR keeps moving
+        // one way (even across 1) and flips only when it genuinely turns back.
+        let _pcrAnchor = null, _pcrTrend = null;
+
+        // FII index-futures buildup → label + colour (dark/light green = bullish,
+        // red/orange = bearish), keyed by the backend's fii_fut_signal code.
+        const FUT_SIG = {
+            long_build:  { label: 'Long build',  color: '#15803D' },  // dark green
+            short_cover: { label: 'Short cover', color: '#4ADE80' },  // light green
+            short_build: { label: 'Short build', color: '#DC2626' },  // red
+            long_unwind: { label: 'Long unwind', color: '#EA580C' },  // orange
+            neutral:     { label: 'No change',   color: 'var(--text-muted)' },
+        };
+
+        // Heatmap factors — short label + a plain-language one-liner per read. The
+        // order matches the backend's 4×2 grid (row 1 institutional, row 2 options).
+        // Weights/votes come live from data.market_tone.factors.
+        const TONE_FACTORS = {
+            fii_fut:     { name: 'FII Fut',   tip: 'FII net position in index futures — net long is bullish.' },
+            fii_fut_chg: { name: 'FII Fut Δ', tip: "Change in FII futures (3-day EMA) — adding longs / covering shorts is bullish." },
+            fii_cash:    { name: 'FII Cash',  tip: 'FII net cash buy/sell in the market today.' },
+            dii_cash:    { name: 'DII Cash',  tip: 'DII net cash buy/sell in the market today.' },
+            oi:          { name: 'OI Flow',   tip: 'Where option writers are building today — more put-writing is bullish support.' },
+            pcr:         { name: 'PCR ≷1',    tip: 'Put-Call ratio above 1 (puts dominate) is bullish, below 1 bearish.' },
+            pcr_chg:     { name: 'PCR Δ',     tip: 'PCR rising vs yesterday means more put-writing — bullish.' },
+            rr:          { name: 'Risk Rev',  tip: 'What option prices say traders fear (25-delta skew).' },
+        };
+
+        function updateAnalysisBoard(data) {
+            const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+            // ── Call vs Put OI — verdict + gap bar ──
+            const call = data.total_call_oi_cr, put = data.total_put_oi_cr;
+            if (call != null) setTxt('m-call-oi', Utils.formatNum(call, 2));
+            if (put != null) setTxt('m-put-oi', Utils.formatNum(put, 2));
+            const total = (call || 0) + (put || 0);
+            if (total > 0) {
+                const callPct = Math.round((call / total) * 100);
+                const cBar = document.getElementById('m-oi-bar-call');
+                const pBar = document.getElementById('m-oi-bar-put');
+                if (cBar) cBar.style.width = callPct + '%';
+                if (pBar) pBar.style.width = (100 - callPct) + '%';
+            }
+            if (data.pcr != null) setTxt('m-pcr', Number(data.pcr).toFixed(2));
+            // Day-over-day PCR change beside PCR — green if rising, red if falling.
+            const pcrChgEl = document.getElementById('m-pcr-chg');
+            if (pcrChgEl) {
+                if (data.pcr_chg == null) { pcrChgEl.textContent = ''; }
+                else {
+                    const ch = data.pcr_chg;
+                    pcrChgEl.textContent = ` (${ch >= 0 ? '+' : '−'}${Math.abs(ch).toFixed(2)})`;
+                    pcrChgEl.style.color = ch > 0 ? '#16A34A' : ch < 0 ? '#DC2626' : 'var(--text-muted)';
+                }
+            }
+            // Track PCR's direction (deadzone 0.02 so jitter doesn't flip it).
+            if (data.pcr != null) {
+                if (_pcrAnchor == null) _pcrAnchor = data.pcr;
+                else if (Math.abs(data.pcr - _pcrAnchor) >= 0.02) {
+                    _pcrTrend = data.pcr > _pcrAnchor ? 'up' : 'down';
+                    _pcrAnchor = data.pcr;
+                }
+            }
+            const verdEl = document.getElementById('m-oi-verdict');
+            if (verdEl && data.oi_verdict) { verdEl.textContent = data.oi_verdict; verdEl.style.color = _toneColor(data.oi_tone); }
+            const blurbEl = document.getElementById('m-oi-blurb');
+            if (blurbEl && data.oi_blurb != null) {
+                // Rangebound (PCR≈1): colour "reversal" by PCR's direction of travel —
+                // rising → green (bullish reversal), falling → red (bearish). Hold the
+                // colour while it keeps moving one way (even past 1); flip when it turns
+                // back. Before a trend forms, fall back to PCR's side of 1.
+                if (data.oi_tone === 'NEUTRAL' && /reversal/i.test(data.oi_blurb)) {
+                    let col;
+                    if (_pcrTrend === 'up') col = '#16A34A';
+                    else if (_pcrTrend === 'down') col = '#DC2626';
+                    else col = (data.pcr != null && data.pcr >= 1) ? '#DC2626' : '#16A34A';
+                    blurbEl.innerHTML = Utils.escapeHtml(data.oi_blurb).replace(
+                        /reversal/i, `<span style="color:${col};font-weight:700">reversal</span>`);
+                } else {
+                    blurbEl.textContent = data.oi_blurb;
+                }
+            }
+
+            // ── FII / DII — sentiment bars (left = selling, right = buying) ──
+            const fd = data.fii_dii || {};
+            const place = (markId, valId, v, scale, isCr) => {
+                const mk = document.getElementById(markId), vl = document.getElementById(valId);
+                if (vl) {
+                    if (v == null) { vl.textContent = '—'; vl.style.color = 'var(--text-muted)'; }
+                    else {
+                        const num = Utils.formatNum(Math.abs(v), 0);
+                        vl.textContent = (v >= 0 ? '+' : '−') + (isCr ? `₹${num} cr` : num);
+                        vl.style.color = v > 0 ? '#16A34A' : v < 0 ? '#DC2626' : 'var(--text-muted)';
+                    }
+                }
+                if (mk) {
+                    if (v == null) { mk.style.display = 'none'; }
+                    else {
+                        mk.style.display = 'block';
+                        const score = Math.max(-1, Math.min(1, v / scale));
+                        mk.style.left = (50 + score * 45) + '%';
+                        mk.style.background = v > 0 ? '#16A34A' : v < 0 ? '#DC2626' : 'var(--text-muted)';
+                    }
+                }
+            };
+            // Scales set what counts as a "strong" day: ₹3,000 cr cash.
+            place('m-fii-cash-mark', 'm-fii-cash', fd.fii_cash_net, 3000, true);
+            place('m-dii-cash-mark', 'm-dii-cash', fd.dii_cash_net, 3000, true);
+            const dateEl = document.getElementById('m-fii-date');
+            if (dateEl) dateEl.textContent = fd.date ? `provisional · ${fd.date}` : '';
+            const fv = _fiiVerdict(fd);
+            const fvEl = document.getElementById('m-fii-verdict');
+            if (fvEl) {
+                fvEl.textContent = fv.text;
+                fvEl.style.color = fv.tone === 'BULLISH' ? '#16A34A'
+                                 : fv.tone === 'BEARISH' ? '#DC2626' : 'var(--text-muted)';
+            }
+
+            // FII Futures OI tile — day-over-day change in FII index-futures OI,
+            // classified by which leg moved: long build / short cover (bullish,
+            // dark/light green) vs short build / long unwind (bearish, red/orange).
+            const futChg = fd.fii_fut_chg;
+            const futSig = FUT_SIG[fd.fii_fut_signal] || null;
+            const fcEl = document.getElementById('m-fii-fut-chg');
+            const fcVerd = document.getElementById('m-fii-fut-verdict');
+            const futColor = futSig ? futSig.color : '';
+            if (fcEl) {
+                if (futChg == null) { fcEl.textContent = '—'; fcEl.style.color = ''; }
+                else {
+                    fcEl.textContent = (futChg >= 0 ? '+' : '−') + Utils.formatNum(Math.abs(futChg));
+                    fcEl.style.color = futColor;
+                }
+            }
+            if (fcVerd) {
+                if (!futSig) { fcVerd.textContent = 'awaiting EOD'; fcVerd.style.color = 'var(--text-muted)'; }
+                else {
+                    // Strength = magnitude of the move (% of the dominant leg's prior size).
+                    const st = fd.fii_fut_strength_pct;
+                    const suffix = (st != null) ? ` +${st}%` : '';
+                    fcVerd.textContent = (fd.fii_fut_label || futSig.label) + suffix;
+                    fcVerd.style.color = futSig.color;
+                }
+                fcVerd.className = 'metric-change';
+            }
+            // Net FII futures OI level in lakhs (same NSE source) — uncoloured.
+            const fcOi = document.getElementById('m-fii-fut-oi');
+            if (fcOi) {
+                const net = fd.fii_fut_net;
+                fcOi.textContent = (net == null) ? '' :
+                    `${(net / 1e5).toFixed(2)}L net OI`;
+            }
+
+            // ── Market Tone — weighted verdict + factor heatmap ──
+            const tone = data.market_tone || {};
+            const toneEl = document.getElementById('m-tone');
+            if (toneEl) {
+                toneEl.innerHTML = tone.label
+                    ? `<span class="badge ${_toneBadge(tone.tone)}">${tone.label}</span>`
+                    : '<span style="color:var(--text-muted);font-size:13px">Awaiting data</span>';
+            }
+            setTxt('m-tone-sub', (tone.label && tone.tone !== 'NEUTRAL')
+                ? `${tone.agree_pct || 0}% of weight agrees` : '');
+            _renderToneHeat(tone);
+        }
+
+        // Plain-language read of who's buying/selling, plus a Nifty-impact tone.
+        // Cash flows only (FII index-futures is its own tile now). Weighted by
+        // impact on Nifty: FII cash leads, DII cash nudges. Returns {text, tone}.
+        function _fiiVerdict(fd) {
+            const f = fd.fii_cash_net, d = fd.dii_cash_net;
+            if (f == null && d == null) return { text: '', tone: 'NEUTRAL' };
+            const dir = (v, dz) => v == null ? 0 : v > dz ? 1 : v < -dz ? -1 : 0;
+            // Deadzone (₹cr) keeps tiny flows from flipping the read.
+            const score = 2 * dir(f, 200) + 1 * dir(d, 200);
+            const tone = score >= 2 ? 'BULLISH' : score <= -2 ? 'BEARISH' : 'NEUTRAL';
+            const fp = f > 200, fn = f < -200, dp = d > 200, dn = d < -200;
+            let text;
+            if (fn && dp) text = 'FIIs selling, DIIs absorbing — institutions split.';
+            else if (fp && dn) text = 'FIIs buying, DIIs booking profits — split.';
+            else if (fp && dp) text = 'Both FIIs and DIIs buying — strong support.';
+            else if (fn && dn) text = 'Both selling — institutions cautious.';
+            else if (fp || dp) text = 'Net institutional buying — supportive.';
+            else if (fn || dn) text = 'Net institutional selling — pressure.';
+            else text = 'Institutions largely on the sidelines.';
+            return { text, tone };
+        }
+
+        // Interpolate two hex colours (with or without leading #) a→b by t∈[0,1].
+        function lerpColor(a, b, t) {
+            a = a.replace('#', ''); b = b.replace('#', '');
+            const pa = [0, 2, 4].map(i => parseInt(a.slice(i, i + 2), 16));
+            const pb = [0, 2, 4].map(i => parseInt(b.slice(i, i + 2), 16));
+            const c = pa.map((v, i) => Math.round(v + (pb[i] - v) * t));
+            return `rgb(${c[0]},${c[1]},${c[2]})`;
+        }
+
+        // Factor heatmap: a 4×2 grid of the 8 reads (PCR split into level + change).
+        // Colour = direction (green up / red down / grey neutral); the SHADE depth
+        // scales continuously with each metric's `intensity` (how extreme its value
+        // is in range) — faint just off neutral → full at the extreme. No numbers on
+        // the card; the "How this works" overlay carries the weights & rules.
+        function _renderToneHeat(tone) {
+            const el = document.getElementById('m-tone-heat');
+            if (!el) return;
+            const factors = tone.factors;
+            if (!factors || !factors.length) {
+                el.innerHTML = '<div class="ab-heat-empty">Awaiting data</div>';
+                return;
+            }
+            el.innerHTML = factors.map(f => {
+                const meta = TONE_FACTORS[f.k] || { name: f.k, tip: '' };
+                const dirWord = f.vote > 0 ? 'bullish' : (f.vote < 0 ? 'bearish' : 'neutral');
+                if (f.vote === 0) {
+                    return `<div class="ab-heat-cell neutral"`
+                        + ` title="${meta.name} — neutral today. ${meta.tip}">`
+                        + `<span class="ab-heat-lbl">${meta.name}</span></div>`;
+                }
+                // Shade = interpolate the direction's light→full anchor by intensity;
+                // label auto-contrasts (white on deep, dark on pale).
+                const i = Math.max(0, Math.min(1, (typeof f.intensity === 'number') ? f.intensity : 0.5));
+                const bull = f.vote > 0;
+                const bg = lerpColor(bull ? '86EFAC' : 'FCA5A5', bull ? '16A34A' : 'DC2626', i);
+                const bd = lerpColor(bull ? '6FE39A' : 'F08A8A', bull ? '15803D' : 'B91C1C', i);
+                const txt = i >= 0.5 ? '#fff' : (bull ? '#14532D' : '#7F1D1D');
+                return `<div class="ab-heat-cell" style="background:${bg};border-color:${bd}"`
+                    + ` title="${meta.name} — ${dirWord} today. ${meta.tip}">`
+                    + `<span class="ab-heat-lbl" style="color:${txt}">${meta.name}</span></div>`;
+            }).join('');
+        }
+
+        // "How this works" overlay — mirrors the strategy guide (in-page, no redirect).
+        function openToneGuide() {
+            const list = document.getElementById('tone-guide-list');
+            const tone = (currentSnapshot && currentSnapshot.market_tone) || {};
+            const factors = tone.factors || Object.keys(TONE_FACTORS).map(k => ({ k, weight: '', vote: null }));
+            if (list) list.innerHTML = factors.map(f => {
+                const meta = TONE_FACTORS[f.k] || { name: f.k, tip: '' };
+                const dir = f.vote == null ? 'flat' : (f.vote > 0 ? 'up' : (f.vote < 0 ? 'down' : 'flat'));
+                const arrow = f.vote == null ? '' : (f.vote > 0 ? '▲' : (f.vote < 0 ? '▼' : '–'));
+                const acol = f.vote > 0 ? '#16A34A' : (f.vote < 0 ? '#DC2626' : 'var(--text-muted)');
+                return `<div class="tg-row"><div class="tg-dot ${dir}"></div>`
+                    + `<div class="tg-main"><div class="tg-name">${meta.name}`
+                    + (f.weight !== '' ? ` <span class="tg-wt">${f.weight}%</span>` : '')
+                    + ` <span style="color:${acol}">${arrow}</span></div>`
+                    + `<div class="tg-tip">${meta.tip}</div></div></div>`;
+            }).join('');
+            document.getElementById('tone-modal').style.display = 'flex';
+        }
+        function closeToneGuide() {
+            document.getElementById('tone-modal').style.display = 'none';
+        }
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && document.getElementById('tone-modal')
+                && document.getElementById('tone-modal').style.display === 'flex') closeToneGuide();
+        });
+
         function updateMarketDisplay(data) {
             if (!data) return;
             currentSnapshot = data;
@@ -1280,65 +1618,17 @@
                 spotChangeEl.className = 'metric-change ' + Utils.changeClass(chg);
             }
 
-            document.getElementById('m-vix').textContent = Utils.formatNum(data.india_vix, 2);
-
-            const vixChangeEl = document.getElementById('m-vix-change');
-            if (data.vix_change_pct != null) {
-                vixChangeEl.textContent = Utils.formatPct(data.vix_change_pct);
-                vixChangeEl.className = 'metric-change ' + Utils.changeClass(data.vix_change_pct);
-            }
+            // (India VIX tile was replaced by the FII Fut OI tile; VIX still
+            //  drives the chart's range bands via recalcRangesLocally below.)
 
             document.getElementById('m-dte').textContent = data.days_to_expiry || '-';
             document.getElementById('m-expiry-date').textContent = data.expiry_date || '';
 
-            // Recalc ranges with user's VIX offset
+            // Recalc ranges with user's VIX offset (feeds the chart bands)
             recalcRangesLocally(data);
 
-            // Skew (IV skew via 25-delta Risk Reversal)
-            const td = data.tendency_detail || {};
-            const skewDir = td.tendency || data.tendency || '-';
-            const skewBadge = skewDir === 'Bullish Skew' ? 'badge-safe'
-                            : skewDir === 'Bearish Skew' ? 'badge-danger' : 'badge-neutral';
-            document.getElementById('m-tendency').innerHTML =
-                `<span class="badge ${skewBadge}">${skewDir}</span>`;
-            const tendSubEl = document.getElementById('m-tendency-sub');
-            if (tendSubEl) {
-                const rrVal = td.rr_value != null ? td.rr_value : null;
-                const confLabel = td.confidence >= 0.7 ? 'strong' : td.confidence >= 0.4 ? 'moderate' : td.confidence > 0 ? 'mild' : '';
-                tendSubEl.textContent = rrVal != null
-                    ? `RR: ${rrVal > 0 ? '+' : ''}${rrVal.toFixed(2)}${confLabel ? ' · ' + confLabel : ''}`
-                    : '';
-            }
-
-            // Max Pain + distance from spot
-            if (data.max_pain) {
-                document.getElementById('m-maxpain').textContent = Utils.formatNum(data.max_pain);
-                const mpSub = document.getElementById('m-maxpain-sub');
-                if (mpSub && data.nifty_spot) {
-                    const mpDist = data.max_pain - data.nifty_spot;
-                    mpSub.textContent = `${mpDist >= 0 ? '+' : ''}${Utils.formatNum(mpDist, 0)} from CMP`;
-                    mpSub.className = 'metric-change ' + Utils.changeClass(mpDist);
-                }
-            } else {
-                document.getElementById('m-maxpain').innerHTML = '<span style="color:var(--text-muted);font-size:13px">Awaiting data</span>';
-            }
-
-            // Signal (8-factor directional)
-            const ds = data.directional_signal;
-            if (ds && ds.direction) {
-                const dirMap = { 'BULLISH': 'badge-safe', 'BEARISH': 'badge-danger', 'NEUTRAL': 'badge-neutral' };
-                document.getElementById('m-directional').innerHTML =
-                    `<span class="badge ${dirMap[ds.direction] || 'badge-neutral'}">${ds.direction}</span>`;
-                const sc = (ds.score > 0 ? '+' : '') + (ds.score || 0);
-                const bC = ds.bullish_count ?? 0;
-                const beC = ds.bearish_count ?? 0;
-                const factorStr = ds.direction === 'NEUTRAL'
-                    ? `${bC}↑ ${beC}↓` : `${ds.factors_agree || 0}/8`;
-                document.getElementById('m-dir-detail').textContent =
-                    `${factorStr} · ${sc} · ${ds.conviction || ''}`;
-            } else {
-                document.getElementById('m-directional').innerHTML = '<span style="color:var(--text-muted);font-size:13px">Awaiting data</span>';
-            }
+            // Analysis board: Call/Put OI monitor, FII/DII flows, composite tone
+            updateAnalysisBoard(data);
 
             // Update expiry selector — only if incoming list is richer than existing
             if (data.expiries && data.expiries.length) {
@@ -1353,10 +1643,13 @@
             }
 
             if (data.timestamp) Utils.updateRefreshInfo(data.timestamp);
-            drawRangeChart(data);
+            redrawChart();
         }
 
         function updateSRDisplay(data) {
+            // In symbol mode the S/R card shows the selected stock's levels; don't
+            // let a NIFTY load/expiry path overwrite it.
+            if (chartSymbol !== 'NIFTY') return;
             const supports = data.supports || [];
             const resistances = data.resistances || [];
             // Split by source
@@ -1395,11 +1688,36 @@
             document.getElementById('rr-pe-strike').textContent = Utils.formatNum(data.pe_strike);
             document.getElementById('rr-value').textContent = Utils.formatNum(data.rr_value, 2);
 
+            // RR skew bands (consistent with the Market Tone's RR vote): bullish
+            // when RR ≥ -1.0, bearish when RR ≤ -6.0, otherwise neutral. (Display
+            // only — the backend's separate ±2 'verdict' still drives suggestion logic.)
+            const sk = _rrSkew(data.rr_value);
+
             const verdict = document.getElementById('rr-verdict');
-            verdict.textContent = data.verdict || '-';
-            verdict.className = 'badge ' + ({
-                'Bullish': 'badge-safe', 'Bearish': 'badge-danger', 'Neutral': 'badge-neutral',
-            }[data.verdict] || 'badge-neutral');
+            verdict.textContent = sk.word;
+            verdict.className = 'badge ' + sk.badge;
+
+            // Mirror onto the compact RR card in the context strip (two-word verdict).
+            const rrVal = document.getElementById('m-rr-strip');
+            const rrVerd = document.getElementById('m-rr-strip-verdict');
+            if (rrVal) {
+                const v = data.rr_value;
+                rrVal.textContent = (v != null) ? `${v > 0 ? '+' : ''}${Utils.formatNum(v, 2)}` : '-';
+            }
+            if (rrVerd) {
+                rrVerd.textContent = sk.word + ' Skew';
+                rrVerd.className = 'metric-change ' + sk.cls;
+            }
+        }
+
+        // Classify 25-delta RR into bullish / bearish / neutral skew:
+        // bullish when RR ≥ -1.0, bearish when RR ≤ -6.0, otherwise neutral.
+        function _rrSkew(rr) {
+            const v = Number(rr);
+            if (rr == null || !isFinite(v)) return { word: 'Neutral', cls: 'neutral', badge: 'badge-neutral' };
+            if (v >= -1.0) return { word: 'Bullish', cls: 'positive', badge: 'badge-safe' };
+            if (v <= -6.0) return { word: 'Bearish', cls: 'negative', badge: 'badge-danger' };
+            return { word: 'Neutral', cls: 'neutral', badge: 'badge-neutral' };
         }
 
         function updateRiskMeter(data) {
@@ -1560,13 +1878,13 @@
                 if (s.top_gainer) {
                     extHtml += `<div class="eod-trade gainer">
                         <span class="eod-trade-lbl">Top gainer</span>
-                        ${s.top_gainer.trade_type.replace('_', ' ')} ${s.top_gainer.strike} · +₹${Math.round(s.top_gainer.realized_pnl).toLocaleString('en-IN')}
+                        <strong>${s.top_gainer.symbol || 'NIFTY'}</strong> ${s.top_gainer.trade_type.replace('_', ' ')} ${s.top_gainer.strike} · +₹${Math.round(s.top_gainer.realized_pnl).toLocaleString('en-IN')}
                     </div>`;
                 }
                 if (s.top_loser) {
                     extHtml += `<div class="eod-trade loser">
                         <span class="eod-trade-lbl">Top loser</span>
-                        ${s.top_loser.trade_type.replace('_', ' ')} ${s.top_loser.strike} · −₹${Math.round(Math.abs(s.top_loser.realized_pnl)).toLocaleString('en-IN')}
+                        <strong>${s.top_loser.symbol || 'NIFTY'}</strong> ${s.top_loser.trade_type.replace('_', ' ')} ${s.top_loser.strike} · −₹${Math.round(Math.abs(s.top_loser.realized_pnl)).toLocaleString('en-IN')}
                     </div>`;
                 }
                 ext.innerHTML = extHtml;
@@ -1772,9 +2090,14 @@
 
         function updatePositionsSummary(data) {
             const container = document.getElementById('positions-summary');
-            const positions = data?.positions || [];
+            let positions = data?.positions || [];
+            // In chart symbol mode, surface only the selected symbol's trades.
+            if (chartSymbol !== 'NIFTY') {
+                positions = positions.filter(p => (p.symbol || 'NIFTY') === chartSymbol);
+            }
             if (!positions.length) {
-                container.innerHTML = '<div class="text-muted text-center" style="padding:20px">No open positions</div>';
+                const ctx = chartSymbol !== 'NIFTY' ? ` on ${chartSymbol}` : '';
+                container.innerHTML = `<div class="text-muted text-center" style="padding:20px">No open positions${ctx}</div>`;
                 return;
             }
 
@@ -1798,6 +2121,7 @@
                     html += `
                         <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-light)">
                             <div style="display:flex;align-items:center;gap:8px">
+                                <span class="fw-700" style="font-size:12px">${pos.symbol || 'NIFTY'}</span>
                                 <span class="badge" style="background:${sideBg};color:${sideCol};border:1px solid ${sideCol}55;font-weight:700;letter-spacing:0.4px">FUT · ${sideTxt}</span>
                                 <span class="text-muted font-mono" style="font-size:11px">${pos.expiry_date || ''}</span>
                                 <span class="text-muted" style="font-size:11px">${pos.quantity || 1} lot${(pos.quantity || 1) > 1 ? 's' : ''}</span>
@@ -1828,6 +2152,7 @@
                 html += `
                     <div style="display:flex;align-items:center;justify-content:space-between;${rowBg}border-bottom:1px solid var(--border-light)">
                         <div style="display:flex;align-items:center;gap:8px">
+                            <span class="fw-700" style="font-size:12px">${pos.symbol || 'NIFTY'}</span>
                             <span class="badge ${Utils.tradeTypeClass(pos.trade_type)}">${pos.trade_type.replace('_', ' ')}</span>
                             <span class="fw-600 font-mono">${pos.strike}</span>
                             ${rollBadge}
@@ -1847,9 +2172,14 @@
 
         // ── Range Chart Drawing ────────────────────────────────────────
 
-        function drawRangeChart(data) {
+        function drawRangeChart(data, opts = {}) {
             const canvas = document.getElementById('range-canvas');
             if (!canvas || !data) return;
+            // Symbol mode passes its own S/R + positions on the data object; the
+            // NIFTY default (no _srLevels/_positions) uses the live globals, so
+            // the NIFTY render path is unchanged.
+            const srLevels = data._srLevels || currentSRLevels;
+            const positions = data._positions || currentPositions;
 
             const container = canvas.parentElement;
             const cssWidth = container.clientWidth;
@@ -1887,12 +2217,12 @@
             if (chartState.showMaxPain && data.max_pain) {
                 visibleLevels.push(data.max_pain);
             }
-            if (chartState.showPivot && currentSRLevels?.pivot) {
-                for (const s of currentSRLevels.pivot.supports || []) visibleLevels.push(Number(s.strike || s));
-                for (const r of currentSRLevels.pivot.resistances || []) visibleLevels.push(Number(r.strike || r));
+            if (chartState.showPivot && srLevels?.pivot) {
+                for (const s of srLevels.pivot.supports || []) visibleLevels.push(Number(s.strike || s));
+                for (const r of srLevels.pivot.resistances || []) visibleLevels.push(Number(r.strike || r));
             }
-            if (currentPositions.length) {
-                for (const pos of currentPositions) {
+            if (positions.length) {
+                for (const pos of positions) {
                     if (!pos.strike) continue;
                     if (chartState.showCE && pos.trade_type?.includes('CE')) visibleLevels.push(pos.strike);
                     if (chartState.showPE && pos.trade_type?.includes('PE')) visibleLevels.push(pos.strike);
@@ -2073,15 +2403,15 @@
             }
 
             // ── Pivot + OI S/R Levels ────────────────────────────────────
-            if (chartState.showPivot && currentSRLevels) {
+            if (chartState.showPivot && srLevels) {
                 ctx.lineWidth = 1;
                 ctx.font = '11px JetBrains Mono, monospace';
-                const pivSups = [...(currentSRLevels.pivot?.supports || [])]
+                const pivSups = [...(srLevels.pivot?.supports || [])]
                     .map(s => ({ ...s, strike: Number(s.strike || s) }))
                     .filter(s => Number.isFinite(s.strike))
                     .sort((a, b) => b.strike - a.strike)
                     .slice(0, 3);
-                const pivRess = [...(currentSRLevels.pivot?.resistances || [])]
+                const pivRess = [...(srLevels.pivot?.resistances || [])]
                     .map(r => ({ ...r, strike: Number(r.strike || r) }))
                     .filter(r => Number.isFinite(r.strike))
                     .sort((a, b) => a.strike - b.strike)
@@ -2115,11 +2445,11 @@
             }
 
             // ── Trade position lines ─────────────────────────────────────
-            if (currentPositions.length) {
+            if (positions.length) {
                 ctx.lineWidth = 1.5;
                 ctx.font = 'bold 11px JetBrains Mono, monospace';
 
-                for (const pos of currentPositions) {
+                for (const pos of positions) {
                     if (!pos.strike) continue;
                     const py = yToScreen(pos.strike);
                     if (py < PAD.top || py > H - PAD.bottom) continue;
@@ -2172,10 +2502,10 @@
         }
 
         window.addEventListener('resize', () => {
-            if (currentSnapshot) drawRangeChart(currentSnapshot);
+            redrawChart();
         });
         window.addEventListener('themechange', () => {
-            if (currentSnapshot) drawRangeChart(currentSnapshot);
+            redrawChart();
         });
 
         // ── News Ticker ────────────────────────────────────────────────
@@ -2333,6 +2663,163 @@
         setInterval(loadNewsTone, 90000);
         WS.on('news_alert', () => loadNewsTone());
         document.getElementById('expiry-selector')?.addEventListener('change', loadMarketVerdict);
+
+        // ── Stock snapshot search (CMP / S-R / user trades for a searched stock) ──
+        (async () => {
+            const f = await API.getFnoList();
+            if (f && f.symbols) {
+                const dl = document.getElementById('dash-symbol-options');
+                if (dl) dl.innerHTML = f.symbols.map(s => `<option value="${s}">`).join('');
+            }
+        })();
+
+        // VIX/Calc legend chips only make sense for NIFTY; hide them in symbol mode.
+        function _setNiftyOnlyChips(hidden) {
+            ['showVix', 'showCalc'].forEach(k => {
+                const chip = document.querySelector(`.legend-chip[data-key="${k}"]`);
+                if (chip) chip.style.display = hidden ? 'none' : '';
+            });
+        }
+
+        // S/R card helpers — swap the dashboard S/R pills with the active symbol.
+        function setSRCardSymbol(sym) {
+            const el = document.getElementById('sr-active-symbol');
+            if (el) el.textContent = sym;
+        }
+        function restoreNiftySR() {
+            const d = currentSRLevels;
+            if (d?.oi_fib) {
+                renderSRPills('sr-oi-supports', d.oi_fib.supports || [], 'support');
+                renderSRPills('sr-oi-resistances', d.oi_fib.resistances || [], 'resistance');
+            }
+            if (d?.pivot) {
+                renderSRPills('sr-pivot-supports', d.pivot.supports || [], 'support');
+                renderSRPills('sr-pivot-resistances', d.pivot.resistances || [], 'resistance');
+            }
+        }
+        function renderSymbolSR(snap) {
+            const sup = snap.supports || [], res = snap.resistances || [];
+            renderSRPills('sr-oi-supports', sup, 'support');
+            renderSRPills('sr-oi-resistances', res, 'resistance');
+            renderSRPills('sr-pivot-supports', sup, 'support');
+            renderSRPills('sr-pivot-resistances', res, 'resistance');
+        }
+
+        // Last stock the user searched (remembered for the session so the SYM
+        // toggle can restore it). Default-NIFTY backbone is unchanged.
+        let lastStockSymbol = sessionStorage.getItem('dash_last_symbol') || '';
+
+        // Reflect the IND/SYM toggle state: IND hides the search bar, SYM shows it.
+        function _setChartToggle(mode) {
+            document.getElementById('chart-mode-ind').classList.toggle('active', mode === 'IND');
+            document.getElementById('chart-mode-sym').classList.toggle('active', mode === 'SYM');
+            document.getElementById('dash-search-wrap').style.display = mode === 'SYM' ? 'flex' : 'none';
+        }
+
+        // Toggle handler: IND → NIFTY index; SYM → last searched symbol (or focus
+        // the search bar to pick one).
+        function setChartMode(mode) {
+            if (mode === 'IND') { exitSymbolMode(); return; }
+            _setChartToggle('SYM');
+            if (lastStockSymbol) {
+                document.getElementById('dash-symbol-search').value = lastStockSymbol;
+                loadStockSnapshot(lastStockSymbol);
+            } else {
+                document.getElementById('dash-symbol-search').focus();
+            }
+        }
+
+        // Return the chart to its NIFTY default (resting state).
+        function exitSymbolMode() {
+            chartSymbol = 'NIFTY';
+            symbolChartData = null;
+            document.getElementById('dash-symbol-search').value = '';
+            document.getElementById('stock-snapshot').style.display = 'none';
+            const lbl = document.getElementById('chart-active-symbol');
+            lbl.style.display = 'none'; lbl.textContent = '';
+            _setNiftyOnlyChips(false);
+            document.getElementById('chart-symbol-actions').style.display = 'none';
+            _setChartToggle('IND');
+            restoreNiftySR();
+            setSRCardSymbol('NIFTY');
+            updatePositionsSummary({ positions: currentPositions });
+            redrawChart();
+        }
+
+        // Toggle the chart into "symbol mode" for a selected stock: spot / S-R /
+        // max-pain / own-position overlays come from that symbol; the NIFTY-only
+        // VIX & Calc bands are suppressed. The live NIFTY metric strip is untouched.
+        async function loadStockSnapshot(symArg) {
+            const sym = (symArg || document.getElementById('dash-symbol-search').value || '').trim().toUpperCase();
+            if (!sym || sym === 'NIFTY') { exitSymbolMode(); return; }
+
+            const panel = document.getElementById('stock-snapshot');
+            panel.style.display = 'block';
+            panel.innerHTML = '<span class="text-muted" style="font-size:12px">Loading ' + sym + '…</span>';
+
+            const snap = await API.computeForSymbol(sym);
+            if (!snap || snap.error) {
+                panel.innerHTML = `<span style="color:var(--red);font-size:12px">${snap?.error || 'No data for ' + sym}</span>`;
+                return;
+            }
+
+            // Remember the symbol for the SYM toggle + ensure SYM is active.
+            lastStockSymbol = snap.symbol;
+            sessionStorage.setItem('dash_last_symbol', snap.symbol);
+            document.getElementById('dash-symbol-search').value = snap.symbol;
+            _setChartToggle('SYM');
+
+            // Drive the chart: synthesize a symbol-mode data object (no VIX/Calc
+            // bands → those layers auto-skip), with the stock's OI S/R as pivots.
+            chartSymbol = snap.symbol;
+            symbolChartData = {
+                nifty_spot: snap.spot,
+                max_pain: snap.max_pain,
+                _srLevels: {
+                    pivot: {
+                        supports: (snap.supports || []).map(s => ({ strike: s.strike, oi: s.oi })),
+                        resistances: (snap.resistances || []).map(r => ({ strike: r.strike, oi: r.oi })),
+                    },
+                },
+                _positions: currentPositions.filter(p => (p.symbol || 'NIFTY') === snap.symbol),
+            };
+            // Header controls: hide NIFTY-only VIX bits, reveal symbol actions.
+            _setNiftyOnlyChips(true);
+            document.getElementById('chart-symbol-actions').style.display = 'flex';
+            document.getElementById('chart-open-chain').href =
+                `/option-chain?symbol=${encodeURIComponent(snap.symbol)}&expiry=${encodeURIComponent(snap.expiry_date || '')}`;
+            const lbl = document.getElementById('chart-active-symbol');
+            lbl.textContent = '● ' + snap.symbol; lbl.style.display = '';
+
+            // Swap the S/R card + positions summary to this symbol, and redraw.
+            renderSymbolSR(snap);
+            setSRCardSymbol(snap.symbol);
+            updatePositionsSummary({ positions: currentPositions });
+            redrawChart();
+
+            // Slim info line under the chart (S/R + positions now live on the
+            // chart, the S/R card, and the positions summary).
+            panel.innerHTML = `
+                <div style="font-size:12px">
+                    <strong>${snap.symbol}</strong>
+                    <span class="font-mono" style="margin-left:8px">CMP ${Utils.formatNum(snap.spot,2)}</span>
+                    <span class="text-muted" style="margin-left:8px">Fwd ${Utils.formatNum(snap.forward,2)} · Max Pain ${snap.max_pain} · IVP ${snap.ivp ?? '—'} · Lot ${snap.lot_size}</span>
+                </div>`;
+        }
+
+        // On load, point the chart at the underlying of the user's most recent
+        // open trade (stock → SYM, NIFTY/none → stays IND). The toggle follows
+        // automatically; the user can switch lanes manually any time afterward.
+        async function initChartFromLatestTrade() {
+            try {
+                const r = await API.getTrades('OPEN');
+                const trades = (r && r.trades) ? r.trades.filter(t => !t.parent_trade_id) : [];
+                if (!trades.length) return;
+                trades.sort((a, b) => new Date(b.entry_date || 0) - new Date(a.entry_date || 0));
+                const sym = (trades[0].symbol || 'NIFTY').toUpperCase();
+                if (sym && sym !== 'NIFTY') await loadStockSnapshot(sym);
+            } catch (e) { /* leave NIFTY default on any error */ }
+        }
     </script>
 
     <!-- ── In-app numeric editor (replaces window.prompt for capital + max-loss) ── -->

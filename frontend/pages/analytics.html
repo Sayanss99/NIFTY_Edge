@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NiftyEdge — Analytics</title>
+    <title>Stratovex — Analytics</title>
     <link rel="stylesheet" href="/css/styles.css">
     <style>
         .analytics-tabs {
@@ -318,6 +318,17 @@
         }
         .month-cell { cursor: help; transition: transform 0.1s; }
         .month-cell:hover { transform: scale(1.06); }
+        /* P&L-by-Underlying heatmap — larger, more readable cells */
+        #symbol-heatmap { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+        #symbol-heatmap .month-cell { padding: 14px 10px; font-size: 14px; font-weight: 700; border-radius: 8px; }
+        #symbol-heatmap .month-cell .month-label { font-size: 12px; font-weight: 700; margin-bottom: 5px; color: inherit; opacity: 0.9; }
+        /* Monthly Performance — 5 columns, larger readable cells, scroll if tall */
+        #monthly-heatmap { grid-template-columns: repeat(5, 1fr); gap: 7px; max-height: 220px; overflow-y: auto; padding-right: 2px; }
+        #monthly-heatmap .month-cell { padding: 13px 6px; font-size: 13px; font-weight: 700; border-radius: 6px; }
+        #monthly-heatmap .month-cell .month-label { font-size: 11px; font-weight: 700; color: inherit; opacity: 0.85; margin-bottom: 4px; }
+        .monthly-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+        .monthly-year-select { padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px;
+            font-size: 12px; background: var(--bg-card); color: var(--text-primary); font-family: var(--font-mono); }
         .chart-wrap { position: relative; }
         .chart-wrap canvas { cursor: crosshair; }
         /* Scatter zoom slider — small corner widget, vertical native control */
@@ -390,6 +401,18 @@
                     <button onclick="switchTab('signals')">Historical Insights</button>
                 </div>
 
+                <!-- Scope: Global (all trades) vs a single underlying. Applies to
+                     Performance + Strike Patterns; hidden on Historical Insights
+                     (signal accuracy stays NIFTY-index-wide). -->
+                <div id="scope-bar" style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+                    <span style="font-size:12px;color:var(--text-secondary);font-weight:600">Scope</span>
+                    <select id="symbol-scope" onchange="onScopeChange()"
+                            style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:var(--font-mono);background:var(--bg-card)">
+                        <option value="">Global — all trades</option>
+                    </select>
+                    <span style="font-size:11px;color:var(--text-muted)">NIFTY is the default lane; pick a stock to scope the charts.</span>
+                </div>
+
                 <!-- Tab 1: Performance -->
                 <div id="tab-performance" class="tab-content active">
                     <div class="summary-strip" id="perf-summary">
@@ -449,7 +472,11 @@
                             </div>
                         </div>
                         <div class="chart-container">
-                            <div class="chart-title">Monthly Performance</div>
+                            <div class="monthly-head">
+                                <div class="chart-title">Monthly Performance</div>
+                                <select id="monthly-year-select" class="monthly-year-select"
+                                        style="display:none" onchange="onMonthlyYearChange()"></select>
+                            </div>
                             <div id="monthly-heatmap" class="monthly-grid"></div>
                         </div>
                     </div>
@@ -460,6 +487,16 @@
                             <canvas id="expiry-chart" height="200"></canvas>
                             <div class="chart-tooltip" id="expiry-tip"></div>
                         </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">P&L by Underlying <span style="font-size:10px;color:var(--text-muted);font-weight:400">(NIFTY index &amp; stocks · click a cell to scope)</span></div>
+                        <div id="symbol-heatmap" class="monthly-grid"></div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">By Underlying — win-rate, avg P&L &amp; CE/PE split</div>
+                        <div id="by-underlying" style="overflow:auto"></div>
                     </div>
                 </div>
 
@@ -606,9 +643,11 @@
         let perfData = null;
         let patternData = null;
         let signalData = null;
+        let currentTab = 'performance';
 
         // ── Tab switching ─────────────────────────────────────────────
         function switchTab(tab) {
+            currentTab = tab;
             document.querySelectorAll('.analytics-tabs button').forEach((b, i) => {
                 b.classList.toggle('active',
                     (tab === 'performance' && i === 0) ||
@@ -619,32 +658,68 @@
             document.getElementById('tab-patterns').classList.toggle('active', tab === 'patterns');
             document.getElementById('tab-signals').classList.toggle('active', tab === 'signals');
 
+            // Scope (Global/Symbol) applies to Performance + Patterns only.
+            const scopeBar = document.getElementById('scope-bar');
+            if (scopeBar) scopeBar.style.display = (tab === 'signals') ? 'none' : 'flex';
+
+            // Re-render the now-visible tab so its canvases draw at full size
+            // (charts drawn while a tab was display:none size to 0).
+            if (tab === 'performance' && perfData) renderPerformance(perfData);
             if (tab === 'patterns' && patternData) renderPatterns(patternData);
             if (tab === 'signals' && !signalData) loadSignalData();
         }
 
         // ── Load data ─────────────────────────────────────────────────
-        (async () => {
-            Utils.initHeader();
+        let scopeSymbol = '';   // '' = Global; else a specific underlying
+
+        async function loadAnalytics(symbol = scopeSymbol) {
+            scopeSymbol = symbol || '';
+            const q = scopeSymbol ? `?symbol=${encodeURIComponent(scopeSymbol)}` : '';
             try {
                 const [perf, patterns] = await Promise.all([
-                    API.fetch('/api/analytics/performance'),
-                    API.fetch('/api/analytics/strike-patterns'),
+                    API.fetch(`/api/analytics/performance${q}`),
+                    API.fetch(`/api/analytics/strike-patterns${q}`),
                 ]);
-
                 perfData = perf;
                 patternData = patterns;
 
-                if (!perf || perf.summary.trade_count === 0) {
+                // Empty-state only when there are genuinely no trades at all
+                // (Global has none). A symbol scope with no trades just shows
+                // empty charts, not the global empty state.
+                if (!perf || (!scopeSymbol && perf.summary.trade_count === 0)) {
                     document.getElementById('empty-state').style.display = 'block';
                     document.getElementById('tab-performance').style.display = 'none';
                     return;
                 }
+                document.getElementById('empty-state').style.display = 'none';
+                document.getElementById('tab-performance').style.display = '';
 
-                renderPerformance(perf);
+                populateScopeSelector(perf.symbol_pnl);
+                // Render both independently so a draw error on the hidden tab's
+                // (0-width) canvases can't block the visible tab from updating.
+                try { renderPerformance(perf); } catch (e) { console.error('perf render:', e); }
+                try { renderPatterns(patterns); } catch (e) { console.error('patterns render:', e); }
             } catch (e) {
                 console.error('Analytics load error:', e);
             }
+        }
+
+        function populateScopeSelector(symbolPnl) {
+            const sel = document.getElementById('symbol-scope');
+            if (!sel || !symbolPnl) return;
+            const syms = symbolPnl.map(s => s.symbol);
+            sel.innerHTML = '<option value="">Global — all trades</option>' +
+                syms.map(s => `<option value="${s}">${s}</option>`).join('');
+            sel.value = scopeSymbol;
+        }
+
+        function onScopeChange() {
+            loadAnalytics(document.getElementById('symbol-scope').value);
+        }
+
+        (async () => {
+            Utils.initHeader();
+            await loadAnalytics('');
         })();
 
         // ── Performance Tab ───────────────────────────────────────────
@@ -659,6 +734,8 @@
             drawPnlCurve(data.cumulative_pnl);
             drawExpiryBars(data.expiry_pnl);
             renderMonthlyHeatmap(data.monthly_pnl);
+            renderSymbolHeatmap(data.symbol_pnl);
+            renderByUnderlying(data.symbol_pnl, data.side_pnl);
             renderProfitLossPie();
             // Seed the time-filter note so the user understands the default view
             setTimeFilter(0);
@@ -1196,31 +1273,140 @@
         });
 
         // ── Monthly heatmap ───────────────────────────────────────────
+        // Light → dark by P&L magnitude (small = light, large = dark), with text
+        // colour chosen for contrast on either shade.
+        function _monthCellColor(pnl, maxAbs) {
+            const t = Math.min(Math.abs(pnl) / maxAbs, 1);     // 0 (small) … 1 (large)
+            const hue = pnl >= 0 ? 142 : 2;
+            const sat = pnl >= 0 ? 48 : 66;
+            const light = 84 - t * 50;                          // 84% (light) → 34% (dark)
+            const bg = `hsl(${hue}, ${sat}%, ${light}%)`;
+            const text = light < 56 ? '#ffffff' : (pnl >= 0 ? '#0F3D24' : '#5B1212');
+            return { bg, text };
+        }
+
+        let _monthlyByYear = {};   // { '2026': [ {month,pnl}, ... ] }
+        let _monthlyMaxAbs = 1;    // global scale so colours compare across years
+        let _monthlySelectedYear = null;
+
         function renderMonthlyHeatmap(months) {
             const container = document.getElementById('monthly-heatmap');
-            if (!months.length) {
+            const sel = document.getElementById('monthly-year-select');
+            if (!months || !months.length) {
                 container.innerHTML = '<span class="text-muted" style="font-size:11px">No data yet</span>';
+                if (sel) sel.style.display = 'none';
                 return;
             }
 
-            const maxAbs = Math.max(...months.map(m => Math.abs(m.pnl)), 1);
+            // Group by calendar year (cap at 12 cells per year), global colour scale.
+            _monthlyByYear = {};
+            _monthlyMaxAbs = Math.max(...months.map(m => Math.abs(m.pnl)), 1);
+            for (const m of months) {
+                const yr = m.month.slice(0, 4);
+                (_monthlyByYear[yr] = _monthlyByYear[yr] || []).push(m);
+            }
+            const years = Object.keys(_monthlyByYear).sort();              // ascending
+            // Keep the latest year unless the current selection still exists.
+            if (!_monthlySelectedYear || !_monthlyByYear[_monthlySelectedYear]) {
+                _monthlySelectedYear = years[years.length - 1];
+            }
+            // Dropdown only when there's more than one year of data.
+            if (sel) {
+                if (years.length > 1) {
+                    sel.innerHTML = years.slice().reverse()
+                        .map(y => `<option value="${y}">${y}</option>`).join('');
+                    sel.value = _monthlySelectedYear;
+                    sel.style.display = '';
+                } else {
+                    sel.style.display = 'none';
+                }
+            }
+            _drawMonthlyYear(_monthlySelectedYear);
+        }
 
-            container.innerHTML = months.map(m => {
-                const intensity = Math.min(Math.abs(m.pnl) / maxAbs, 1);
-                const alpha = 0.15 + intensity * 0.6;
-                const bg = m.pnl >= 0
-                    ? `rgba(22,163,74,${alpha})`
-                    : `rgba(220,38,38,${alpha})`;
-                const color = intensity > 0.5 ? '#fff' : (m.pnl >= 0 ? '#166534' : '#991B1B');
-                const fullMonth = new Date(m.month + '-01').toLocaleDateString('en-IN', {month:'long', year:'numeric'});
-                const label = new Date(m.month + '-01').toLocaleDateString('en-IN', {month:'short', year:'2-digit'});
+        function _drawMonthlyYear(year) {
+            const container = document.getElementById('monthly-heatmap');
+            const rows = (_monthlyByYear[year] || []).slice(0, 12);
+            container.innerHTML = rows.map(m => {
+                const { bg, text } = _monthCellColor(m.pnl, _monthlyMaxAbs);
+                const d = new Date(m.month + '-01');
+                const fullMonth = d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+                const label = d.toLocaleDateString('en-IN', { month: 'short' });
                 const sign = m.pnl >= 0 ? 'Profit' : 'Loss';
-                return `<div class="month-cell" style="background:${bg};color:${color}"
+                return `<div class="month-cell" style="background:${bg};color:${text}"
                             title="${fullMonth} — ${sign}: ${Utils.formatINR(m.pnl)}">
                     <div class="month-label">${label}</div>
                     ${Utils.formatINR(m.pnl)}
                 </div>`;
             }).join('');
+        }
+
+        function onMonthlyYearChange() {
+            _monthlySelectedYear = document.getElementById('monthly-year-select').value;
+            _drawMonthlyYear(_monthlySelectedYear);
+        }
+
+        // ── P&L by Underlying heatmap (NIFTY index vs each stock) ─────
+        function renderSymbolHeatmap(rows) {
+            const container = document.getElementById('symbol-heatmap');
+            if (!container) return;
+            if (!rows || !rows.length) {
+                container.innerHTML = '<span class="text-muted" style="font-size:11px">No data yet</span>';
+                return;
+            }
+            container.innerHTML = rows.map(r => {
+                // Uniform tint by sign (profit green / loss red); magnitude is in
+                // the number, not the brightness. Only the selected (scoped) cell
+                // is highlighted with an outline.
+                const bg = r.pnl >= 0 ? 'rgba(22,163,74,0.16)' : 'rgba(220,38,38,0.16)';
+                const color = r.pnl >= 0 ? 'var(--green, #166534)' : 'var(--red, #991B1B)';
+                const sign = r.pnl >= 0 ? 'Profit' : 'Loss';
+                const active = r.symbol === scopeSymbol
+                    ? ';outline:2px solid var(--primary,#2563EB);outline-offset:-2px' : '';
+                return `<div class="month-cell" style="background:${bg};color:${color};cursor:pointer${active}"
+                            onclick="scopeTo('${r.symbol}')"
+                            title="${r.symbol} — ${sign}: ${Utils.formatINR(r.pnl)} · ${r.trades} trade${r.trades !== 1 ? 's' : ''} · ${r.win_rate}% win · click to scope">
+                    <div class="month-label">${r.symbol}</div>
+                    ${Utils.formatINR(r.pnl)}
+                </div>`;
+            }).join('');
+        }
+
+        // Click a heatmap cell (or "By Underlying" row) → scope the page to it.
+        function scopeTo(sym) {
+            const sel = document.getElementById('symbol-scope');
+            if (sel) sel.value = sym;
+            loadAnalytics(sym);
+        }
+
+        // ── By Underlying: win-rate, avg P&L, CE vs PE split ──────────
+        function renderByUnderlying(symbolPnl, sidePnl) {
+            const el = document.getElementById('by-underlying');
+            if (!el) return;
+            if (!symbolPnl || !symbolPnl.length) {
+                el.innerHTML = '<span class="text-muted" style="font-size:11px">No data yet</span>';
+                return;
+            }
+            const sideBy = {};
+            (sidePnl || []).forEach(s => { sideBy[s.symbol] = s; });
+            const rows = symbolPnl.map(r => {
+                const sd = sideBy[r.symbol] || {ce_pnl:0, pe_pnl:0, ce_trades:0, pe_trades:0};
+                const avg = r.trades ? r.pnl / r.trades : 0;
+                const cePnl = sd.ce_pnl || 0, pePnl = sd.pe_pnl || 0;
+                return `<tr style="cursor:pointer" onclick="scopeTo('${r.symbol}')">
+                    <td class="fw-700">${r.symbol}</td>
+                    <td class="font-mono">${r.trades}</td>
+                    <td class="font-mono">${r.win_rate}%</td>
+                    <td class="font-mono">${Utils.pnlHtml(r.pnl)}</td>
+                    <td class="font-mono">${Utils.pnlHtml(Math.round(avg))}</td>
+                    <td class="font-mono">${cePnl ? Utils.pnlHtml(cePnl) : '<span class="text-muted">—</span>'} <span class="text-muted" style="font-size:10px">${sd.ce_trades||0}</span></td>
+                    <td class="font-mono">${pePnl ? Utils.pnlHtml(pePnl) : '<span class="text-muted">—</span>'} <span class="text-muted" style="font-size:10px">${sd.pe_trades||0}</span></td>
+                </tr>`;
+            }).join('');
+            el.innerHTML = `<table class="data-table" style="width:100%;font-size:12px">
+                <thead><tr>
+                    <th>Underlying</th><th>Trades</th><th>Win%</th><th>P&L</th><th>Avg/Trade</th><th>CE P&L</th><th>PE P&L</th>
+                </tr></thead><tbody>${rows}</tbody></table>`;
         }
 
         // ── Patterns Tab ──────────────────────────────────────────────
@@ -1254,7 +1440,8 @@
             if (!container) return;
             const labels = await _ensureMistakeLabels();
             try {
-                const r = await API.fetch('/api/analytics/mistake-breakdown');
+                const q = scopeSymbol ? `?symbol=${encodeURIComponent(scopeSymbol)}` : '';
+                const r = await API.fetch(`/api/analytics/mistake-breakdown${q}`);
                 const rows = r?.breakdown || [];
                 if (summary) {
                     summary.textContent = r?.total_tagged_trades

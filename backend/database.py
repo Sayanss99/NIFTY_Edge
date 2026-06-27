@@ -56,6 +56,39 @@ def _migrate_db():
         c.execute("ALTER TABLE trades ADD COLUMN instrument_type TEXT NOT NULL DEFAULT 'OPT'")
     if "lot_size_override" not in trade_cols:
         c.execute("ALTER TABLE trades ADD COLUMN lot_size_override INTEGER")
+    # Stock-options layer: underlying symbol (defaults to NIFTY so every existing
+    # row and the entire NIFTY flow is unchanged).
+    if "symbol" not in trade_cols:
+        c.execute("ALTER TABLE trades ADD COLUMN symbol TEXT NOT NULL DEFAULT 'NIFTY'")
+
+    # Per-symbol ATM IV / HV history for stock-options IV percentile
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS stock_iv_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            date DATE NOT NULL,
+            atm_iv REAL,
+            hv REAL,
+            spot REAL,
+            dte INTEGER,
+            UNIQUE(symbol, date)
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS ix_stock_iv_symbol_date ON stock_iv_history(symbol, date)")
+
+    # Stock confirmed-suggestion log: add lifecycle/invalidation columns to an
+    # already-created table (create_all makes the table; these are later adds).
+    c.execute("PRAGMA table_info(stock_confirmed_log)")
+    scl_cols = {r[1] for r in c.fetchall()}
+    if scl_cols:
+        for col, typ in [
+            ("demark9_low", "REAL"),
+            ("invalidated", "INTEGER"),
+            ("invalidated_at", "DATETIME"),
+            ("invalidated_close", "REAL"),
+        ]:
+            if col not in scl_cols:
+                c.execute(f"ALTER TABLE stock_confirmed_log ADD COLUMN {col} {typ}")
 
     # Create strategies table if not exists
     c.execute("""

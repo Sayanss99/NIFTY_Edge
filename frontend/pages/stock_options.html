@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stratovex — Stock Options</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <style>
+        /* This page has no global expiry — keep the header selector hidden so it
+           never sits on "Loading…". */
+        .expiry-selector-group { display:none !important; }
+        /* Filters live in a compact dropdown beside the "On the Radar" heading. */
+        .risk-pill { display:inline-block; padding:3px 10px; border-radius:14px; font-size:11px; font-weight:700; }
+        .so-radar-head { display:flex; align-items:center; justify-content:flex-start; gap:12px; margin:0 0 4px; }
+        .so-radar-head .so-col-title { margin:0; }
+        .so-tf-select { padding:5px 9px; font-size:12px; font-weight:600; border-radius:7px;
+            background:var(--bg-card); color:var(--text-secondary); border:1px solid var(--border-light); cursor:pointer; }
+        .so-tf-select:hover { border-color:var(--text-muted); color:var(--text-primary); }
+        .so-filter-dd { position:relative; }
+        .so-filter-btn { padding:5px 11px; font-size:12px; font-weight:600; border-radius:7px; }
+        .so-filter-panel { position:absolute; left:0; top:calc(100% + 6px); z-index:40; width:280px;
+            background:var(--bg-card); border:1px solid var(--border-light); border-radius:10px;
+            padding:14px; box-shadow:var(--shadow-md, 0 8px 24px rgba(0,0,0,0.35)); display:none; }
+        .so-filter-dd.open .so-filter-panel { display:block; }
+        .so-filter-panel .slider-row { margin:0 0 11px; }
+        .so-filter-panel label { display:flex; justify-content:space-between; font-size:12px;
+            color:var(--text-secondary); margin-bottom:5px; font-weight:600; }
+        .so-filter-panel input[type=range]{ width:100%; accent-color:var(--primary); display:block; }
+        .so-filter-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:2px; }
+        /* Below the filter bar: two vertical sections — Confirmed | Radar. */
+        /* Picks above Radar, each spanning the FULL width so the cards lay out in a
+           clean multi-column grid (the old side-by-side split left Picks too narrow
+           for more than one column). */
+        .so-body { display:block; margin-top:16px; }
+        .so-radar-col { margin-top:26px; padding-top:20px; border-top:1px solid var(--border-light); }
+        .so-col-title { margin:0 0 4px; font-size:15px; }
+        .so-col-sub { font-size:11px; color:var(--text-muted); margin:0 0 14px; line-height:1.45; }
+        /* Compact card grids — full-width, sized to comfortable cards so the column
+           count (2+) falls out of the available width. */
+        /* Cards in a row are equal height (stretch) with their footer pinned to the
+           bottom, so all cards line up regardless of how their text wraps. */
+        .so-grid { display:grid; gap:12px; align-items:stretch; }
+        #confirmed-list .so-grid { grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); }
+        #radar-list .so-grid { grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); }
+        .so-grid > * { min-width:0; }
+        .so-card { background:var(--bg-card); border:1px solid var(--border-light);
+            border-top:3px solid var(--primary); border-radius:10px; padding:13px;
+            box-sizing:border-box; min-width:0; overflow:hidden;
+            display:flex; flex-direction:column; height:100%; }
+        .so-card .row1 { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+        .so-metrics { display:grid; grid-template-columns:repeat(2,1fr); gap:7px 12px; font-size:12px; }
+        .so-metric .k { color:var(--text-muted); font-size:9.5px; text-transform:uppercase; letter-spacing:0.3px; }
+        .so-metric .v { font-weight:600; font-family:var(--font-mono); font-size:12.5px; }
+        /* Sell buttons small + bottom-left; Chain (and Details) on the right — all
+           on one row in both sections (Sells | … | Details Chain). */
+        .so-actions { display:flex; align-items:center; gap:6px 5px; margin-top:auto; padding-top:11px; flex-wrap:wrap; }
+        .so-actions .so-sells { display:flex; gap:5px; }
+        .so-actions .so-right { margin-left:auto; display:flex; gap:5px; }
+        .btn-xs { padding:3px 7px; font-size:10px; font-weight:600; border-radius:6px; line-height:1.3; white-space:nowrap; }
+        /* Compact pick card: minimal preview + expandable details. */
+        .so-card-compact { padding:11px 12px; }
+        .so-pick-line { font-size:12.5px; margin:2px 0 8px; }
+        .so-pick-line b { font-family:var(--font-mono); }
+        /* Cleaner, less-heavy weight on card symbols/values (same sizes, readable). */
+        .so-card .fw-700, .so-card .so-pick-line b { font-weight:600; }
+        /* Safety-score bar (5 segments, filled green per pre-filter met). */
+        .so-safety { display:flex; align-items:center; gap:7px; margin:4px 0 7px; }
+        .so-safety-lbl { font-size:9px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.4px; }
+        .so-safety-bar { display:inline-flex; gap:3px; }
+        .so-safety-bar i { width:14px; height:7px; border-radius:2px; background:rgba(148,163,184,0.28); }
+        .so-safety-bar i.on { background:#16A34A; }
+        .so-safety-num { font-size:10px; font-weight:600; color:var(--text-secondary); font-family:var(--font-mono); }
+        /* Filter exceptions live in the Details zone. */
+        .so-exc-detail { margin-bottom:9px; }
+        .so-exc-lbl { font-size:9.5px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.3px; margin-bottom:4px; }
+        .so-exc { display:flex; flex-wrap:wrap; gap:4px; }
+        .so-exc .chip { font-size:9.5px; padding:1px 6px; }
+        .so-details { margin-top:10px; padding-top:10px; border-top:1px dashed var(--border-light); }
+        .meta-line { font-size:11px; color:var(--text-muted); margin-bottom:12px; }
+        .prov { color:#D97706; font-weight:600; }
+        /* Most-active stock options — clean, distinctly-bordered volume cards. */
+        .so-active-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(350px, 1fr)); gap:15px; }
+        .ma-card { background:var(--bg-card); border:1px solid rgba(148,163,184,0.32);
+            border-left:3px solid var(--primary); border-radius:12px; padding:15px 18px 17px; position:relative;
+            transition:box-shadow .15s ease, border-color .15s ease; }
+        .ma-card:hover { box-shadow:var(--shadow-sm); border-color:rgba(148,163,184,0.6); }
+        .ma-trade-btn { padding:8px 22px; font-size:12.5px; font-weight:500; letter-spacing:0.4px; border-radius:8px; }
+        /* OI-buildup signal badge (per card) + header legend. */
+        .ma-sig-kicker { font-size:9.5px; letter-spacing:0.5px; font-weight:500; color:var(--text-muted); }
+        .ma-signal { font-size:11px; font-weight:500; display:inline-flex; align-items:center; gap:6px;
+            padding:4px 10px; border-radius:7px; white-space:nowrap; }
+        .ma-signal::before { content:''; width:8px; height:8px; border-radius:50%; background:currentColor; flex:0 0 auto; }
+        .ma-sig-green     { color:#16A34A; background:rgba(22,163,74,0.13); }
+        .ma-sig-red       { color:#DC2626; background:rgba(220,38,38,0.13); }
+        .ma-sig-lightgreen{ color:#22C55E; background:rgba(74,222,128,0.16); }
+        .ma-sig-orange { color:#EA580C; background:rgba(234,88,12,0.14); }
+        .ma-sig-muted  { color:var(--text-muted); background:rgba(148,163,184,0.12); }
+        .ma-legend { display:flex; flex-wrap:wrap; align-items:center; gap:9px 14px;
+            margin-top:11px; padding-top:11px; border-top:1px solid var(--border-light); }
+        .ma-legend-lead { font-size:11px; color:var(--text-secondary); font-weight:600; }
+        .ma-leg { display:inline-flex; align-items:center; gap:7px; font-size:10.5px; color:var(--text-muted); }
+        .ma-rank { position:absolute; top:12px; right:14px; font-size:10px; font-weight:500; color:var(--text-muted); letter-spacing:0.3px; }
+        .ma-head { display:flex; align-items:baseline; gap:9px; flex-wrap:wrap; padding-right:26px; margin-bottom:11px; }
+        .ma-head .ma-sym { font-weight:600; font-size:15.5px; letter-spacing:0.3px; }
+        .ma-head .ma-strike { font-weight:500; font-size:13.5px; color:var(--text-secondary); }
+        .ma-head .ma-exp { font-size:10.5px; color:var(--text-muted); font-weight:400; }
+        .ma-card .so-metric .k { font-size:9.5px; letter-spacing:0.5px; font-weight:500; color:var(--text-muted); }
+        .ma-card .so-metric .v { font-size:13px; font-weight:500; white-space:nowrap; letter-spacing:0.2px; }
+        /* Sub-page tabs (Screener | Most Active) — mirrors the Analytics tabs. */
+        .so-tabs { display:flex; gap:4px; border-bottom:1px solid var(--border-light); margin-bottom:16px; align-items:center; }
+        /* Manual button sits at the right of the tab bar — no extra vertical space. */
+        .so-manual-btn { margin-left:auto; align-self:center; background:transparent;
+            border:1px solid var(--border-light); color:var(--text-secondary); font-size:11.5px;
+            font-weight:600; padding:5px 12px; border-radius:16px; cursor:pointer; white-space:nowrap; }
+        .so-manual-btn:hover { color:var(--text-primary); border-color:var(--text-muted); }
+        /* Safety-rating guide overlay */
+        .sm-row { display:flex; gap:11px; align-items:flex-start; padding:9px 0; border-top:1px solid var(--border-light); }
+        .sm-num { flex:0 0 auto; width:22px; height:22px; border-radius:50%; background:#16A34A;
+            color:#fff; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+        .sm-name { font-weight:700; font-size:13px; margin-bottom:1px; }
+        .sm-tip { font-size:11.5px; color:var(--text-muted); line-height:1.45; }
+        .so-tab { padding:9px 18px; background:none; border:none; border-bottom:2px solid transparent;
+            color:var(--text-secondary); font-weight:600; font-size:14px; cursor:pointer; }
+        .so-tab:hover { color:var(--text-primary); }
+        .so-tab.active { color:var(--primary); border-bottom-color:var(--primary); }
+        /* Radar: unmet-constraint chips. */
+        .so-unmet { display:flex; flex-wrap:wrap; gap:4px; }
+        .chip { font-size:9px; font-weight:600; padding:2px 7px; border-radius:9px; }
+        .chip-bad { background:var(--red-bg,#FEE2E2); color:var(--red,#DC2626); }
+        .chip-ok  { background:var(--green-bg,#D1FAE5); color:var(--green,#16A34A); }
+        /* Track Record logsheet. */
+        .so-logwrap { overflow-x:auto; border:1px solid var(--border-light); border-radius:10px; }
+        .so-log { width:100%; border-collapse:collapse; font-size:12px; }
+        .so-log th { text-align:left; padding:9px 11px; border-bottom:2px solid var(--border-light);
+            color:var(--text-muted); font-size:10px; text-transform:uppercase; letter-spacing:0.3px; white-space:nowrap; }
+        .so-log td { padding:10px 11px; border-bottom:1px solid var(--border-light); vertical-align:top; }
+        .so-log tbody tr:hover { background:var(--bg-table-header,rgba(148,163,184,0.06)); }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar" id="sidebar"></aside>
+        <div class="main-content">
+            <header class="header" id="header"></header>
+            <div class="page-content">
+                <div class="so-tabs">
+                    <button class="so-tab active" id="sotab-screener" onclick="switchSOTab('screener')">Screener</button>
+                    <button class="so-tab" id="sotab-active" onclick="switchSOTab('active')">Most Active (by Volume)</button>
+                    <button class="so-tab" id="sotab-history" onclick="switchSOTab('history')">Track Record</button>
+                    <button class="so-manual-btn" onclick="openSafetyGuide()" title="What the 5-mark safety rating means">&#9432;&nbsp;Safety rating guide</button>
+                </div>
+
+                <div id="tab-screener">
+                <div class="meta-line" id="so-meta">Loading screener…</div>
+
+                <!-- Two stacked sections: ready trade ideas | early watchlist -->
+                <div class="so-body">
+                    <div class="so-confirmed-col">
+                        <h3 class="so-col-title">Ready-to-Trade Picks</h3>
+                        <div class="so-col-sub">Best setups to act on now — a completed <b>DeMark 9</b> (or a strong 8) that also clears a safety check. <b>PE</b> = bullish (sell puts), <b>CE</b> = bearish (sell calls).</div>
+                        <div id="confirmed-list">
+                            <div class="text-muted" style="padding:20px">Loading…</div>
+                        </div>
+                    </div>
+                    <div class="so-radar-col">
+                        <div class="so-radar-head">
+                            <h3 class="so-col-title">On the Radar</h3>
+                            <select class="so-tf-select" id="so-tf" title="Show setups from which timeframe"
+                                    onchange="setTfFilter(this.value)">
+                                <option value="both">Daily + Weekly</option>
+                                <option value="daily">Daily only</option>
+                                <option value="weekly">Weekly only</option>
+                            </select>
+                            <div class="so-filter-dd" id="filter-dd">
+                                <button class="btn btn-secondary so-filter-btn" onclick="toggleFilters()">Filters ▾</button>
+                                <div class="so-filter-panel">
+                                    <div class="slider-row">
+                                        <label>IVP min <span id="lbl-ivpmin">45</span></label>
+                                        <input type="range" id="ivp-min" min="0" max="100" step="1" value="45">
+                                    </div>
+                                    <div class="slider-row">
+                                        <label>IVP max <span id="lbl-ivpmax">70</span></label>
+                                        <input type="range" id="ivp-max" min="0" max="100" step="1" value="70">
+                                    </div>
+                                    <div class="slider-row">
+                                        <label>Min premium yield % <span id="lbl-yield">12</span></label>
+                                        <input type="range" id="min-yield" min="0" max="60" step="1" value="12">
+                                    </div>
+                                    <div class="slider-row">
+                                        <label>Delta min <span id="lbl-dmin">0.10</span></label>
+                                        <input type="range" id="delta-min" min="0.02" max="0.40" step="0.01" value="0.10">
+                                    </div>
+                                    <div class="slider-row">
+                                        <label>Delta max <span id="lbl-dmax">0.25</span></label>
+                                        <input type="range" id="delta-max" min="0.05" max="0.50" step="0.01" value="0.25">
+                                    </div>
+                                    <div class="so-filter-foot">
+                                        <span style="font-size:12px;color:var(--text-secondary)">Risk: <span class="risk-pill" id="risk-pill">—</span></span>
+                                        <button class="btn btn-primary btn-sm" onclick="applyFilters(); closeFilters()">Apply</button>
+                                    </div>
+                                    <div style="font-size:10px;color:var(--text-muted);margin-top:8px">Looser gates = more ideas, higher risk.</div>
+                                </div>
+                            </div>
+                            <select class="so-tf-select" id="so-side" title="Show which option side"
+                                    onchange="setSideFilter(this.value)">
+                                <option value="both">CE + PE</option>
+                                <option value="CE">CE only</option>
+                                <option value="PE">PE only</option>
+                            </select>
+                        </div>
+                        <div class="so-col-sub">Still forming (<b>DeMark 7-8</b>) — on watch. These move up to Picks once they complete with a strong safety score.</div>
+                        <div id="radar-list"><div class="text-muted">—</div></div>
+                    </div>
+                </div>
+                </div><!-- /tab-screener -->
+
+                <div id="tab-active" style="display:none">
+                    <!-- Most-active stock options (live, volume-ranked) -->
+                    <div class="card so-active">
+                        <div style="margin-bottom:12px">
+                            <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+                                <div style="font-weight:800;font-size:17px">Most Active Stock Options <span style="font-weight:700;color:var(--text-secondary)">(by Volume)</span></div>
+                                <div style="font-size:11px;color:var(--text-muted)">The stock-option strikes being traded the most across the market right now (volume in lakhs of shares) · updates ~5&nbsp;min</div>
+                            </div>
+                            <div class="ma-legend">
+                                <span class="ma-legend-lead">What the signal means →</span>
+                                <span class="ma-leg"><span class="ma-signal ma-sig-green">Long build</span> buyers in · lean bullish (write puts)</span>
+                                <span class="ma-leg"><span class="ma-signal ma-sig-red">Short build</span> writers in · lean bearish (write calls)</span>
+                                <span class="ma-leg"><span class="ma-signal ma-sig-lightgreen">Short cover</span> bears exiting · bounce</span>
+                                <span class="ma-leg"><span class="ma-signal ma-sig-orange">Long unwind</span> bulls exiting · fading</span>
+                            </div>
+                        </div>
+                        <div id="most-active-grid" class="so-active-grid">
+                            <div class="text-muted" style="padding:14px">Loading live activity…</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-history" style="display:none">
+                    <h3 class="so-col-title">Track Record</h3>
+                    <div class="so-col-sub">Every stock that made it into Confirmed, kept on record. A pick stays in Confirmed for 2 days, then moves here. Each row is re-checked live and tells you whether it <em>still</em> meets the trade criteria (DeMark&nbsp;9 + RSI + filters) — so you can re-trade the ones that are still good.</div>
+                    <div id="history-table"><div class="text-muted" style="padding:20px">Loading…</div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Safety-rating guide (in-page overlay, mirrors the strategy guide) -->
+    <div class="modal-overlay" id="safety-modal" style="display:none" onclick="if(event.target===this)closeSafetyGuide()">
+        <div class="modal" style="max-width:560px;width:96%;max-height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--border-light)">
+                <div>
+                    <div class="modal-title" style="margin:0">What the Safety Rating means</div>
+                    <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;margin-top:6px">
+                        The green bar scores how solid a pick looks <b>right now</b>, out of 5. Each filled mark = one
+                        quality check the trade clears — more green means higher conviction. (DeMark isn't part of this
+                        score; it only decides Picks vs Radar.)
+                    </div>
+                </div>
+                <button onclick="closeSafetyGuide()" aria-label="Close" title="Close"
+                        style="background:transparent;border:none;font-size:24px;line-height:1;cursor:pointer;color:var(--text-muted);padding:0 2px">&times;</button>
+            </div>
+            <div style="padding:8px 18px 16px;overflow:auto">
+                <div class="sm-row" style="border-top:none">
+                    <div class="sm-num">1</div>
+                    <div><div class="sm-name">Momentum (RSI pullback)</div>
+                        <div class="sm-tip">The stock is in a healthy pullback (it's in our RSI watchlist) — not free-falling and not over-stretched.</div></div>
+                </div>
+                <div class="sm-row">
+                    <div class="sm-num">2</div>
+                    <div><div class="sm-name">IV sweet spot (IVP)</div>
+                        <div class="sm-tip">Option premiums are richly priced — good for a seller — but not at a dangerous extreme.</div></div>
+                </div>
+                <div class="sm-row">
+                    <div class="sm-num">3</div>
+                    <div><div class="sm-name">Safe strike distance (Delta)</div>
+                        <div class="sm-tip">The strike sits a sensible distance out-of-the-money: far enough to be lower-risk, close enough to still pay.</div></div>
+                </div>
+                <div class="sm-row">
+                    <div class="sm-num">4</div>
+                    <div><div class="sm-name">Worthwhile return (Premium yield)</div>
+                        <div class="sm-tip">The premium pays enough (annualised) to be worth the risk of selling it.</div></div>
+                </div>
+                <div class="sm-row">
+                    <div class="sm-num">5</div>
+                    <div><div class="sm-name">Trend alignment (Forward vs spot)</div>
+                        <div class="sm-tip">The futures price agrees with the trade's direction — the market isn't leaning the other way.</div></div>
+                </div>
+                <div class="sm-row">
+                    <div class="sm-num">6</div>
+                    <div><div class="sm-name">Setup confirmation (Anchored VWAP)</div>
+                        <div class="sm-tip">Since the setup began, price is holding on the trade's side of the volume-weighted average — the reversal is actually working, not just signalled.</div></div>
+                </div>
+                <div style="font-size:11.5px;color:var(--text-secondary);line-height:1.5;margin-top:13px;padding-top:11px;border-top:1px solid var(--border-light)">
+                    <b>6/6</b> clears every check (highest conviction). Whatever a pick misses is listed as a
+                    “filter exception” under <b>Details</b> on its card — so a 4/6 still trades, you just see what it skipped.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation modal -->
+    <div class="modal-overlay" id="confirm-modal" style="display:none">
+        <div class="modal" style="max-width:520px">
+            <div class="modal-title">Review &amp; Confirm Trade</div>
+            <div id="confirm-body"><div class="text-muted" style="padding:24px">…</div></div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeConfirm()">Cancel</button>
+                <button class="btn btn-primary" onclick="executeConfirm()">Confirm &amp; Add</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/utils.js"></script>
+    <script src="/js/tweaks.js"></script>
+    <script>
+        if (!API.requireAuth()) throw new Error('Not authenticated');
+        document.getElementById('sidebar').innerHTML = Utils.buildSidebar('stock-options');
+        document.getElementById('header').innerHTML = Utils.buildHeader('Stock Options');
+        // CE/PE colour code: soft-cyan for CE (calls), muted coral for PE (puts).
+        const CE_COLOR = '#26C6DA', PE_COLOR = '#F0857A';
+        const sideCol = side => side === 'CE' ? CE_COLOR : PE_COLOR;
+        // Escape free-text before it goes into a template literal — values like
+        // side_reason ("…F<spot, SMA20>SMA50") contain < and > which the HTML parser
+        // would treat as tags, swallowing the card's closing </div>s and nesting
+        // every following card inside this one.
+        const esc = v => String(v == null ? '' : v).replace(/[&<>]/g,
+            c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+        // Safety score (0–5): a 5-segment bar filled green for each picking
+        // pre-filter met — RSI (Chartink pullback pool) + IVP + delta + yield +
+        // proximity. DeMark is NOT in the score; it only decides the section.
+        function safetyBar(s) {
+            if (s.score == null) return '';
+            const sc = s.score, tot = s.score_total || 6;
+            let segs = '';
+            for (let i = 0; i < tot; i++) segs += `<i class="${i < sc ? 'on' : ''}"></i>`;
+            return `<div class="so-safety" title="Safety score out of ${tot}: how many of the ${tot} pre-filters (RSI pullback, IVP, delta, yield, forward proximity, setup VWAP) it passes right now. DeMark isn't counted.">
+                <span class="so-safety-lbl">Safety score</span>
+                <span class="so-safety-bar">${segs}</span>
+                <span class="so-safety-num">${sc}/${tot}</span>
+            </div>`;
+        }
+
+        // Filter exceptions, shown inside the Details zone (not the preview).
+        function excBlock(unmet) {
+            if (unmet && unmet.length)
+                return `<div class="so-exc-detail"><div class="so-exc-lbl">Filter exceptions</div>`
+                    + `<div class="so-exc">${unmet.map(u => `<span class="chip chip-bad">✗ ${esc(u)}</span>`).join('')}</div></div>`;
+            return `<div class="so-exc-detail"><span class="chip chip-ok">✓ all 5 filters met</span></div>`;
+        }
+        // This page has no single expiry (each suggestion carries its own), so
+        // hide the global expiry selector that would otherwise sit on "Loading…".
+        const _exg = document.querySelector('.expiry-selector-group');
+        if (_exg) _exg.style.display = 'none';
+
+        const ids = ['ivp-min','ivp-max','min-yield','delta-min','delta-max'];
+        const lblMap = {'ivp-min':'lbl-ivpmin','ivp-max':'lbl-ivpmax','min-yield':'lbl-yield','delta-min':'lbl-dmin','delta-max':'lbl-dmax'};
+        ids.forEach(id => document.getElementById(id).addEventListener('input', () => {
+            const v = document.getElementById(id).value;
+            document.getElementById(lblMap[id]).textContent = id.startsWith('delta') ? Number(v).toFixed(2) : v;
+            updateRiskPill();
+        }));
+
+        function curThresholds() {
+            return {
+                ivp_min: +document.getElementById('ivp-min').value,
+                ivp_max: +document.getElementById('ivp-max').value,
+                min_yield: +document.getElementById('min-yield').value,
+                delta_min: +document.getElementById('delta-min').value,
+                delta_max: +document.getElementById('delta-max').value,
+            };
+        }
+
+        // Risk profile reflects how aggressive the chosen gates are vs the
+        // conservative defaults (lower yield floor + wider delta = more risk).
+        function updateRiskPill() {
+            const t = curThresholds();
+            let score = 0;
+            if (t.min_yield < 12) score += 2; else if (t.min_yield < 18) score += 1;
+            if (t.delta_max > 0.25) score += 2; else if (t.delta_max > 0.20) score += 1;
+            if ((t.ivp_max - t.ivp_min) > 30) score += 1;
+            const pill = document.getElementById('risk-pill');
+            let label, bg, col;
+            if (score >= 4) { label='Aggressive'; bg='var(--red-bg)'; col='var(--red)'; }
+            else if (score >= 2) { label='Moderate'; bg='var(--amber-bg, #FEF3C7)'; col='#D97706'; }
+            else { label='Conservative'; bg='var(--green-bg)'; col='var(--green)'; }
+            pill.textContent = label; pill.style.background = bg; pill.style.color = col;
+        }
+
+        // Filters dropdown (beside the "On the Radar" heading).
+        function toggleFilters() { document.getElementById('filter-dd').classList.toggle('open'); }
+        function closeFilters() { document.getElementById('filter-dd').classList.remove('open'); }
+        document.addEventListener('click', (e) => {
+            const dd = document.getElementById('filter-dd');
+            if (dd && !dd.contains(e.target)) dd.classList.remove('open');
+        });
+
+        // Safety-rating guide (in-page overlay).
+        function openSafetyGuide() { document.getElementById('safety-modal').style.display = 'flex'; }
+        function closeSafetyGuide() { document.getElementById('safety-modal').style.display = 'none'; }
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && document.getElementById('safety-modal').style.display === 'flex') closeSafetyGuide();
+        });
+
+        // Card footer: small Sell PE/CE on the bottom-left (preferred = primary +★),
+        // Chain on the right; an optional Details toggle (Picks only) sits by Chain.
+        function sellButtons(symbol, preferred, detailsId) {
+            const btn = (side) => {
+                const isPref = side === preferred;
+                const cls = isPref ? 'btn-primary' : 'btn-secondary';
+                const star = isPref ? ' ★' : '';
+                return `<button class="btn btn-xs ${cls}" onclick="openConfirm('${symbol}','${side}')">Sell ${side}${star}</button>`;
+            };
+            const details = detailsId
+                ? `<button class="btn btn-xs btn-secondary" onclick="toggleDetails('${detailsId}')">Details</button>` : '';
+            return `<div class="so-actions">
+                <span class="so-sells">${btn('PE')}${btn('CE')}</span>
+                <span class="so-right">${details}<a class="btn btn-xs btn-secondary" href="/option-chain?symbol=${encodeURIComponent(symbol)}">Chain</a></span>
+            </div>`;
+        }
+
+        function toggleDetails(id) {
+            const el = document.getElementById(id);
+            if (el) el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
+        }
+
+        function renderConfirmed(list) {
+            const el = document.getElementById('confirmed-list');
+            if (!list || !list.length) {
+                el.innerHTML = '<div class="text-muted" style="padding:16px">No DeMark 9 setups right now — wait for the next screen.</div>';
+                return;
+            }
+            // Clean preview: name + trade, DeMark, safety bar, the Pick + yield.
+            // Filter exceptions and the full metrics (RSI/IVP/Δ/OI…) live behind Details.
+            el.innerHTML = '<div class="so-grid">' + list.map((s, i) => {
+                const did = `det-conf-${i}`;
+                return `
+                <div class="so-card so-card-compact">
+                    <div class="row1">
+                        <span class="fw-700" style="font-size:15px">${s.symbol}</span>
+                        <span class="badge" style="background:${sideCol(s.side)}22;color:${sideCol(s.side)};font-weight:600;font-size:9px">${s.side} SELL</span>
+                        <span class="badge badge-neutral" style="font-size:9px" title="TD ${s.side==='CE'?'sell':'buy'}-setup 9 (perfection ✓ when shown)">DeMark ${s.demark}/9 · ${s.demark_tf||'D'}${s.demark_perfected?' ✓':''}</span>
+                    </div>
+                    ${safetyBar(s)}
+                    <div class="so-pick-line">Pick: <b>${s.strike} ${s.side}</b> @ ${s.ltp} · <span style="color:var(--green);font-weight:600">${s.premium_yield}% yield</span></div>
+                    ${sellButtons(s.symbol, s.side, did)}
+                    <div class="so-details" id="${did}" style="display:none">
+                        ${excBlock(s.unmet)}
+                        <div class="so-metrics">
+                            <div class="so-metric"><div class="k">CMP</div><div class="v">${Utils.formatNum(s.spot,2)}</div></div>
+                            <div class="so-metric"><div class="k">Forward</div><div class="v">${Utils.formatNum(s.forward,2)} (${s.basis_pct>=0?'+':''}${s.basis_pct}%)</div></div>
+                            <div class="so-metric"><div class="k">|Δ| · OI</div><div class="v">${Math.abs(s.delta).toFixed(2)} · ${Utils.formatNum(s.oi)}</div></div>
+                            <div class="so-metric"><div class="k">IVP · IV</div><div class="v">${s.ivp} · ${s.iv}%</div></div>
+                            <div class="so-metric"><div class="k">RSI d/w/h</div><div class="v">${s.rsi.daily ?? '—'}/${s.rsi.weekly ?? '—'}/${s.rsi.hourly ?? '—'}</div></div>
+                            <div class="so-metric"><div class="k">Expiry · Lot</div><div class="v">${s.expiry} · ${s.lot_size}</div></div>
+                        </div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:8px">${s.age_days!=null?(s.age_days===0?'Added today':'Added '+s.age_days+'d ago')+' · ':''}Direction — ${esc(s.side_reason)}</div>
+                    </div>
+                </div>`;
+            }).join('') + '</div>';
+        }
+
+        function renderRadar(list) {
+            const el = document.getElementById('radar-list');
+            if (!list || !list.length) {
+                el.innerHTML = '<div class="text-muted">No DeMark 7-8 setups forming right now.</div>';
+                return;
+            }
+            // Radar = a forming DeMark 7-8 on the daily chart. Compact preview (Pick +
+            // exceptions); CMP/IVP/RSI etc. live behind the Details toggle.
+            el.innerHTML = '<div class="so-grid">' +
+                list.map((r, i) => {
+                    const pref = r.side || r.preferred_side || 'PE';
+                    const rsi = r.rsi || {};
+                    const did = `det-rad-${i}`;
+                    return `
+                    <div class="so-card so-card-compact" style="border-top-color:#D97706">
+                        <div class="row1">
+                            <span class="fw-700" style="font-size:14px">${r.symbol}</span>
+                            <span class="badge" style="background:${sideCol(pref)}22;color:${sideCol(pref)};font-weight:600;font-size:9px">${pref} SELL</span>
+                            <span class="badge badge-neutral" style="font-size:9px" title="Live TD ${pref==='CE'?'sell':'buy'}-setup count">DeMark ${r.demark||'—'} · ${r.demark_tf||'D'}${r.demark_perfected?' ✓':''}</span>
+                        </div>
+                        ${safetyBar(r)}
+                        <div class="so-pick-line">Pick: <b>${r.strike} ${r.side}</b> @ ${r.ltp}${r.premium_yield!=null?` · <span style="color:var(--green);font-weight:600">${r.premium_yield}% yld</span>`:''}</div>
+                        ${sellButtons(r.symbol, pref, did)}
+                        <div class="so-details" id="${did}" style="display:none">
+                            ${excBlock(r.unmet)}
+                            <div class="so-metrics">
+                                <div class="so-metric"><div class="k">CMP</div><div class="v">${r.spot!=null?Utils.formatNum(r.spot,2):(r.cmp!=null?Utils.formatNum(r.cmp,2):'—')}</div></div>
+                                <div class="so-metric"><div class="k">IVP · IV</div><div class="v">${r.ivp ?? '—'} · ${r.iv!=null?r.iv+'%':'—'}</div></div>
+                                <div class="so-metric"><div class="k">|Δ| · OI</div><div class="v">${r.delta!=null?Math.abs(r.delta).toFixed(2):'—'} · ${r.oi!=null?Utils.formatNum(r.oi):'—'}</div></div>
+                                <div class="so-metric"><div class="k">RSI d/w/h</div><div class="v">${rsi.daily ?? '—'}/${rsi.weekly ?? '—'}/${rsi.hourly ?? '—'}</div></div>
+                            </div>
+                        </div>
+                    </div>`;
+                }).join('') + '</div>';
+        }
+
+        // ── Sub-page tabs (Screener | Most Active | Track Record) ──────────
+        const SO_TABS = ['screener', 'active', 'history'];
+        function switchSOTab(tab) {
+            SO_TABS.forEach(t => {
+                const pane = document.getElementById('tab-' + t);
+                const btn = document.getElementById('sotab-' + t);
+                if (pane) pane.style.display = (t === tab) ? '' : 'none';
+                if (btn) btn.classList.toggle('active', t === tab);
+            });
+            if (tab === 'history') loadHistory();
+        }
+
+        // ── Track Record (graduated confirmed, re-checked live) ────────────
+        function renderHistory(rows) {
+            const el = document.getElementById('history-table');
+            if (!rows || !rows.length) {
+                el.innerHTML = '<div class="text-muted" style="padding:16px">No graduated suggestions yet — confirmed picks land here from day 3 onward.</div>';
+                return;
+            }
+            const f = v => (v == null || v === '') ? '—' : v;
+            const dt = iso => { try { return new Date(iso).toLocaleDateString(); } catch (e) { return '—'; } };
+            const trip = r => `${f(r?.daily)}/${f(r?.weekly)}/${f(r?.hourly)}`;
+            el.innerHTML = '<div class="so-logwrap"><table class="so-log"><thead><tr>' +
+                '<th>Stock</th><th>Trade idea</th><th>Confirmed</th><th>At confirmation</th><th>Now (live)</th><th>Status</th><th></th>' +
+                '</tr></thead><tbody>' +
+                rows.map(r => {
+                    const live = r.live || {}, e = r.entry || {};
+                    const sc = sideCol(r.side || 'PE');
+                    const status = r.invalidated
+                        ? '<span class="chip chip-bad">Broke 9-day low</span>'
+                        : live.tradable
+                            ? '<span class="chip chip-ok">Tradable</span>'
+                            : '<span class="chip chip-bad">Not now</span>';
+                    const reBtn = (live.tradable && !r.invalidated)
+                        ? `<button class="btn btn-sm btn-primary" onclick="openConfirm('${r.symbol}','${r.side}')">Re-trade</button>`
+                        : '<span class="text-muted" style="font-size:10px">—</span>';
+                    const entryTxt = `RSI ${trip(e.rsi)} · IVP ${f(e.ivp)} · DeMark ${f(e.demark)}${e.demark_perfected ? '✓' : ''} ${f(e.demark_tf)}`;
+                    const liveTxt = live.error ? '<span class="text-muted">unavailable</span>'
+                        : `RSI ${trip(live.rsi)} · IVP ${f(live.ivp)} · |Δ| ${live.delta != null ? Math.abs(live.delta).toFixed(2) : '—'} · DeMark ${f(live.demark)}${live.demark_perfected ? '✓' : ''} ${f(live.demark_tf)}`;
+                    const lowNote = r.demark9_low != null
+                        ? `<div class="text-muted" style="font-size:10px;margin-top:3px">9-day low ₹${f(r.demark9_low)}${r.invalidated ? ` · closed ₹${f(r.invalidated_close)} below` : ''}</div>`
+                        : '';
+                    return `<tr>
+                        <td><span class="fw-700">${r.symbol}</span></td>
+                        <td><span class="badge" style="background:${sc}22;color:${sc};font-weight:700;font-size:9px">${r.side} SELL</span> ${f(r.strike)} · <span class="text-muted">${f(r.expiry)}</span></td>
+                        <td>${dt(r.first_confirmed)}<br><span class="text-muted" style="font-size:10px">${r.age_days}d ago</span></td>
+                        <td style="font-size:11px;color:var(--text-secondary)">${entryTxt}</td>
+                        <td style="font-size:11px">${liveTxt}${lowNote}</td>
+                        <td>${status}</td>
+                        <td>${reBtn}</td>
+                    </tr>`;
+                }).join('') + '</tbody></table></div>';
+        }
+
+        async function loadHistory() {
+            const el = document.getElementById('history-table');
+            el.innerHTML = '<div class="text-muted" style="padding:16px">Re-checking live conditions…</div>';
+            try {
+                const res = await API.fetch('/api/stocks/confirmed-history');
+                renderHistory(res && res.rows ? res.rows : []);
+            } catch (e) {
+                el.innerHTML = '<div style="color:var(--red);padding:16px">Failed to load track record.</div>';
+            }
+        }
+
+        // ── Confirmation flow ──────────────────────────────────────────────
+        let _confirm = null;
+
+        async function openConfirm(symbol, side) {
+            const modal = document.getElementById('confirm-modal');
+            const body = document.getElementById('confirm-body');
+            modal.style.display = 'flex';
+            _confirm = null;
+            body.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center">Fetching live ' + symbol + ' ' + side + ' strike…</div>';
+            const t = curThresholds();
+            let s;
+            try {
+                s = await API.getStockSuggestion(symbol, side, t);
+            } catch (e) {
+                body.innerHTML = `<div style="color:var(--red);padding:20px">Couldn't reach the server. <button class="btn btn-sm btn-secondary" onclick="openConfirm('${symbol}','${side}')">Retry</button></div>`;
+                return;
+            }
+            if (!s || s.error) {
+                body.innerHTML = `<div style="color:var(--red);padding:20px">${s?.error || 'Could not build suggestion'} <button class="btn btn-sm btn-secondary" onclick="openConfirm('${symbol}','${side}')">Retry</button></div>`;
+                return;
+            }
+            _confirm = s;
+            const warn = !s.gates.all
+                ? `<div style="font-size:11px;color:#D97706;margin:8px 0">⚠ Outside your filters: ${Object.entries(s.gates).filter(([k,v])=>k!=='all'&&!v).map(([k])=>k).join(', ')}. You can still proceed.</div>` : '';
+            body.innerHTML = `
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                    <span class="fw-700" style="font-size:18px">${s.symbol}</span>
+                    <span class="badge" style="background:${sideCol(s.side)}22;color:${sideCol(s.side)};font-weight:700">${s.side} SELL</span>
+                    <span style="margin-left:auto;font-weight:700;color:var(--green)">${s.premium_yield}% yield</span>
+                </div>
+                <div class="so-metrics" style="grid-template-columns:repeat(3,1fr);gap:10px 14px">
+                    <div class="so-metric"><div class="k">Strike</div><div class="v">${s.strike}</div></div>
+                    <div class="so-metric"><div class="k">Premium (LTP)</div><div class="v">${s.ltp}</div></div>
+                    <div class="so-metric"><div class="k">Expiry</div><div class="v">${s.expiry}</div></div>
+                    <div class="so-metric"><div class="k">CMP · Fwd</div><div class="v">${Utils.formatNum(s.spot,2)} · ${Utils.formatNum(s.forward,2)}</div></div>
+                    <div class="so-metric"><div class="k">|Δ| · OI</div><div class="v">${Math.abs(s.delta).toFixed(2)} · ${Utils.formatNum(s.oi)}</div></div>
+                    <div class="so-metric"><div class="k">IVP · IV</div><div class="v">${s.ivp} · ${s.iv}%</div></div>
+                </div>
+                ${warn}
+                <div style="display:flex;align-items:center;gap:10px;margin:14px 0 6px">
+                    <label style="font-size:13px;font-weight:600">Lots</label>
+                    <input type="number" id="confirm-lots" value="1" min="1" style="width:80px;padding:6px 8px;border:1px solid var(--border);border-radius:6px"
+                        oninput="updateConfirmTotals()">
+                    <span class="text-muted" style="font-size:12px">× ${s.lot_size}/lot</span>
+                    <span style="margin-left:auto;font-size:13px">Premium credit: <strong id="confirm-credit" style="color:var(--green)"></strong></span>
+                </div>
+                <div style="font-size:11px;color:var(--text-muted)">Strike is taken exactly as selected — no rounding.</div>
+            `;
+            updateConfirmTotals();
+        }
+
+        function updateConfirmTotals() {
+            if (!_confirm) return;
+            const lots = parseInt(document.getElementById('confirm-lots').value) || 1;
+            const credit = _confirm.ltp * lots * _confirm.lot_size;
+            document.getElementById('confirm-credit').textContent = Utils.formatINR(credit);
+        }
+
+        function closeConfirm() {
+            document.getElementById('confirm-modal').style.display = 'none';
+            _confirm = null;
+        }
+
+        async function executeConfirm() {
+            if (!_confirm) return;
+            const lots = parseInt(document.getElementById('confirm-lots').value) || 1;
+            const trade = {
+                trade_type: _confirm.trade_type,
+                symbol: _confirm.symbol,
+                strike: _confirm.strike,          // exact strike, no rounding
+                expiry_date: _confirm.expiry,
+                entry_premium: _confirm.ltp,
+                quantity: lots,
+                entry_iv: _confirm.iv,
+                entry_delta: _confirm.delta,
+                lot_size_override: _confirm.lot_size,
+            };
+            const resp = await API.addTrade(trade);
+            if (resp && resp.requires_override) {
+                const ok = confirm(`Daily loss limit hit. Place this trade anyway?`);
+                if (!ok) { Utils.toast('Cancelled', 'success'); return; }
+                const r2 = await API.addTrade({ ...trade, confirm_override: true });
+                if (!(r2 && r2.id)) { Utils.toast(r2?.detail || 'Failed', 'error'); return; }
+            } else if (!(resp && resp.id)) {
+                Utils.toast(resp?.detail || 'Failed to add trade', 'error');
+                return;
+            }
+            closeConfirm();
+            Utils.toast(`${trade.symbol} ${trade.trade_type.replace('_',' ')} ${trade.strike} added`, 'success');
+            setTimeout(() => { window.location.href = '/positions'; }, 700);
+        }
+
+        let _screenRetry = null;
+        let _lastScreen = null;
+        // Timeframe view (Daily / Weekly / Both) — a display-only filter over the
+        // already-fetched screen; the screener pipeline is unchanged. Persisted so an
+        // auto-refresh (re-fetch + re-render) keeps the user's selection.
+        let soTfFilter = localStorage.getItem('so_tf_filter') || 'both';
+        // CE/PE view — same display-only idea as the timeframe filter; the screener's
+        // side (PE = bullish buy-setup, CE = bearish sell-setup) is decided by the
+        // backend and unchanged here. Persisted across refreshes.
+        let soSideFilter = localStorage.getItem('so_side_filter') || 'both';
+        function _viewMatch(card) {
+            const tfOk = soTfFilter === 'both' || (card.tf || 'daily') === soTfFilter;
+            const sideOk = soSideFilter === 'both' || (card.side || '') === soSideFilter;
+            return tfOk && sideOk;
+        }
+        function renderScreen(res) {
+            const m = res.meta || {};
+            renderConfirmed((res.confirmed || []).filter(_viewMatch));
+            renderRadar((res.radar || []).filter(_viewMatch));
+            const when = m.last_prefilter ? new Date(m.last_prefilter * 1000).toLocaleTimeString() : 'pending';
+            const closedNote = m.closed_snapshot
+                ? ' · <span style="color:#D97706;font-weight:600">Markets closed — showing last close snapshot</span>' : '';
+            document.getElementById('so-meta').innerHTML =
+                `Universe ${m.universe || 0} · DeMark-9 candidates ${m.survivors || 0} · last screen ${when}` +
+                closedNote +
+                (m.ivp_provisional ? ' · <span class="prov">IVP provisional (building history)</span>' : '');
+        }
+        function setTfFilter(val) {
+            soTfFilter = val;
+            try { localStorage.setItem('so_tf_filter', val); } catch (e) {}
+            if (_lastScreen) renderScreen(_lastScreen);   // re-filter without re-fetching
+        }
+        function setSideFilter(val) {
+            soSideFilter = val;
+            try { localStorage.setItem('so_side_filter', val); } catch (e) {}
+            if (_lastScreen) renderScreen(_lastScreen);
+        }
+        async function applyFilters() {
+            document.getElementById('confirmed-list').innerHTML = '<div class="text-muted" style="padding:16px">Screening…</div>';
+            const res = await API.getStockScreener(curThresholds());
+            if (!res || res.error) {
+                document.getElementById('confirmed-list').innerHTML = `<div style="color:var(--red);padding:16px">${res?.error || 'Failed to load'}</div>`;
+                return;
+            }
+            const m = res.meta || {};
+            // Cold start: the backend builds the setup pool in the background (the
+            // first scan, incl. the weekly fallback, takes ~1 min). Until the
+            // universe is populated, show progress and re-poll quickly rather than
+            // waiting the full 2-min cadence, so cards appear as soon as it's ready.
+            if (!m.universe) {
+                const closed = m.closed_snapshot;
+                document.getElementById('confirmed-list').innerHTML =
+                    `<div class="text-muted" style="padding:16px">${closed
+                        ? 'Markets closed — preparing the last-close snapshot…'
+                        : 'First scan in progress — screening the F&O universe (~1 min)…'}</div>`;
+                document.getElementById('radar-list').innerHTML = '';
+                document.getElementById('so-meta').innerHTML = closed
+                    ? 'Markets closed — preparing the last close snapshot…'
+                    : 'Building the screen — scanning the F&O universe…';
+                if (_screenRetry) clearTimeout(_screenRetry);
+                _screenRetry = setTimeout(applyFilters, 12000);
+                return;
+            }
+            if (_screenRetry) { clearTimeout(_screenRetry); _screenRetry = null; }
+            _lastScreen = res;
+            renderScreen(res);   // applies the current Daily/Weekly/Both view
+        }
+
+        // ── Most Active Stock Options (live, volume-ranked) ────────────────
+        function renderMostActive(rows) {
+            const el = document.getElementById('most-active-grid');
+            if (!rows || !rows.length) {
+                el.innerHTML = '<div class="text-muted" style="padding:14px">No live activity right now.</div>';
+                return;
+            }
+            el.innerHTML = rows.map((r, i) => {
+                const sideColor = sideCol(r.side);
+                const tradeUrl = `/option-chain?symbol=${encodeURIComponent(r.symbol)}`
+                    + `&expiry=${encodeURIComponent(r.expiry || '')}`
+                    + `&strike=${r.strike}&side=${r.side}`;
+                return `<div class="ma-card" style="border-left-color:${sideColor}">
+                    <span class="ma-rank">#${i + 1}</span>
+                    <div class="ma-head">
+                        <span class="ma-sym">${r.symbol}</span>
+                        <span class="badge" style="font-size:10px;background:${sideColor}1f;color:${sideColor};font-weight:600">${r.side}</span>
+                        <span class="font-mono ma-strike">${r.strike}</span>
+                        <span class="ma-exp">${r.expiry || ''}</span>
+                    </div>
+                    <div class="so-metrics" style="grid-template-columns:1.3fr .85fr 1fr 1fr;gap:9px 14px">
+                        <div class="so-metric"><div class="k">Volume</div><div class="v" style="color:${sideColor}">${Utils.formatNum(r.volume_lakh,2)} L</div></div>
+                        <div class="so-metric"><div class="k">LTP</div><div class="v">${r.ltp}</div></div>
+                        <div class="so-metric"><div class="k">NFO OI</div><div class="v">${r.oi_cr} cr</div></div>
+                        <div class="so-metric"><div class="k">Turnover</div><div class="v">₹${r.turnover_cr}cr</div></div>
+                    </div>
+                    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-top:13px">
+                        <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-start">
+                            <span class="ma-sig-kicker">SIGNAL</span>
+                            <span class="ma-signal ma-sig-${r.signal_tone || 'muted'}"
+                                  title="Day's price vs OI: ${r.chg_pct >= 0 ? '+' : ''}${r.chg_pct || 0}% price · ${r.chg_oi >= 0 ? '+' : ''}${Utils.formatNum(r.chg_oi || 0)} OI">${r.signal_label || 'Flat'}</span>
+                        </div>
+                        <button class="btn btn-primary ma-trade-btn" onclick="window.location.href='${tradeUrl}'">Trade ${r.side}</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function loadMostActive() {
+            const res = await API.getMostActive(8);
+            if (res && res.rows) renderMostActive(res.rows);
+            else renderMostActive([]);
+        }
+
+        updateRiskPill();
+        const _tfSel = document.getElementById('so-tf');   // restore persisted Daily/Weekly/Both
+        if (_tfSel) _tfSel.value = soTfFilter;
+        const _sideSel = document.getElementById('so-side');  // restore persisted CE/PE/Both
+        if (_sideSel) _sideSel.value = soSideFilter;
+        applyFilters();
+        loadMostActive();
+        // Refresh both confirmed + radar picks every 2 min (polling — keeps querying
+        // light; the heavy scan runs in the background scheduler, not per refresh).
+        setInterval(applyFilters, 120000);
+        // Most-active feed refreshes on its own ~1-min cadence.
+        setInterval(loadMostActive, 60000);
+        // Track Record re-checks live conditions while its tab is open.
+        setInterval(() => {
+            const h = document.getElementById('tab-history');
+            if (h && h.style.display !== 'none') loadHistory();
+        }, 60000);
+    </script>
+</body>
+</html>

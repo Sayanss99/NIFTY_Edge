@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NiftyEdge — Trade Journal</title>
+    <title>Stratovex — Trade Journal</title>
     <link rel="stylesheet" href="/css/styles.css">
     <style>
         .journal-summary {
@@ -471,6 +471,10 @@
                     cell: (t) => `<td>${t.exit_date ? new Date(t.exit_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}</td>`,
                 },
                 {
+                    key: 'symbol', label: 'Underlying',
+                    cell: (t) => `<td class="fw-600">${t.symbol || 'NIFTY'}</td>`,
+                },
+                {
                     key: 'trade_type', label: 'Type',
                     cell: (t) => `<td><span class="badge ${Utils.tradeTypeClass(t.trade_type)}">${t.trade_type.replace('_', ' ')}</span></td>`,
                 },
@@ -595,13 +599,14 @@
                     <div>
                         <table class="journal-table">
                             <thead><tr>
-                                <th>Type</th><th>Strike</th><th>Entry</th><th>Exit</th><th>Qty</th><th>P&L</th>
+                                <th>Underlying</th><th>Type</th><th>Strike</th><th>Entry</th><th>Exit</th><th>Qty</th><th>P&L</th>
                             </tr></thead><tbody>`;
 
                 for (const t of expTrades) {
                     const pnl = t.realized_pnl || 0;
                     const rowClass = pnl > 0 ? 'profit' : pnl < 0 ? 'loss' : '';
                     html += `<tr class="${rowClass}">
+                        <td class="fw-600">${t.symbol || 'NIFTY'}</td>
                         <td><span class="badge ${Utils.tradeTypeClass(t.trade_type)}">${t.trade_type.replace('_', ' ')}</span></td>
                         <td class="font-mono">${Utils.formatNum(t.strike)}</td>
                         <td class="font-mono">${Utils.formatNum(t.entry_premium, 2)}</td>

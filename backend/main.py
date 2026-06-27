@@ -1,4 +1,4 @@
-"""NiftyEdge — FastAPI backend entry point."""
+"""Stratovex — FastAPI backend entry point."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -21,6 +21,7 @@ from routes_suggestions import router as suggestions_router
 from routes_strategies import router as strategies_router
 from routes_news import router as news_router
 from routes_futures import router as futures_router
+from routes_stocks import router as stocks_router
 
 
 @asynccontextmanager
@@ -34,7 +35,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="NiftyEdge", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Stratovex", version="1.0.0", lifespan=lifespan)
 
 # API routes
 app.include_router(auth_router)
@@ -47,6 +48,7 @@ app.include_router(suggestions_router)
 app.include_router(strategies_router)
 app.include_router(news_router)
 app.include_router(futures_router)
+app.include_router(stocks_router)
 
 
 # WebSocket endpoint
@@ -73,6 +75,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
 app.mount("/css", StaticFiles(directory="../frontend/css"), name="css")
 app.mount("/js", StaticFiles(directory="../frontend/js"), name="js")
 app.mount("/pages", StaticFiles(directory="../frontend/pages"), name="pages")
+
+
+@app.get("/favicon.png")
+@app.get("/favicon.ico")
+async def serve_favicon():
+    return FileResponse("../frontend/favicon.png", media_type="image/png")
 
 
 @app.get("/")
@@ -128,3 +136,8 @@ async def serve_news_desk():
 @app.get("/futures")
 async def serve_futures():
     return FileResponse("../frontend/pages/futures.html")
+
+
+@app.get("/stock-options")
+async def serve_stock_options():
+    return FileResponse("../frontend/pages/stock_options.html")

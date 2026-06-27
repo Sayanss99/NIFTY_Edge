@@ -23,6 +23,7 @@ class StrategyLeg(BaseModel):
     option_type: str   # CE or PE
     action: str        # BUY or SELL
     lots: int = 1
+    expiry: Optional[str] = None   # per-leg expiry (calendars); falls back to request expiry
 
 class CreateStrategyRequest(BaseModel):
     strategy_type: str
@@ -346,115 +347,201 @@ def compute_market_verdict(d: dict) -> dict:
     }
 
 
-def _score_strategies(iv_rank, direction, dir_score, rr_value, pcr, vix):
-    """Score 5 strategy types 0-100 for current market. Safety-first bias —
-    defined-risk strategies (Iron Condor, spreads, Calendar) get a head start
-    over unlimited-risk Short Strangle. Strangle is penalised harder when vol
-    or directional conviction is elevated, since tail risk is asymmetric.
-    """
-    scores = {}
-    rationales = {}
+# Strategy universe — directional bias, preferred vol regime, risk type, structure.
+# All defined-risk except SHORT_STRANGLE, which is kept but always demoted so it
+# can never outrank a comparable defined-risk pick (safety-first).
+_STRAT_META = {
+    "BULL_PUT_SPREAD":  {"label": "Bull Put Spread",  "bias": "BULLISH", "vol": "HIGH",     "risk": "defined",   "kind": "credit"},
+    "BULL_CALL_SPREAD": {"label": "Bull Call Spread", "bias": "BULLISH", "vol": "LOW",      "risk": "defined",   "kind": "debit"},
+    "BEAR_CALL_SPREAD": {"label": "Bear Call Spread", "bias": "BEARISH", "vol": "HIGH",     "risk": "defined",   "kind": "credit"},
+    "BEAR_PUT_SPREAD":  {"label": "Bear Put Spread",  "bias": "BEARISH", "vol": "LOW",      "risk": "defined",   "kind": "debit"},
+    "IRON_CONDOR":      {"label": "Iron Condor",      "bias": "NEUTRAL", "vol": "HIGH",     "risk": "defined",   "kind": "credit"},
+    "CALENDAR_SPREAD":  {"label": "Calendar Spread",  "bias": "NEUTRAL", "vol": "LOW",      "risk": "defined",   "kind": "debit"},
+    "LONG_STRANGLE":    {"label": "Long Strangle",    "bias": "MOVE",    "vol": "VERY_LOW", "risk": "defined",   "kind": "debit"},
+    "SHORT_STRANGLE":   {"label": "Short Strangle",   "bias": "NEUTRAL", "vol": "HIGH",     "risk": "unlimited", "kind": "credit"},
+}
 
-    # Convenience: strong directional conviction (|dir_score| tracks the
-    # 8-factor composite). High |score| means one-sided flow → bad for
-    # unlimited-risk short-vol plays.
-    strong_dir = abs(dir_score or 0) >= 4
 
-    # ── IRON CONDOR ─ safer premium-sell default; both wings defined ────────
-    ic = 55.0   # slight head-start: defined risk, neutral bias preferred
-    if iv_rank > 70: ic += 25
-    elif iv_rank > 50: ic += 14
-    elif iv_rank < 30: ic -= 20
-    if direction == "NEUTRAL": ic += 18
-    else: ic -= (15 if strong_dir else 8)
-    if abs(rr_value) < 2: ic += 12
-    if vix > 22: ic -= 6     # even defined risk hurts in chaos
-    rationales["IRON_CONDOR"] = (
-        f"IV Rank {iv_rank:.0f}% ({'elevated – premium selling favoured' if iv_rank > 60 else 'moderate'}). "
-        f"Market {'neutral – ideal for range-bound sell' if direction == 'NEUTRAL' else 'directional – defined wings cap risk'}. "
-        f"RR {rr_value:+.1f} ({'balanced' if abs(rr_value) < 2 else 'skewed'}). Defined-risk both sides."
-    )
-    scores["IRON_CONDOR"] = max(0, min(100, ic))
+def _snap(x: float) -> int:
+    return int(round(x / 50.0) * 50)
 
-    # ── SHORT STRANGLE ─ unlimited risk, safety-penalised ───────────────────
-    st = 42.0   # lower base — unlimited risk demands stronger justification
-    if iv_rank > 75: st += 22
-    elif iv_rank > 60: st += 12
-    elif iv_rank < 40: st -= 22
-    if direction == "NEUTRAL": st += 10
-    else: st -= (18 if strong_dir else 10)   # directional markets → tail risk
-    if vix > 22: st -= 15                     # high-vol regime → blow-up risk
-    elif vix > 18: st -= 6
-    elif vix < 12: st -= 8                    # complacent vol, thin premium
-    if abs(rr_value) > 3: st -= 8             # skew stressed
-    rationales["STRANGLE"] = (
-        f"IV Rank {iv_rank:.0f}% ({'very high – strong premium-sell case' if iv_rank > 70 else 'moderate'}). "
-        f"VIX {vix:.1f} ({'elevated – tail risk heightened' if vix > 18 else 'calm'}). "
-        f"Unlimited risk on both wings — prefer only when vol is rich and flow is neutral."
-    )
-    scores["STRANGLE"] = max(0, min(100, st))
 
-    # ── BULL PUT SPREAD ─ defined-risk directional ──────────────────────────
-    bp = 50.0
-    if direction == "BULLISH": bp += (30 if strong_dir else 22)
-    elif direction == "BEARISH": bp -= 25
-    if rr_value < -1: bp += 10
-    if pcr > 1.1: bp += 10
-    if iv_rank > 40: bp += 10
-    if vix > 25: bp -= 6
-    rationales["BULL_PUT_SPREAD"] = (
-        f"8-factor signal: {direction} (score {dir_score:+.1f}). "
-        f"PCR {pcr:.2f} ({'supports bullish bias' if pcr > 1.0 else 'no strong support'}). "
-        f"RR {rr_value:+.1f}. Defined risk — max loss capped at spread width."
-    )
-    scores["BULL_PUT_SPREAD"] = max(0, min(100, bp))
+def _vol_regime(iv_tile: dict) -> str:
+    """Map the dashboard IV tile verdict → HIGH / MID / LOW / VERY_LOW. Falls back
+    to the IV percentile if the verdict is missing."""
+    v = (iv_tile or {}).get("iv_verdict") or ""
+    if "Elevated" in v:           # "Elevated IV" / "Very Elevated IV"
+        return "HIGH"
+    if "Very Low" in v:
+        return "VERY_LOW"
+    if "Low" in v:
+        return "LOW"
+    if "Neutral" in v:
+        return "MID"
+    ivp = (iv_tile or {}).get("iv_percentile")
+    if ivp is None:
+        return "MID"
+    return "HIGH" if ivp >= 60 else ("VERY_LOW" if ivp <= 20 else ("LOW" if ivp <= 40 else "MID"))
 
-    # ── BEAR CALL SPREAD ─ defined-risk directional ─────────────────────────
-    bc = 50.0
-    if direction == "BEARISH": bc += (30 if strong_dir else 22)
-    elif direction == "BULLISH": bc -= 25
-    if rr_value > 1: bc += 10
-    if pcr < 0.9: bc += 10
-    if iv_rank > 40: bc += 10
-    if vix > 25: bc -= 6
-    rationales["BEAR_CALL_SPREAD"] = (
-        f"8-factor signal: {direction} (score {dir_score:+.1f}). "
-        f"PCR {pcr:.2f} ({'heavy call resistance' if pcr < 0.9 else 'neutral'}). "
-        f"RR {rr_value:+.1f}. Defined risk — max loss capped at spread width."
-    )
-    scores["BEAR_CALL_SPREAD"] = max(0, min(100, bc))
 
-    # ── CALENDAR SPREAD ─ defined-risk, long theta curve ────────────────────
-    cs = 50.0
-    if iv_rank < 30: cs += 30
-    elif iv_rank < 45: cs += 15
-    elif iv_rank > 70: cs -= 20
-    if vix < 15: cs += 15
-    if direction == "NEUTRAL": cs += 12
-    elif strong_dir: cs -= 6
-    rationales["CALENDAR_SPREAD"] = (
-        f"IV Rank {iv_rank:.0f}% ({'depressed – buy near, sell far works well' if iv_rank < 30 else 'elevated – calendar spread less attractive'}). "
-        f"VIX {vix:.1f} ({'low-vol environment' if vix < 15 else 'moderate'}). "
-        f"Debit capped — max loss is net premium paid."
-    )
-    scores["CALENDAR_SPREAD"] = max(0, min(100, cs))
+# Vol-fit by (preferred regime, current regime): 1.0 = ideal, lower = mismatch.
+# LOW-pref strategies (debit spreads, calendars) fade at rock-bottom IV — the near
+# leg's premium is too thin and vol is more likely to expand — so VERY_LOW is a poor
+# fit for them, leaving room for the Long Strangle (VERY_LOW-pref) to win there.
+_VOL_FIT = {
+    "HIGH":     {"HIGH": 1.0, "MID": 0.60, "LOW": 0.25, "VERY_LOW": 0.10},
+    "LOW":      {"HIGH": 0.25, "MID": 0.60, "LOW": 1.0, "VERY_LOW": 0.45},
+    "VERY_LOW": {"HIGH": 0.05, "MID": 0.25, "LOW": 0.60, "VERY_LOW": 1.0},
+}
 
-    result = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    return [
-        {
+
+def _default_legs(strategy_type: str, spot: float, support: int, resistance: int,
+                  expiries: list) -> list:
+    """OI-anchored default legs (strikes snapped to the 50-pt grid). Spreads anchor
+    the SHORT strike to the OI support (bull) / resistance (bear) wall; calendars
+    SELL the current expiry and BUY the next (two expiries)."""
+    atm = _snap(spot)
+    wing = 100  # 2 strikes
+    near = str(expiries[0]) if expiries else None
+    far = str(expiries[1]) if expiries and len(expiries) > 1 else None
+    # Keep anchors on the correct, OTM side of spot.
+    sup = _snap(min(support or atm, atm))      # support at/below spot
+    res = _snap(max(resistance or atm, atm))   # resistance at/above spot
+    move = max(100, _snap(spot * 0.02))         # ~1-SD-ish strangle offset
+
+    if strategy_type == "BULL_PUT_SPREAD":
+        return [{"option_type": "PE", "action": "SELL", "strike": sup, "lots": 1},
+                {"option_type": "PE", "action": "BUY",  "strike": sup - wing, "lots": 1}]
+    if strategy_type == "BEAR_CALL_SPREAD":
+        return [{"option_type": "CE", "action": "SELL", "strike": res, "lots": 1},
+                {"option_type": "CE", "action": "BUY",  "strike": res + wing, "lots": 1}]
+    if strategy_type == "BULL_CALL_SPREAD":
+        return [{"option_type": "CE", "action": "BUY",  "strike": atm, "lots": 1},
+                {"option_type": "CE", "action": "SELL", "strike": max(res, atm + wing), "lots": 1}]
+    if strategy_type == "BEAR_PUT_SPREAD":
+        return [{"option_type": "PE", "action": "BUY",  "strike": atm, "lots": 1},
+                {"option_type": "PE", "action": "SELL", "strike": min(sup, atm - wing), "lots": 1}]
+    if strategy_type == "IRON_CONDOR":
+        return [{"option_type": "PE", "action": "SELL", "strike": sup, "lots": 1},
+                {"option_type": "PE", "action": "BUY",  "strike": sup - wing, "lots": 1},
+                {"option_type": "CE", "action": "SELL", "strike": res, "lots": 1},
+                {"option_type": "CE", "action": "BUY",  "strike": res + wing, "lots": 1}]
+    if strategy_type == "SHORT_STRANGLE":
+        return [{"option_type": "PE", "action": "SELL", "strike": atm - move, "lots": 1},
+                {"option_type": "CE", "action": "SELL", "strike": atm + move, "lots": 1}]
+    if strategy_type == "LONG_STRANGLE":
+        return [{"option_type": "PE", "action": "BUY", "strike": atm - move, "lots": 1},
+                {"option_type": "CE", "action": "BUY", "strike": atm + move, "lots": 1}]
+    if strategy_type == "CALENDAR_SPREAD":
+        # SELL current expiry, BUY next expiry — same ATM strike (two expiries).
+        return [{"option_type": "CE", "action": "SELL", "strike": atm, "lots": 1, "expiry": near},
+                {"option_type": "CE", "action": "BUY",  "strike": atm, "lots": 1, "expiry": far}]
+    return []
+
+
+def _market_staleness(iv_tile, fii_dii, oi_totals, rr_value) -> list:
+    """Stale/missing inputs → each applies a flat confidence penalty in scoring so
+    the builder never silently ranks on outdated data."""
+    stale = []
+    if not iv_tile or iv_tile.get("status") != "ok" or (iv_tile.get("data_days") or 0) < 30:
+        stale.append("IV history")
+    if not fii_dii or (fii_dii.get("fii_fut_net") is None and fii_dii.get("fii_cash_net") is None):
+        stale.append("FII/DII flows")
+    if not oi_totals or oi_totals.get("pcr_chg") is None:
+        stale.append("PCR change")
+    if rr_value is None:
+        stale.append("Risk reversal")
+    return stale
+
+
+def _score_strategies(direction, agreement_pct, iv_tile, term_structure,
+                      oi_support, oi_resistance, pcr_chg, rr_value,
+                      spot, expiries, staleness=None):
+    """Rank strategies 0-100 from the DASHBOARD's regime (direction = Market Tone,
+    volatility = IV tile) + OI structure. Five weighted priorities:
+    Directional Agreement(35) · Volatility Fit(25) · OI-Structure Fit(15) ·
+    Defined-Risk Safety(15) · Execution Quality(10). Defined-risk always beats a
+    comparable unlimited-risk pick; stale inputs apply a flat confidence penalty."""
+    staleness = staleness or []
+    regime = _vol_regime(iv_tile)
+    ivp = (iv_tile or {}).get("iv_percentile")
+    iv_trend = (iv_tile or {}).get("iv_5d_change_pct") or 0.0
+    contango = ((term_structure or {}).get("shape") == "Contango")
+    conv = max(0.0, min(1.0, (agreement_pct or 0) / 100.0))   # tone conviction 0..1
+    has_sup, has_res = bool(oi_support), bool(oi_resistance)
+    pcr_chg = pcr_chg or 0.0
+    penalty = 7.0 * len(staleness)        # confidence haircut per stale/missing input
+
+    only_one_expiry = not (expiries and len(expiries) > 1)
+    rr_txt = f"{rr_value:+.1f}" if rr_value is not None else "n/a"
+
+    rows = []
+    for k, m in _STRAT_META.items():
+        bias, vol, risk, kind = m["bias"], m["vol"], m["risk"], m["kind"]
+
+        # 1. Directional agreement (vs dashboard Market Tone)
+        if bias in ("BULLISH", "BEARISH"):
+            if direction == bias:
+                d_fit = 0.55 + 0.45 * conv
+            elif direction == "NEUTRAL":
+                d_fit = 0.40
+            else:                       # opposite the tone → strongly avoid
+                d_fit = 0.05
+        elif bias == "MOVE":            # long strangle — direction-agnostic move play
+            d_fit = 0.55 + 0.25 * conv
+        else:                           # NEUTRAL strategies
+            d_fit = 1.0 if direction == "NEUTRAL" else (1.0 - 0.60 * conv)
+
+        # 2. Volatility fit (vs dashboard IV tile regime)
+        v_fit = _VOL_FIT[vol][regime]
+        if k == "LONG_STRANGLE" and (iv_trend >= 0 or contango):
+            v_fit = min(1.0, v_fit + 0.15)   # expansion expected → buy vol
+
+        # 3. OI-structure fit (clear wall to anchor the short strike)
+        if bias == "BULLISH":
+            o_fit = (1.0 if has_sup else 0.5) + (0.1 if pcr_chg > 0 else 0.0)
+        elif bias == "BEARISH":
+            o_fit = (1.0 if has_res else 0.5) + (0.1 if pcr_chg < 0 else 0.0)
+        elif k in ("IRON_CONDOR", "SHORT_STRANGLE"):
+            o_fit = 1.0 if (has_sup and has_res) else 0.6
+        else:                           # calendar / long strangle — ATM-anchored
+            o_fit = 0.7
+        o_fit = min(1.0, o_fit)
+
+        # 4. Defined-risk safety   5. Execution quality
+        safety = 1.0 if risk == "defined" else 0.30
+        exe = 0.85
+        if k == "CALENDAR_SPREAD" and only_one_expiry:
+            exe = 0.0                   # cannot build a real (2-expiry) calendar now
+
+        score = 35 * d_fit + 25 * v_fit + 15 * o_fit + 15 * safety + 10 * exe - penalty
+        score = max(0.0, min(100.0, score))
+
+        regime_word = {"HIGH": "high IV", "MID": "moderate IV", "LOW": "low IV",
+                       "VERY_LOW": "very low IV"}[regime]
+        rationale = (
+            f"Market Tone {direction.title()} ({int(round(conv*100))}% agree) · {regime_word}"
+            f"{f' (IVP {ivp:.0f})' if ivp is not None else ''}. "
+            + (("Short strike anchored to OI " + ("support" if bias == "BULLISH" else "resistance")
+                + ".") if bias in ("BULLISH", "BEARISH")
+               else ("Both wings at OI support/resistance." if k in ("IRON_CONDOR", "SHORT_STRANGLE")
+                     else ("Buy next / sell current expiry." if k == "CALENDAR_SPREAD"
+                           else "Direction-agnostic move play.")))
+            + (" Defined risk." if risk == "defined" else " Unlimited risk — demoted.")
+            + (f" RR {rr_txt}." if bias in ("BULLISH", "BEARISH") else "")
+        )
+
+        rows.append({
             "strategy_type": k,
-            "confidence_score": round(v, 1),
-            "rationale": rationales[k],
-            "label": {
-                "IRON_CONDOR": "Iron Condor",
-                "STRANGLE": "Short Strangle",
-                "BULL_PUT_SPREAD": "Bull Put Spread",
-                "BEAR_CALL_SPREAD": "Bear Call Spread",
-                "CALENDAR_SPREAD": "Calendar Spread",
-            }.get(k, k),
-        }
-        for k, v in result
-    ]
+            "label": m["label"],
+            "confidence_score": round(score, 1),
+            "risk_type": risk,
+            "rationale": rationale,
+            "legs": _default_legs(k, spot, oi_support, oi_resistance, expiries),
+        })
+
+    rows.sort(key=lambda r: r["confidence_score"], reverse=True)
+    return rows
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -465,12 +552,18 @@ def get_market_analytics(
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Full analytics bar data for the Strategy Builder page."""
+    """Full analytics bar data for the Strategy Builder page.
+
+    Direction comes from the dashboard's Market Tone and volatility from the
+    dashboard's IV tile — the builder does NOT compute its own directional model,
+    so the two pages can never disagree."""
     from market_data import (
-        build_chain, compute_risk_reversal, compute_directional_signal,
+        build_chain, compute_risk_reversal, compute_oi_totals, compute_market_tone,
         compute_tendency, compute_max_pain, days_to_expiry,
         fetch_vix, pick_active_expiry,
     )
+    from routes_market import compute_iv_tile
+    from fii_dii import get_fii_dii
 
     # If the caller didn't pin a specific expiry, default to the *active* one
     # (≥ 2 trading days out).  This makes analytics/tendency/direction read
@@ -535,22 +628,25 @@ def get_market_analytics(
     rr_zscore = _compute_rr_zscore(db, rr_value)
     tendency_data = compute_tendency(rr_value, vix, vix_change_pct, rr_zscore=rr_zscore)
 
-    # 8-factor directional signal
-    dir_signal = compute_directional_signal(chain_df, spot, vix_data, None)
+    # ── DIRECTION = dashboard Market Tone (the heatmap) — single source ──────
+    oi_totals = compute_oi_totals(chain_df)
+    fd = get_fii_dii()
+    tone = compute_market_tone(oi_totals, fd, rr_value)
+    # ── VOLATILITY = dashboard IV tile — single source ──────────────────────
+    iv_tile = compute_iv_tile(db)
+    staleness = _market_staleness(iv_tile, fd, oi_totals, rr_value)
 
     # Max pain
     max_pain = compute_max_pain(chain_df)
 
     # PCR, Vol PCR, GEX (full breakdown)
-    pcr_oi = _compute_pcr(chain_df)
+    pcr_oi = oi_totals.get("pcr")
+    pcr_chg = oi_totals.get("pcr_chg")
     vol_pcr = _compute_vol_pcr(chain_df, spot)
     gex_data = _compute_gex(chain_df, spot)
 
     # OI S/R
     oi_resistance, oi_support = _compute_oi_sr(chain_df)
-
-    # IV rank from DB
-    iv_data = _get_iv_rank_data(db)
 
     # Butterfly from current chain (25-delta)
     butterfly = None
@@ -567,30 +663,34 @@ def get_market_analytics(
         "spot": round(spot, 2),
         "expiry": near_expiry,
         "dte": dte,
-        # IV & Volatility
-        "iv_rank": iv_data["iv_rank"],
-        "iv_percentile": iv_data["iv_percentile"],
+        # ── The 8 consumed dashboard reads (single source of truth) ─────────
+        "verdict": tone.get("label"),               # dashboard Market Tone label
+        "direction": tone.get("tone"),              # BULLISH / BEARISH / NEUTRAL
+        "agreement_pct": tone.get("agree_pct"),     # "NN% of weight agrees"
+        "oi_support": oi_support,
+        "oi_resistance": oi_resistance,
+        "pcr_chg": pcr_chg,
+        "rr_value": rr_value,
+        "iv_percentile": iv_tile.get("iv_percentile"),
+        "iv_5d_change_pct": iv_tile.get("iv_5d_change_pct"),
+        "term_structure": term_structure,
+        "staleness": staleness,
+        # ── Supporting info tiles (display only; not a second direction model) ─
+        "iv_rank": iv_tile.get("iv_rank"),
+        "iv_score": iv_tile.get("iv_score"),
+        "iv_verdict": iv_tile.get("iv_verdict"),
+        "iv_premium": iv_tile.get("iv_premium"),
         "atm_iv": atm_iv,
-        "iv_52wk_high": iv_data.get("iv_52wk_high"),
-        "iv_52wk_low": iv_data.get("iv_52wk_low"),
-        "iv_mean": iv_data.get("iv_mean"),
+        "iv_52wk_high": iv_tile.get("iv_52wk_high"),
+        "iv_52wk_low": iv_tile.get("iv_52wk_low"),
+        "iv_mean": iv_tile.get("iv_mean"),
         "iv_skew": iv_skew,
         "butterfly": butterfly,
-        "term_structure": term_structure,
         "straddle_price": straddle_price,
         "implied_move_pct": implied_move_pct,
-        # Market Structure
-        "rr_value": rr_value,
         "rr_verdict": rr.get("verdict"),
         "rr_zscore": rr_zscore,
-        "direction": dir_signal.get("direction"),
-        "direction_score": dir_signal.get("score"),
-        "factors_agree": dir_signal.get("factors_agree"),
-        "bullish_count": dir_signal.get("bullish_count"),
-        "bearish_count": dir_signal.get("bearish_count"),
-        "conviction": dir_signal.get("conviction"),
-        "factor_details": dir_signal.get("factor_details", []),
-        "tendency": tendency_data.get("tendency"),   # direction only: "Flat" / "Bearish Skew" / "Bullish Skew"
+        "tendency": tendency_data.get("tendency"),
         "tendency_confidence": (
             "Strong"   if tendency_data.get("confidence", 0) >= 0.7
             else "Moderate" if tendency_data.get("confidence", 0) >= 0.4
@@ -600,7 +700,6 @@ def get_market_analytics(
         "pcr_oi": pcr_oi,
         "vol_pcr": vol_pcr,
         "max_pain": max_pain,
-        # GEX: full breakdown
         "gex": gex_data["total_gex"],
         "gex_regime": gex_data["regime"],
         "gex_regime_desc": gex_data["regime_desc"],
@@ -609,16 +708,9 @@ def get_market_analytics(
         "gex_top_negative": gex_data["top_negative"],
         "vix": vix,
         "vix_change_pct": vix_change_pct,
-        "oi_resistance": oi_resistance,
-        "oi_support": oi_support,
-        "data_days": iv_data["data_days"],
-        "low_data_warning": iv_data["data_days"] < 30,
+        "data_days": iv_tile.get("data_days"),
+        "low_data_warning": (iv_tile.get("data_days") or 0) < 30,
     }
-    # Compute the centralized verdict from the dict we just built so the
-    # scoring sees identical values to what the UI sees.  Both the dashboard
-    # and the strategy builder read this field; client-side scoring has been
-    # removed from both pages.
-    response["verdict"] = compute_market_verdict(response)
     return response
 
 
@@ -628,34 +720,46 @@ def get_strategy_rankings(
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Rank 5 strategy types by confidence score for current market conditions."""
-    from market_data import (
-        build_chain, compute_risk_reversal, compute_directional_signal,
-        fetch_vix,
-    )
+    """Rank strategies for the current regime — DIRECTION from the dashboard's
+    Market Tone, VOLATILITY from the dashboard's IV tile, STRUCTURE from OI. No
+    independent directional model is computed here."""
+    from market_data import build_chain, compute_risk_reversal, compute_oi_totals, compute_market_tone
+    from routes_market import compute_iv_tile
+    from fii_dii import get_fii_dii
 
     try:
         chain_df, expiries, spot = build_chain("NIFTY", expiry)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chain fetch failed: {e}")
 
-    vix_data = fetch_vix()
-    vix = vix_data["last"] if vix_data else 0.0
-
     rr = compute_risk_reversal(chain_df)
-    dir_signal = compute_directional_signal(chain_df, spot, vix_data, None)
-    iv_data = _get_iv_rank_data(db)
-    pcr = _compute_pcr(chain_df)
+    rr_value = rr.get("rr_value")
+    oi_totals = compute_oi_totals(chain_df)
+    fd = get_fii_dii()
+    tone = compute_market_tone(oi_totals, fd, rr_value)          # ← single source of direction
+    iv_tile = compute_iv_tile(db)                                 # ← single source of volatility
+    oi_resistance, oi_support = _compute_oi_sr(chain_df)
 
+    staleness = _market_staleness(iv_tile, fd, oi_totals, rr_value)
     rankings = _score_strategies(
-        iv_rank=iv_data["iv_rank"],
-        direction=dir_signal.get("direction", "NEUTRAL"),
-        dir_score=dir_signal.get("score", 0),
-        rr_value=rr.get("rr_value", 0),
-        pcr=pcr,
-        vix=vix,
+        direction=tone.get("tone", "NEUTRAL"),
+        agreement_pct=tone.get("agree_pct", 0),
+        iv_tile=iv_tile,
+        term_structure=None,            # iv_5d_change covers the expansion check here
+        oi_support=oi_support,
+        oi_resistance=oi_resistance,
+        pcr_chg=oi_totals.get("pcr_chg"),
+        rr_value=rr_value,
+        spot=spot,
+        expiries=expiries,
+        staleness=staleness,
     )
-    return {"rankings": rankings, "spot": round(spot, 2), "vix": vix}
+    return {
+        "rankings": rankings, "spot": round(spot, 2),
+        "verdict": tone.get("label"), "direction": tone.get("tone"),
+        "agreement_pct": tone.get("agree_pct"),
+        "staleness": staleness,
+    }
 
 
 @router.post("/")
@@ -664,13 +768,29 @@ def create_strategy(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Create a multi-leg strategy and add all legs as Trade records."""
+    """Create a multi-leg strategy and add all legs as Trade records.
+
+    Each leg uses its own expiry when given (calendars span two expiries) — the
+    Trade row stores the per-leg expiry, so the long/short legs land on the correct
+    expiries. The Strategy.expiry_date is the near (request) expiry."""
     from market_data import build_chain, greeks, time_to_expiry
 
-    try:
-        chain_df, _, spot = build_chain("NIFTY", req.expiry_date)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chain fetch failed: {e}")
+    # Calendars must span two expiries.
+    leg_exps = [(leg.expiry or req.expiry_date) for leg in req.legs]
+    if req.strategy_type.upper().startswith("CALENDAR") and len(set(leg_exps)) < 2:
+        raise HTTPException(status_code=400,
+                            detail="Calendar spread requires two expiries (sell current, buy next).")
+
+    # One chain per distinct leg expiry.
+    chains, spot = {}, None
+    for e in sorted(set(leg_exps), key=lambda x: time_to_expiry(x)):
+        try:
+            cdf, _, sp = build_chain("NIFTY", e)
+        except Exception as ex:
+            raise HTTPException(status_code=500, detail=f"Chain fetch failed for {e}: {ex}")
+        chains[e] = cdf
+        if spot is None:
+            spot = sp
 
     name = req.name or f"{req.strategy_type.replace('_', ' ').title()} – {req.expiry_date[:6]}"
     strategy = Strategy(
@@ -684,15 +804,16 @@ def create_strategy(
     db.flush()  # get strategy.id
 
     now = datetime.now(_IST).replace(tzinfo=None)
-    T = time_to_expiry(req.expiry_date)
     atm_strike = round(spot / 50) * 50
-    ce_atm = chain_df[(chain_df["Strike"] == atm_strike) & (chain_df["Type"] == "CE")]
-    atm_iv_frac = float(ce_atm["IV"].iloc[0]) / 100 if not ce_atm.empty else 0.15
 
     created_trades = []
-    for leg in req.legs:
+    for leg, e in zip(req.legs, leg_exps):
         opt_type = leg.option_type
-        row = chain_df[(chain_df["Strike"] == leg.strike) & (chain_df["Type"] == opt_type)]
+        cdf = chains[e]
+        T = time_to_expiry(e)
+        ce_atm = cdf[(cdf["Strike"] == atm_strike) & (cdf["Type"] == "CE")]
+        atm_iv_frac = float(ce_atm["IV"].iloc[0]) / 100 if not ce_atm.empty else 0.15
+        row = cdf[(cdf["Strike"] == leg.strike) & (cdf["Type"] == opt_type)]
         ltp = float(row["LTP"].iloc[0]) if not row.empty else 0.0
         iv_frac = float(row["IV"].iloc[0]) / 100 if not row.empty else atm_iv_frac
         leg_greeks = greeks(spot, leg.strike, T or 0.001, RISK_FREE_RATE, iv_frac, opt_type)
@@ -702,7 +823,7 @@ def create_strategy(
             user_id=user.id,
             trade_type=trade_type,
             strike=leg.strike,
-            expiry_date=req.expiry_date,
+            expiry_date=e,                      # per-leg expiry
             entry_premium=round(ltp, 2),
             entry_iv=round(iv_frac * 100, 2),
             entry_delta=round(leg_greeks["delta"], 4),
@@ -712,7 +833,7 @@ def create_strategy(
             entry_date=now,
         )
         db.add(trade)
-        created_trades.append({"strike": leg.strike, "type": trade_type, "ltp": ltp})
+        created_trades.append({"strike": leg.strike, "type": trade_type, "ltp": ltp, "expiry": e})
 
     db.commit()
     db.refresh(strategy)
@@ -966,11 +1087,13 @@ class PayoffPreviewLeg(BaseModel):
     action: str        # "BUY" or "SELL"
     strike: int
     lots: int = 1
+    expiry: Optional[str] = None   # per-leg expiry (calendars); falls back to request expiry
 
 
 class PayoffPreviewRequest(BaseModel):
     expiry: str
     legs: list[PayoffPreviewLeg]
+    strategy_type: Optional[str] = None   # used to validate calendars span two expiries
 
 
 @router.post("/payoff-preview")
@@ -982,77 +1105,78 @@ def payoff_preview(req: PayoffPreviewRequest, _=Depends(get_current_user)):
     preview, this folds in actual mid-quotes so max profit / max loss / break-
     evens reflect the real net premium credit or debit.
     """
-    from market_data import build_chain
+    from market_data import build_chain, black76_price, time_to_expiry
 
     if not req.legs:
         raise HTTPException(status_code=400, detail="At least one leg required.")
 
-    try:
-        chain_df, _, spot = build_chain("NIFTY", req.expiry)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chain fetch failed: {e}")
+    # Each leg's expiry defaults to the request expiry; the payoff is evaluated at
+    # the NEAR (earliest) expiry — for a calendar that's when the short leg settles.
+    leg_exps = [(leg.expiry or req.expiry) for leg in req.legs]
+    distinct_exps = sorted(set(leg_exps), key=lambda e: time_to_expiry(e))
+    near_expiry = distinct_exps[0]
 
-    # Resolve LTP for each leg from the live chain
+    # A calendar MUST span two expiries (SELL current, BUY next) — never one.
+    if (req.strategy_type or "").upper().startswith("CALENDAR") and len(distinct_exps) < 2:
+        raise HTTPException(status_code=400,
+                            detail="Calendar spread requires two expiries (sell current, buy next).")
+
+    # One chain per distinct expiry; spot from the near chain.
+    chains, spot = {}, None
+    for e in distinct_exps:
+        try:
+            cdf, _, sp = build_chain("NIFTY", e)
+        except Exception as ex:
+            raise HTTPException(status_code=500, detail=f"Chain fetch failed for {e}: {ex}")
+        chains[e] = cdf
+        if spot is None:
+            spot = sp
+    T_near = time_to_expiry(near_expiry)
+
     leg_records = []
     net_premium = 0.0          # ₹ across all legs (positive = credit received)
-    portfolio_theta = 0.0      # ₹/day at portfolio level — sum across legs,
-                               # short legs flip sign so the trader-PoV theta
-                               # for sellers reads positive (collection).
-    margin_estimate = 0.0      # SPAN+exposure approximation (Batch C.3)
-    for leg in req.legs:
-        row = chain_df[
-            (chain_df["Strike"] == leg.strike) & (chain_df["Type"] == leg.option_type)
-        ]
+    portfolio_theta = 0.0      # ₹/day at portfolio level (short legs flip sign)
+    margin_estimate = 0.0      # SPAN+exposure approximation
+    for leg, e in zip(req.legs, leg_exps):
+        cdf = chains[e]
+        row = cdf[(cdf["Strike"] == leg.strike) & (cdf["Type"] == leg.option_type)]
         if row.empty:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Strike {leg.strike}{leg.option_type} not found in chain for {req.expiry}.",
-            )
+            raise HTTPException(status_code=400,
+                                detail=f"Strike {leg.strike}{leg.option_type} not found for {e}.")
         ltp = float(row["LTP"].iloc[0])
+        iv = float(row["IV"].iloc[0]) if "IV" in row.columns else 0.0
         qty = leg.lots * LOT_SIZE
         is_sell = leg.action.upper() == "SELL"
-        sign = +1 if is_sell else -1
-        net_premium += sign * ltp * qty
-
-        # Theta per day at trader-PoV: chain.theta is per-share per-day in ₹
-        # (Black-Scholes / 365). Long legs carry the chain sign; short legs
-        # flip — sellers GAIN as options decay.
-        leg_theta_share = float(row.get("theta", 0) or 0)
+        net_premium += (+1 if is_sell else -1) * ltp * qty
+        leg_theta_share = float(row["theta"].iloc[0]) if "theta" in row.columns else 0.0
         portfolio_theta += leg_theta_share * qty * (-1 if is_sell else +1)
-
-        # Margin block per leg (same approximation used in /api/trades/
-        # margin-summary so the figures agree across pages):
-        #   short leg → 12% of strike notional
-        #   long  leg → 0 (premium paid IS the deployed capital)
         if is_sell:
             margin_estimate += 0.12 * float(leg.strike) * qty
-
         leg_records.append({
-            "option_type": leg.option_type,
-            "action": leg.action.upper(),
-            "strike": leg.strike,
-            "lots": leg.lots,
-            "qty": qty,
-            "ltp": round(ltp, 2),
+            "option_type": leg.option_type, "action": leg.action.upper(),
+            "strike": leg.strike, "lots": leg.lots, "qty": qty,
+            "ltp": round(ltp, 2), "expiry": e, "iv": round(iv, 2),
+            "is_far": time_to_expiry(e) > T_near + 1e-9,
         })
 
-    # Build a wide spot range so flat regions of the curve are visible.
-    # ±25% of spot caps strangle/IC wings; 100-pt steps keep payload light.
+    # Curve at the NEAR expiry. Near-expiry legs settle to intrinsic; FAR-expiry
+    # legs (the long side of a calendar) still hold time value → priced via
+    # Black-76 at the residual time, so the calendar shows its real tent shape.
     span = max(800, int(spot * 0.10))
-    lo = int(spot) - span
-    hi = int(spot) + span
-    step = 50
-
+    lo, hi, step = int(spot) - span, int(spot) + span, 50
     curve = []
     for s in range(lo, hi + step, step):
         pnl = net_premium
         for leg in leg_records:
-            intrinsic = (
-                max(s - leg["strike"], 0) if leg["option_type"] == "CE"
-                else max(leg["strike"] - s, 0)
-            )
-            sign = -1 if leg["action"] == "SELL" else +1
-            pnl += sign * intrinsic * leg["qty"]
+            sgn = -1 if leg["action"] == "SELL" else +1
+            if leg["is_far"]:
+                rem = max(time_to_expiry(leg["expiry"]) - T_near, 1.0 / 525600)
+                val = black76_price(float(s), leg["strike"], rem, RISK_FREE_RATE,
+                                    max(leg["iv"], 1.0) / 100.0, leg["option_type"])
+            else:
+                val = (max(s - leg["strike"], 0) if leg["option_type"] == "CE"
+                       else max(leg["strike"] - s, 0))
+            pnl += sgn * val * leg["qty"]
         curve.append({"spot": s, "pnl": round(pnl, 2)})
 
     pnls = [p["pnl"] for p in curve]
@@ -1083,7 +1207,8 @@ def payoff_preview(req: PayoffPreviewRequest, _=Depends(get_current_user)):
 
     return {
         "spot": round(spot, 2),
-        "expiry": req.expiry,
+        "expiry": near_expiry,
+        "expiries": distinct_exps,
         "net_premium": round(net_premium, 2),
         "max_profit": round(max_profit, 2),
         "max_loss": round(max_loss, 2),

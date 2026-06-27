@@ -1,5 +1,5 @@
 /**
- * NiftyEdge — API client & Auth utilities
+ * Stratovex — API client & Auth utilities
  */
 
 const API = {
@@ -107,23 +107,53 @@ const API = {
         return this.fetch(`/api/market/sr-levels${q}`);
     },
 
-    async getOptionChain(expiry) {
-        const q = expiry ? `?expiry=${encodeURIComponent(expiry)}` : '';
-        return this.fetch(`/api/market/option-chain${q}`);
+    async getOptionChain(expiry, symbol) {
+        let q = [];
+        if (expiry) q.push(`expiry=${encodeURIComponent(expiry)}`);
+        if (symbol) q.push(`symbol=${encodeURIComponent(symbol)}`);
+        const qs = q.length ? '?' + q.join('&') : '';
+        return this.fetch(`/api/market/option-chain${qs}`);
     },
 
-    async strikeLookup(strike, optionType, expiry) {
+    async strikeLookup(strike, optionType, expiry, symbol) {
         let q = `?strike=${strike}&option_type=${optionType}`;
         if (expiry) q += `&expiry=${encodeURIComponent(expiry)}`;
+        if (symbol) q += `&symbol=${encodeURIComponent(symbol)}`;
         return this.fetch(`/api/market/strike-lookup${q}`);
     },
 
-    async getExpiries() {
-        return this.fetch('/api/market/expiries');
+    async getExpiries(symbol) {
+        const q = symbol ? `?symbol=${encodeURIComponent(symbol)}` : '';
+        return this.fetch(`/api/market/expiries${q}`);
     },
 
     async computeForExpiry(expiry, vixOffset = 50) {
         return this.fetch(`/api/market/compute-for-expiry?expiry=${encodeURIComponent(expiry)}&vix_offset_pct=${vixOffset}`);
+    },
+
+    async computeForSymbol(symbol, expiry) {
+        let q = `?symbol=${encodeURIComponent(symbol)}`;
+        if (expiry) q += `&expiry=${encodeURIComponent(expiry)}`;
+        return this.fetch(`/api/market/compute-for-symbol${q}`);
+    },
+
+    // ── Stock-options screener ────────────────────────────────────────
+    async getStockScreener(params = {}) {
+        const q = new URLSearchParams(params).toString();
+        return this.fetch(`/api/stocks/screener${q ? '?' + q : ''}`);
+    },
+
+    async getFnoList() {
+        return this.fetch('/api/stocks/fno-list');
+    },
+
+    async getMostActive(limit = 8) {
+        return this.fetch(`/api/stocks/most-active?limit=${limit}`);
+    },
+
+    async getStockSuggestion(symbol, side, params = {}) {
+        const q = new URLSearchParams({ symbol, side, ...params }).toString();
+        return this.fetch(`/api/stocks/suggest?${q}`);
     },
 
     // ── Trade endpoints ───────────────────────────────────────────────
@@ -189,6 +219,10 @@ const API = {
 
     async getRollScenarios(tradeId) {
         return this.fetch(`/api/trades/${tradeId}/roll-scenarios`);
+    },
+
+    async getHedgeSuggestions(tradeId) {
+        return this.fetch(`/api/trades/${tradeId}/hedge-suggestions`);
     },
 
     async executeRoll(tradeId, body) {

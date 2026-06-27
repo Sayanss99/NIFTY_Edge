@@ -90,6 +90,8 @@ class AddTradeRequest(BaseModel):
     entry_iv: float = 0.0
     entry_delta: float = 0.0
     parent_trade_id: int | None = None
+    symbol: str = "NIFTY"             # underlying (NIFTY index or an F&O stock)
+    lot_size_override: int | None = None  # per-symbol lot size for stock options
     # Daily-loss circuit-breaker: when the user's realised loss for today
     # exceeds `max_daily_loss_inr`, POST /api/trades/ refuses to write the
     # row and returns `{requires_override: true, ...}` instead.  Re-posting
@@ -133,6 +135,7 @@ def list_trades(
     for t in trades:
         trade_dict = {
             "id": t.id,
+            "symbol": t.symbol or "NIFTY",
             "trade_type": t.trade_type,
             "instrument_type": t.instrument_type or "OPT",
             "lot_size_override": t.lot_size_override,
@@ -154,6 +157,7 @@ def list_trades(
         for h in t.hedges:
             trade_dict["hedges"].append({
                 "id": h.id,
+                "symbol": h.symbol or "NIFTY",
                 "trade_type": h.trade_type,
                 "instrument_type": h.instrument_type or "OPT",
                 "lot_size_override": h.lot_size_override,
@@ -213,8 +217,20 @@ def add_trade(
                 ),
             }
 
+    # Stock options carry their symbol + the symbol's lot size; NIFTY keeps the
+    # defaults so the existing flow is unchanged.
+    sym = (req.symbol or "NIFTY").upper()
+    lot_override = req.lot_size_override
+    if sym != "NIFTY" and not lot_override:
+        try:
+            from market_data import get_lot_size
+            lot_override = get_lot_size(sym)
+        except Exception:
+            lot_override = None
+
     trade = Trade(
         user_id=user.id,
+        symbol=sym,
         trade_type=req.trade_type,
         strike=req.strike,
         expiry_date=req.expiry_date,
@@ -223,6 +239,7 @@ def add_trade(
         entry_delta=req.entry_delta,
         quantity=req.quantity,
         parent_trade_id=req.parent_trade_id,
+        lot_size_override=lot_override,
     )
     db.add(trade)
     db.commit()
@@ -252,9 +269,9 @@ def close_trade(
     if close_qty > trade.quantity:
         raise HTTPException(status_code=400, detail="Close quantity exceeds open quantity")
 
-    # Calculate realized P&L. Futures use their own lot size override
-    # (currently the same 65, but kept overridable in case NSE bumps it).
-    lot = trade.lot_size_override if (trade.instrument_type == "FUT" and trade.lot_size_override) else LOT_SIZE
+    # Calculate realized P&L. Stock options + futures carry a per-symbol lot via
+    # lot_size_override; NIFTY options have no override and use LOT_SIZE.
+    lot = trade.lot_size_override or LOT_SIZE
     is_short_side = trade.trade_type in ("CE_SELL", "PE_SELL", "FUT_SELL")
     if is_short_side:
         pnl_per_lot = (trade.entry_premium - req.exit_price) * lot
@@ -287,7 +304,10 @@ def close_trade(
         trade.quantity -= close_qty
         closed_trade = Trade(
             user_id=user.id,
+            symbol=trade.symbol or "NIFTY",
             trade_type=trade.trade_type,
+            instrument_type=trade.instrument_type or "OPT",
+            lot_size_override=trade.lot_size_override,
             strike=trade.strike,
             expiry_date=trade.expiry_date,
             entry_premium=trade.entry_premium,
@@ -383,7 +403,7 @@ def export_journal_csv(
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Exit Date", "Type", "Strike", "Expiry", "Entry Premium",
+        "Exit Date", "Underlying", "Type", "Strike", "Expiry", "Entry Premium",
         "Exit Price", "Quantity", "Realized P&L", "Entry IV",
         "Entry Delta", "Entry Date", "Duration (days)",
     ])
@@ -394,6 +414,7 @@ def export_journal_csv(
         duration = (exit_d - entry_d).days if entry_d and exit_d else 0
         writer.writerow([
             exit_d.strftime("%Y-%m-%d %H:%M") if exit_d else "",
+            t.symbol or "NIFTY",
             t.trade_type,
             t.strike,
             t.expiry_date,
@@ -431,6 +452,20 @@ def get_risk_scores(
     # Sweep expired trades first — this is the "background cleanup on dashboard load"
     _expire_past_trades(db, user.id)
 
+    # Off-hours: serve the frozen close P&L snapshot and DON'T live-fetch. The
+    # snapshot is the last live computation of this session (rolling during the day,
+    # finalised at close); if none is close-final yet we fall through to a single
+    # catch-up compute below (frozen close data) which is then saved for next time.
+    from snapshots import market_closed, close_snapshot, save_snapshot
+    _closed = market_closed()
+    if _closed:
+        _snap = close_snapshot("positions", user.id)
+        if _snap and _snap.get("payload") is not None:
+            out = dict(_snap["payload"])
+            out["closed_snapshot"] = True
+            out["snapshot_at"] = _snap.get("captured_at")
+            return out
+
     open_trades = db.query(Trade).filter(
         Trade.user_id == user.id,
         Trade.status == TradeStatus.OPEN.value,
@@ -448,20 +483,29 @@ def get_risk_scores(
     vix = snap.india_vix if snap else 0
     vix_chg_pct = snap.vix_change_pct if snap else 0
 
-    # Build a per-expiry chain cache — one NSE call per unique expiry among open trades
-    unique_expiries = {t.expiry_date for t in open_trades if t.expiry_date}
-    chain_by_expiry: dict = {}
-    spot = 0.0
-    for exp in unique_expiries:
+    # Build a per-(symbol, expiry) chain cache — one NSE call per unique pair.
+    # Keyed by symbol so stock-option positions look up their own underlying
+    # rather than the NIFTY chain. Spot is tracked per symbol.
+    unique_keys = {((t.symbol or "NIFTY"), t.expiry_date)
+                   for t in open_trades if t.expiry_date
+                   and t.instrument_type != "FUT" and t.trade_type not in ("FUT_BUY", "FUT_SELL")}
+    chain_by_key: dict = {}
+    spot_by_symbol: dict = {}
+    for sym, exp in unique_keys:
         try:
-            df, _, sp = build_chain("NIFTY", exp)
-            chain_by_expiry[exp] = df
+            df, _, sp = build_chain(sym, exp)
+            chain_by_key[(sym, exp)] = df
             if sp:
-                spot = float(sp)  # spot is the same regardless of expiry
+                spot_by_symbol[sym] = float(sp)
         except Exception:
             pass  # trade will be skipped below if its chain is missing
 
-    if not chain_by_expiry:
+    spot = spot_by_symbol.get("NIFTY", 0.0)  # legacy field for NIFTY callers
+
+    if not chain_by_key and not any(
+        t.instrument_type == "FUT" or t.trade_type in ("FUT_BUY", "FUT_SELL")
+        for t in open_trades
+    ):
         return {"error": "Could not fetch market data", "positions": []}
 
     ce_scores = []
@@ -522,10 +566,13 @@ def get_risk_scores(
             })
             continue
 
+        trade_symbol = trade.symbol or "NIFTY"
         trade_expiry = trade.expiry_date
-        chain_df = chain_by_expiry.get(trade_expiry)
+        chain_df = chain_by_key.get((trade_symbol, trade_expiry))
         if chain_df is None:
-            continue  # chain fetch failed for this expiry — skip rather than use wrong data
+            continue  # chain fetch failed for this (symbol, expiry) — skip
+        sym_spot = spot_by_symbol.get(trade_symbol, spot)
+        lot = trade.lot_size_override or LOT_SIZE
 
         dte = days_to_expiry(trade_expiry) if trade_expiry else 30
         opt_type = "CE" if "CE" in trade.trade_type else "PE"
@@ -546,7 +593,7 @@ def get_risk_scores(
                 current_iv=row["IV"],
                 entry_premium=trade.entry_premium,
                 current_ltp=row["LTP"],
-                current_spot=spot,
+                current_spot=sym_spot,
                 strike=trade.strike,
                 vix_abs=vix,
                 gamma=float(row.get("gamma", 0)),
@@ -560,7 +607,7 @@ def get_risk_scores(
         # gives the trader negative delta/gamma, positive theta — because
         # row.theta is negative for decaying options).
         sign = -1.0 if is_short else 1.0
-        units = trade.quantity * LOT_SIZE
+        units = trade.quantity * lot
         row_gamma = float(row.get("gamma", 0) or 0)
         row_theta = float(row.get("theta", 0) or 0)
         row_vega  = float(row.get("vega",  0) or 0)
@@ -575,6 +622,7 @@ def get_risk_scores(
 
         position_data = {
             "trade_id": trade.id,
+            "symbol": trade_symbol,
             "trade_type": trade.trade_type,
             "strike": trade.strike,
             "current_ltp": row["LTP"],
@@ -587,13 +635,13 @@ def get_risk_scores(
             "position_theta": round(pos_theta, 2),
             "iv_change_pct": round(((row["IV"] - trade.entry_iv) / trade.entry_iv * 100) if trade.entry_iv > 0 else 0, 1),
             "unrealized_pnl": round(
-                (trade.entry_premium - row["LTP"]) * LOT_SIZE * trade.quantity
+                (trade.entry_premium - row["LTP"]) * lot * trade.quantity
                 if is_short
-                else (row["LTP"] - trade.entry_premium) * LOT_SIZE * trade.quantity,
+                else (row["LTP"] - trade.entry_premium) * lot * trade.quantity,
                 2
             ),
             "risk": risk,
-            "max_loss": (None if is_short else round(trade.entry_premium * LOT_SIZE * trade.quantity, 2)),
+            "max_loss": (None if is_short else round(trade.entry_premium * lot * trade.quantity, 2)),
         }
         positions.append(position_data)
 
@@ -616,13 +664,23 @@ def get_risk_scores(
         "vega":  round(pf_vega, 2),        # ₹ per 1% IV change
     }
 
-    return {
+    result = {
         "ce_risk": {"score": ce_risk, "label": _risk_label(ce_risk)} if ce_risk is not None else None,
         "pe_risk": {"score": pe_risk, "label": _risk_label(pe_risk)} if pe_risk is not None else None,
         "positions": positions,
         "portfolio_greeks": portfolio_greeks,
         "spot": spot,
     }
+    # Persist the live computation as this user's rolling P&L snapshot — the last one
+    # before close becomes the off-hours close snapshot (and an off-hours catch-up
+    # run lands here too). Best-effort; never breaks the live response.
+    try:
+        save_snapshot("positions", result, user.id)
+    except Exception:
+        pass
+    if _closed:
+        result = {**result, "closed_snapshot": True}
+    return result
 
 
 def _risk_label(score):
@@ -747,7 +805,8 @@ def _estimate_opt_margin(trade: Trade) -> float:
     """Per-trade margin block (₹) for an open option position."""
     if "BUY" in trade.trade_type:
         return 0.0
-    return SHORT_OPT_MARGIN_PCT * float(trade.strike) * LOT_SIZE * trade.quantity
+    lot = trade.lot_size_override or LOT_SIZE
+    return SHORT_OPT_MARGIN_PCT * float(trade.strike) * lot * trade.quantity
 
 
 @router.get("/margin-summary")
@@ -786,7 +845,7 @@ def get_margin_summary(
             by_instrument["OPT"] += mgn
             by_position.append({"trade_id": t.id, "kind": "OPT", "margin": mgn})
             if "BUY" in t.trade_type:
-                long_premium_deployed += t.entry_premium * LOT_SIZE * t.quantity
+                long_premium_deployed += t.entry_premium * (t.lot_size_override or LOT_SIZE) * t.quantity
 
     used = round(by_instrument["OPT"] + by_instrument["FUT"], 2)
 
@@ -819,6 +878,116 @@ def get_margin_summary(
 router_trades = APIRouter(prefix="/api/trades", tags=["trades-roll"])
 
 
+@router_trades.get("/{trade_id}/hedge-suggestions")
+def get_hedge_suggestions(
+    trade_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return both hedge styles for a risky short position, so the user can
+    choose how to hedge:
+
+      • ``buy_protect``      — the default: buy a protective option in the SAME
+                               expiry (the existing 6-factor hedge engine).
+      • ``sell_next_expiry`` — alternative: sell a further-OTM, low-delta strike
+                               in the NEXT expiry to collect cushion premium.
+    """
+    from market_data import (
+        build_chain, compute_hedge_v2, compute_protective_short_hedge,
+        days_to_expiry,
+    )
+
+    trade = db.query(Trade).filter(
+        Trade.id == trade_id, Trade.user_id == user.id,
+    ).first()
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    if (trade.symbol or "NIFTY") != "NIFTY":
+        raise HTTPException(status_code=400, detail="Hedge suggestions are not available for stock options yet.")
+    if trade.status != TradeStatus.OPEN.value:
+        raise HTTPException(status_code=400, detail=f"Trade is {trade.status}; only OPEN trades can be hedged.")
+    if "SELL" not in trade.trade_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Hedge choices apply to short (SELL) positions. Long options have defined risk — pair into a spread instead.",
+        )
+
+    side = "CE" if "CE" in trade.trade_type else "PE"
+
+    try:
+        chain_df, expiries, spot = build_chain("NIFTY", trade.expiry_date)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Option chain unavailable: {e}")
+    if chain_df is None or chain_df.empty:
+        raise HTTPException(status_code=503, detail="Option chain unavailable right now — try again during market hours.")
+
+    dte = days_to_expiry(trade.expiry_date)
+
+    def _iv_delta(df, strike, opt_type):
+        row = df[(df["Strike"] == strike) & (df["Type"] == opt_type)]
+        if row.empty:
+            return 0.0, 0.0
+        return float(row["IV"].iloc[0]), float(row["delta"].iloc[0])
+
+    # ── Choice 1: buy-protection in the same expiry (existing engine) ──────
+    buy_protect = None
+    try:
+        bp = compute_hedge_v2(
+            side=side, sold_strike=trade.strike, entry_premium=trade.entry_premium,
+            current_spot=spot, chain_df=chain_df, dte=dte, supports=[], resistances=[],
+        )
+        if bp:
+            iv, delta = _iv_delta(chain_df, bp["strike"], side)
+            buy_protect = {
+                **bp, "expiry": trade.expiry_date, "option_type": side,
+                "action": "BUY", "entry_iv": round(iv, 2), "entry_delta": round(delta, 4),
+            }
+    except Exception as e:
+        print(f"[Hedge] buy_protect failed for trade {trade_id}: {e}")
+
+    # ── Choice 2: protective short in the next expiry ─────────────────────
+    next_expiry = None
+    try:
+        cur = datetime.strptime(trade.expiry_date, "%d-%b-%Y").date()
+        future = sorted(
+            (str(e) for e in expiries
+             if datetime.strptime(str(e), "%d-%b-%Y").date() > cur),
+            key=lambda e: datetime.strptime(e, "%d-%b-%Y").date(),
+        )
+        next_expiry = future[0] if future else None
+    except Exception:
+        next_expiry = None
+
+    sell_next_expiry = None
+    if next_expiry:
+        try:
+            nchain, _, _ = build_chain("NIFTY", next_expiry)
+            sn = compute_protective_short_hedge(
+                side=side, sold_strike=trade.strike, current_spot=spot,
+                next_chain_df=nchain, qty_lots=trade.quantity,
+            )
+            if sn:
+                sell_next_expiry = {
+                    **sn, "expiry": next_expiry, "option_type": side,
+                    "action": "SELL", "entry_iv": sn["iv"], "entry_delta": sn["delta"],
+                }
+        except Exception as e:
+            print(f"[Hedge] sell_next_expiry failed for trade {trade_id}: {e}")
+
+    return {
+        "spot": round(spot, 2),
+        "side": side,
+        "position": {
+            "symbol": trade.symbol or "NIFTY",
+            "trade_type": trade.trade_type, "strike": trade.strike,
+            "expiry": trade.expiry_date, "quantity": trade.quantity,
+        },
+        "buy_protect": buy_protect,
+        "sell_next_expiry": sell_next_expiry,
+        "next_expiry": next_expiry,
+    }
+
+
 @router_trades.get("/{trade_id}/roll-scenarios")
 def get_roll_scenarios(
     trade_id: int,
@@ -837,6 +1006,10 @@ def get_roll_scenarios(
     trade = db.query(Trade).filter(Trade.id == trade_id, Trade.user_id == user.id).first()
     if not trade:
         raise HTTPException(status_code=404, detail="Trade not found")
+
+    # Roll/hedge engine is NIFTY-only for now (deferred for stock options).
+    if (trade.symbol or "NIFTY") != "NIFTY":
+        raise HTTPException(status_code=400, detail="Roll/hedge is not available for stock options yet.")
 
     # Guard: roll is meaningless for closed / expired trades.
     if trade.status != TradeStatus.OPEN.value:
@@ -1056,6 +1229,8 @@ def execute_roll(
     trade = db.query(Trade).filter(Trade.id == trade_id, Trade.user_id == user.id).first()
     if not trade:
         raise HTTPException(status_code=404, detail="Trade not found")
+    if (trade.symbol or "NIFTY") != "NIFTY":
+        raise HTTPException(status_code=400, detail="Roll/hedge is not available for stock options yet.")
 
     now = datetime.now(_IST).replace(tzinfo=None)
 

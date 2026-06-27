@@ -124,25 +124,44 @@ async def run_scheduler(ws_manager):
     last_market_status = None
     last_news_fetch_ts = 0.0   # epoch seconds; tracks news independently of market status
     news_interval = NEWS_POLL_CYCLE_MULTIPLIER * FAST_REFRESH_SECONDS  # 6 × 15 = 90s
+    last_screen_ts = 0.0       # stock-options screener prefilter cadence
+    screen_interval = 600.0    # re-run Step1+Step2 prefilter every ~10 min
+    last_active_ts = 0.0       # most-active-by-OI scan cadence
+    active_interval = 300.0    # re-rank most-active stock options every ~5 min
     print("[Scheduler] Starting market data refresh loop...")
 
-    # ── Seed fetch: if DB is empty, do one-time fetch regardless of market hours ──
+    # ── Seed fetch: refresh on startup if the DB has no snapshot OR the latest
+    # one is stale (regardless of market hours).  Without the staleness check the
+    # app would serve a weeks-old snapshot after the backend was down across
+    # sessions — e.g. the dashboard showing a spot from a past expiry instead of
+    # the live last-close NSE value.  NSE serves the last-close chain/spot even
+    # when the market is closed, so a single startup fetch always gives the
+    # correct current figure.
+    SEED_STALE_SECONDS = 120
     try:
         db = SessionLocal()
         try:
-            has_data = db.query(MarketSnapshot).first() is not None
+            latest = db.query(MarketSnapshot).order_by(
+                MarketSnapshot.timestamp.desc()
+            ).first()
         finally:
             db.close()
 
-        if not has_data:
-            print("[Scheduler] No snapshot data in DB — running initial seed fetch...")
+        age = None
+        if latest and latest.timestamp:
+            age = (datetime.utcnow() - latest.timestamp).total_seconds()
+        needs_seed = latest is None or age is None or age > SEED_STALE_SECONDS
+
+        if needs_seed:
+            why = "no snapshot data" if latest is None else f"latest snapshot is stale ({age/60:.0f} min old)"
+            print(f"[Scheduler] {why} — running startup seed fetch...")
             db = SessionLocal()
             try:
                 data = await asyncio.get_event_loop().run_in_executor(
                     None, _fetch_market_data, db, True  # slow_cycle=True to also fetch S/R
                 )
                 if data:
-                    print("[Scheduler] Seed fetch complete — initial data stored")
+                    print(f"[Scheduler] Seed fetch complete — spot={data['snapshot'].get('nifty_spot')}")
                 else:
                     print("[Scheduler] Seed fetch returned no data (NSE may be unreachable)")
             finally:
@@ -169,6 +188,45 @@ async def run_scheduler(ws_manager):
                     print(f"[Scheduler] News fetch error: {e}")
                 finally:
                     db.close()
+
+            # ── Stock-options screener prefilter (Step 1 + Step 2) ─────────
+            # Independent of the NIFTY cycle.  Heavy (multi-timeframe RSI +
+            # DeMark over the F&O universe) so it runs in the executor on a slow
+            # ~10-min cadence and only refreshes cached survivors; Step 3 is
+            # applied on-demand by the /api/stocks/screener endpoint.
+            # While the market is OPEN it runs on its normal cadence (each run also
+            # persists the off-hours snapshot). While CLOSED it does NOT keep
+            # fetching — it runs at most once, to capture the close-final snapshot
+            # (covers the case where the app is started during off-hours).
+            try:
+                from snapshots import close_snapshot as _close_snap
+                _scr_open = is_market_open().get("open", True)
+            except Exception:
+                _scr_open, _close_snap = True, None
+            _scr_due = now_ts - last_screen_ts >= screen_interval
+            _scr_catchup = (not _scr_open) and (_close_snap is None or _close_snap("screener") is None) \
+                and (now_ts - last_screen_ts >= 60)
+            if (_scr_open and _scr_due) or _scr_catchup:
+                last_screen_ts = now_ts
+                try:
+                    from stock_screener import run_prefilter_and_log
+                    asyncio.get_event_loop().run_in_executor(None, run_prefilter_and_log)
+                except Exception as e:
+                    print(f"[Scheduler] Stock screener error: {e}")
+
+            # ── Most-active stock options (ranked by traded volume×lot) ────
+            # Re-scans the highest-lot stocks' live chains every ~5 min so the
+            # ranking tracks the day's volume as it builds (the leader changes
+            # live). Runs 24/7 (before the market-closed gate below) so it shows
+            # the last session when closed. Runs in the executor; the
+            # /api/stocks/most-active endpoint just reads the cache it populates.
+            if now_ts - last_active_ts >= active_interval:
+                last_active_ts = now_ts
+                try:
+                    from stock_screener import refresh_most_active
+                    asyncio.get_event_loop().run_in_executor(None, refresh_most_active)
+                except Exception as e:
+                    print(f"[Scheduler] Most-active error: {e}")
 
             market_status = is_market_open()
 
@@ -468,13 +526,22 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
         compute_risk_reversal, compute_tendency,
         compute_directional_signal, snapshot_oi, compute_max_pain,
         select_trade_strike, pick_active_expiry,
+        compute_oi_totals, compute_market_tone,
     )
 
     try:
-        chain_df, expiries, spot = build_chain("NIFTY")
+        # refresh=True → always scrape fresh for the broadcast, but write-through
+        # to the shared cache so every REST request from every user in the next
+        # ~20s is served from memory instead of re-scraping NSE.
+        chain_df, expiries, spot = build_chain("NIFTY", refresh=True)
         if chain_df.empty:
             print("[Scheduler] Empty chain data")
             return None
+        # Keep the NEAREST-expiry chain for the Call/Put OI monitor: that is the
+        # "current expiry" view NSE/Sensibull show. The dashboard rolls past a
+        # ≤1-day expiry for RR/skew/signal (degenerate near expiry), but aggregate
+        # OI is read on the nearest expiry so our numbers match those sources.
+        oi_chain = chain_df
     except Exception as e:
         print(f"[Scheduler] Chain fetch failed: {e}")
         return None
@@ -493,13 +560,13 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
     # selected expiry so OI/IV/greeks reflect the tradeable series.
     if expiry and expiries and expiry != str(expiries[0]):
         try:
-            chain_df, _exp_list, spot = build_chain("NIFTY", expiry)
+            chain_df, _exp_list, spot = build_chain("NIFTY", expiry, refresh=True)
             if chain_df.empty:
                 print(f"[Scheduler] Empty chain for rolled expiry {expiry}; keeping nearest")
         except Exception as e:
             print(f"[Scheduler] Failed to rebuild chain for {expiry}: {e}")
 
-    vix_data = fetch_vix()
+    vix_data = fetch_vix(refresh=True)
     vix = vix_data["last"] if vix_data else 0
     vix_change = vix_data["change"] if vix_data else 0
     vix_change_pct = vix_data["pChange"] if vix_data else 0
@@ -528,6 +595,21 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
     vix_data_full = vix_data if vix_data else None
     dir_signal = compute_directional_signal(chain_df, spot, vix_data_full, _prev_oi_snapshot)
     _prev_oi_snapshot = snapshot_oi(chain_df, spot)
+
+    # Analysis board: aggregate Call/Put OI (live movement monitor), the daily
+    # provisional FII/DII flows, and the composite tone built from OI + FII/DII +
+    # RR.  FII/DII is cached (~30 min) so this is cheap on every cycle.
+    oi_totals = compute_oi_totals(oi_chain)
+    try:
+        from fii_dii import get_fii_dii
+        fii_dii_data = get_fii_dii()
+    except Exception as e:
+        print(f"[Scheduler] FII/DII fetch failed: {e}")
+        fii_dii_data = {}
+    market_tone = compute_market_tone(
+        oi_totals, fii_dii_data, rr.get("rr_value"),
+        nifty_change_pct=nifty_change_pct,
+    )
 
     # Trade suggestion based on directional signal
     trade_suggestion = None
@@ -585,6 +667,16 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
         "expiry_date": expiry,
         "expiries": expiries,
         "timestamp": now_ist.isoformat(),
+        # Analysis-board metrics
+        "total_call_oi_cr": oi_totals.get("call_oi_cr", 0),
+        "total_put_oi_cr": oi_totals.get("put_oi_cr", 0),
+        "pcr": oi_totals.get("pcr", 0),
+        "pcr_chg": oi_totals.get("pcr_chg"),
+        "oi_verdict": oi_totals.get("verdict", ""),
+        "oi_tone": oi_totals.get("tone", ""),
+        "oi_blurb": oi_totals.get("blurb", ""),
+        "fii_dii": fii_dii_data,
+        "market_tone": market_tone,
     }
 
     result = {
@@ -616,7 +708,12 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
             })
         chain_rows.append(row_data)
 
-    result["option_chain"] = {"rows": chain_rows, "spot": spot}
+    # Tag the broadcast with its expiry so the option-chain page can ignore a
+    # push that doesn't match the expiry the user is currently viewing.  The
+    # scheduler always broadcasts the *active* (nearest tradeable) expiry; a
+    # user looking at a different expiry must not have their table clobbered
+    # with the active-expiry prices (that made the chain look "off" vs NSE).
+    result["option_chain"] = {"rows": chain_rows, "spot": spot, "expiry": expiry}
 
     # S/R levels on slow cycle
     if is_slow_cycle:
@@ -933,23 +1030,29 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
     if not open_trades:
         return None
 
-    # Build a per-expiry chain cache so we look up each trade in its own expiry.
-    # Start with the already-fetched default chain to avoid a redundant NSE call.
-    chain_by_expiry: dict = {default_expiry: chain_df_default}
-    unique_expiries = {
-        t.expiry_date for t in open_trades
-        if t.expiry_date and t.expiry_date != default_expiry
+    # Build a per-(symbol, expiry) chain cache so each trade is looked up in its
+    # own underlying + expiry.  NIFTY's nearest-expiry chain is seeded from the
+    # scheduler's fetch; stock chains (and other expiries) are fetched on demand.
+    chain_by_key: dict = {("NIFTY", default_expiry): chain_df_default}
+    spot_by_symbol: dict = {"NIFTY": spot}
+    unique_keys = {
+        ((t.symbol or "NIFTY"), t.expiry_date) for t in open_trades
+        if t.expiry_date
+        and (t.instrument_type or "OPT") != "FUT"
+        and ((t.symbol or "NIFTY"), t.expiry_date) != ("NIFTY", default_expiry)
     }
-    for exp in unique_expiries:
+    for sym, exp in unique_keys:
         try:
-            df, _, _ = build_chain("NIFTY", exp)
+            df, _, sp = build_chain(sym, exp)
             if df is not None and not df.empty:
-                chain_by_expiry[exp] = df
+                chain_by_key[(sym, exp)] = df
+                if sp:
+                    spot_by_symbol[sym] = float(sp)
             else:
-                chain_by_expiry[exp] = chain_df_default  # fallback
+                chain_by_key[(sym, exp)] = chain_df_default if sym == "NIFTY" else None
         except Exception as e:
-            print(f"[Scheduler] Failed to fetch chain for expiry {exp}: {e}")
-            chain_by_expiry[exp] = chain_df_default  # fallback
+            print(f"[Scheduler] Failed to fetch chain for {sym} {exp}: {e}")
+            chain_by_key[(sym, exp)] = chain_df_default if sym == "NIFTY" else None
 
     # Get S/R levels for hedge engine
     sr_levels = market_data.get("sr_levels")
@@ -965,9 +1068,14 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
     hedge_suggestions = []
 
     for trade in open_trades:
-        # Resolve the chain and DTE for *this trade's* expiry
+        # Resolve the chain, spot, lot and DTE for *this trade's* symbol+expiry.
+        trade_symbol = trade.symbol or "NIFTY"
         trade_expiry = trade.expiry_date or default_expiry
-        chain_df = chain_by_expiry.get(trade_expiry, chain_df_default)
+        chain_df = chain_by_key.get((trade_symbol, trade_expiry))
+        if chain_df is None:
+            chain_df = chain_df_default if trade_symbol == "NIFTY" else None
+        trade_spot = spot_by_symbol.get(trade_symbol, spot)
+        trade_lot = trade.lot_size_override or LOT_SIZE
         trade_dte = days_to_expiry(trade_expiry) if trade_expiry else 30
 
         # Futures hedges live outside the option chain — pull live LTP from
@@ -1019,11 +1127,13 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
             continue
 
         opt_type = "CE" if "CE" in trade.trade_type else "PE"
-        match = chain_df[(chain_df["Strike"] == trade.strike) & (chain_df["Type"] == opt_type)]
+        match = chain_df[(chain_df["Strike"] == trade.strike) & (chain_df["Type"] == opt_type)] \
+            if chain_df is not None and not chain_df.empty else None
 
-        if match.empty:
+        if match is None or match.empty:
             positions.append({
                 "trade_id": trade.id,
+                "symbol": trade_symbol,
                 "trade_type": trade.trade_type,
                 "strike": trade.strike,
                 "current_ltp": None,
@@ -1041,9 +1151,9 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
         current_theta = float(row.get("theta", 0))
 
         if "SELL" in trade.trade_type:
-            unrealized_pnl = round((trade.entry_premium - current_ltp) * LOT_SIZE * trade.quantity, 2)
+            unrealized_pnl = round((trade.entry_premium - current_ltp) * trade_lot * trade.quantity, 2)
         else:
-            unrealized_pnl = round((current_ltp - trade.entry_premium) * LOT_SIZE * trade.quantity, 2)
+            unrealized_pnl = round((current_ltp - trade.entry_premium) * trade_lot * trade.quantity, 2)
 
         iv_change_pct = round(((current_iv - trade.entry_iv) / trade.entry_iv * 100)
                               if trade.entry_iv > 0 else 0, 1)
@@ -1062,7 +1172,7 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
                 current_iv=current_iv,
                 entry_premium=trade.entry_premium,
                 current_ltp=current_ltp,
-                current_spot=spot,
+                current_spot=trade_spot,
                 strike=trade.strike,
                 vix_abs=vix,
                 gamma=current_gamma,
@@ -1075,14 +1185,14 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
             else:
                 pe_risk_scores.append(risk["score"])
 
-            # Compute hedge suggestion when needed (already gated to SHORT above)
-            if risk.get("hedge_required"):
+            # Hedge suggestions are NIFTY-only for now (deferred for stocks).
+            if risk.get("hedge_required") and trade_symbol == "NIFTY":
                 try:
                     hedge = compute_hedge_v2(
                         side=opt_type,
                         sold_strike=trade.strike,
                         entry_premium=trade.entry_premium,
-                        current_spot=spot,
+                        current_spot=trade_spot,
                         chain_df=chain_df,   # ← per-trade chain
                         dte=trade_dte,       # ← per-trade DTE
                         supports=supports,
@@ -1100,12 +1210,14 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
 
         # For long options, max loss is the premium paid (no margin, no assignment).
         max_loss = (
-            round(trade.entry_premium * LOT_SIZE * trade.quantity, 2)
+            round(trade.entry_premium * trade_lot * trade.quantity, 2)
             if not is_short else None
         )
 
         positions.append({
             "trade_id": trade.id,
+            "symbol": trade_symbol,
+            "lot_size": trade_lot,
             "trade_type": trade.trade_type,
             "strike": trade.strike,
             "expiry_date": trade.expiry_date,

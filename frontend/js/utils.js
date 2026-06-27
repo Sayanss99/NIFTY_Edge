@@ -1,11 +1,22 @@
 /**
- * NiftyEdge — Shared UI utilities
+ * Stratovex — Shared UI utilities
  */
 
 // Apply saved theme immediately (before render to prevent flash)
 (function() {
     const theme = localStorage.getItem('niftyedge_theme');
     if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+})();
+
+// Set the Stratovex browser-tab icon (idempotent) — every app page loads
+// utils.js, so this gives them all the brand favicon instead of the default.
+(function() {
+    if (document.querySelector('link[rel="icon"]')) return;
+    const l = document.createElement('link');
+    l.rel = 'icon';
+    l.type = 'image/png';
+    l.href = '/favicon.png';
+    document.head.appendChild(l);
 })();
 
 const Utils = {
@@ -151,17 +162,18 @@ const Utils = {
         const pages = [
             { id: 'dashboard', icon: '◉', label: 'Dashboard', href: '/dashboard' },
             { id: 'option-chain', icon: '⊞', label: 'Option Chain', href: '/option-chain' },
+            { id: 'stock-options', icon: '◪', label: 'Stock Options', href: '/stock-options' },
             { id: 'positions', icon: '◫', label: 'Positions', href: '/positions' },
             { id: 'analytics', icon: '◔', label: 'Analytics', href: '/analytics' },
             { id: 'strategy-builder', icon: '◈', label: 'Strategy', href: '/strategy-builder' },
             { id: 'futures', icon: '⇌', label: 'Futures', href: '/futures' },
             { id: 'journal', icon: '☰', label: 'Journal', href: '/journal' },
-            { id: 'alerts', icon: '⚡', label: 'Alerts', href: '/alerts' },
-            { id: 'news-desk', icon: '📰', label: 'News Desk', href: '/news-desk' },
+            { id: 'alerts', icon: '◭', label: 'Alerts', href: '/alerts' },
+            { id: 'news-desk', icon: '▤', label: 'News Desk', href: '/news-desk' },
         ];
 
         return `
-            <div class="sidebar-logo">N</div>
+            <div class="sidebar-logo">S</div>
             <nav class="sidebar-nav">
                 ${pages.map(p => `
                     <a href="${p.href}" class="nav-item ${p.id === activePage ? 'active' : ''}">
@@ -177,12 +189,13 @@ const Utils = {
     pageConfig: {
         'Dashboard':    { icon: '&#9678;',  color: '#2563EB' },
         'Option Chain': { icon: '&#9638;',  color: '#DC2626' },
+        'Stock Options': { icon: '&#9706;', color: '#F59E0B' },
         'Positions':    { icon: '&#9635;',  color: '#16A34A' },
         'Analytics':    { icon: '&#9685;',  color: '#7C3AED' },
         'Strategy Builder': { icon: '&#9672;', color: '#7C3AED' },
         'Journal':      { icon: '&#9776;',  color: '#6366F1' },
-        'Alerts':       { icon: '&#9889;',  color: '#D97706' },
-        'News Desk':    { icon: '&#128240;', color: '#0891B2' },
+        'Alerts':       { icon: '&#9709;',  color: '#D97706' },
+        'News Desk':    { icon: '&#9636;', color: '#0891B2' },
         'Futures':      { icon: '&#8652;',  color: '#0EA5E9' },
     },
 
@@ -420,6 +433,7 @@ const Utils = {
                             <div class="ne-profile-email" id="ne-pc-email">${user ? (user.email || '') : ''}</div>
                         </div>
                     </div>
+                    <div style="font-size:11px;color:var(--text-muted);padding:0 4px 2px">Multi-symbol: NIFTY index (default) + individual stock options.</div>
                     <div class="ne-profile-divider"></div>
                     <div class="ne-profile-edit-form" onclick="event.stopPropagation()">
                         <label for="ne-pe-name">Display name</label>
@@ -924,9 +938,16 @@ const Utils = {
             {
                 selector: '.metrics-strip',
                 title:    'Live Market Analytics',
-                body:     'Seven real-time NIFTY metrics: spot, VIX, PCR, max pain, and more. These drive all strategy recommendations.',
+                body:     'Real-time NIFTY metrics — spot, VIX, PCR, max pain and more — drive every recommendation. NIFTY is your base lane and the default everywhere.',
                 arrow:    'top',
                 place:    'below',
+            },
+            {
+                selector: 'a[href="/stock-options"]',
+                title:    'Now Multi-Symbol',
+                body:     'Beyond NIFTY, screen & trade individual stock options here. The Dashboard chart, Option Chain, Positions and Analytics all toggle between NIFTY and any stock — NIFTY stays the default.',
+                arrow:    'left',
+                place:    'right',
             },
             {
                 selector: '#notification-bell',

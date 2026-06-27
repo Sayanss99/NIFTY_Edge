@@ -1,5 +1,5 @@
 /**
- * NiftyEdge — WebSocket client for real-time updates
+ * Stratovex — WebSocket client for real-time updates
  */
 
 const WS = {

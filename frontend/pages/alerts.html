@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NiftyEdge — Alerts</title>
+    <title>Stratovex — Alerts</title>
     <link rel="stylesheet" href="/css/styles.css">
     <style>
         .alerts-header {
@@ -219,7 +219,12 @@
                 </select>
             </div>
             <div class="form-group" id="trade-select-group" style="display:none">
-                <label>Position</label>
+                <label>Underlying</label>
+                <input list="alert-symbol-options" id="alert-symbol-search" autocomplete="off"
+                       placeholder="All — type to filter (e.g. RELIANCE / NIFTY)"
+                       oninput="onAlertSymbolFilter()">
+                <datalist id="alert-symbol-options"></datalist>
+                <label style="margin-top:8px">Position</label>
                 <select id="alert-trade-id">
                     <option value="">Select position...</option>
                 </select>
@@ -375,6 +380,10 @@
                 const isOn = a.status === 'ARMED';
                 const statusClass = a.status.toLowerCase();
                 const icon = METRIC_ICONS[a.metric] || '&#9679;';
+                // Underlying: a position alert shows its trade's symbol; market
+                // metrics (spot/VIX/risk/range) are NIFTY-index-wide.
+                const underlying = a.trade_info ? (a.trade_info.symbol || 'NIFTY') : 'NIFTY';
+                const symTag = `<span class="badge badge-neutral" style="font-size:9px;margin-right:4px">${underlying}</span>`;
                 const tradeInfo = a.trade_info
                     ? ` (${a.trade_info.trade_type.replace('_',' ')} ${a.trade_info.strike})`
                     : '';
@@ -387,7 +396,7 @@
                         <div class="alert-icon ${statusClass}">${icon}</div>
                         <div class="alert-body">
                             <div class="alert-title">
-                                ${METRIC_LABELS[a.metric] || a.metric}${tradeInfo}
+                                ${symTag}${METRIC_LABELS[a.metric] || a.metric}${tradeInfo}
                                 ${CONDITION_LABELS[a.condition] || a.condition} ${a.threshold}
                             </div>
                             <div class="alert-detail">
@@ -415,12 +424,13 @@
             container.innerHTML = `
                 <table class="history-table">
                     <thead><tr>
-                        <th>Time</th><th>Metric</th><th>Condition</th><th>Value</th><th>Message</th>
+                        <th>Time</th><th>Underlying</th><th>Metric</th><th>Condition</th><th>Value</th><th>Message</th>
                     </tr></thead>
                     <tbody>
                         ${history.map(h => `
                             <tr>
                                 <td>${h.triggered_at ? new Date(h.triggered_at).toLocaleString('en-IN', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '-'}</td>
+                                <td class="fw-600">${h.symbol || 'NIFTY'}</td>
                                 <td>${METRIC_LABELS[h.metric] || h.metric}</td>
                                 <td>${CONDITION_LABELS[h.condition] || h.condition} ${h.threshold}</td>
                                 <td class="font-mono fw-600">${h.triggered_value}</td>
@@ -515,6 +525,9 @@
         // ── Create modal ──────────────────────────────────────────────
         function openCreateModal() {
             document.getElementById('create-modal').classList.add('open');
+            const ss = document.getElementById('alert-symbol-search');
+            if (ss) ss.value = '';
+            populateTradeSelect();   // reset position list (unfiltered)
             onMetricChange();
         }
 
@@ -531,12 +544,25 @@
             document.getElementById('alert-hint').textContent = METRIC_HINTS[metric] || '';
         }
 
-        function populateTradeSelect() {
+        function populateTradeSelect(filterSym) {
             const sel = document.getElementById('alert-trade-id');
+            const sym = (filterSym || '').trim().toUpperCase();
+            const list = sym ? openTrades.filter(t => (t.symbol || 'NIFTY') === sym) : openTrades;
             sel.innerHTML = '<option value="">Select position...</option>' +
-                openTrades.map(t =>
-                    `<option value="${t.id}">${t.trade_type.replace('_',' ')} ${t.strike} (${t.expiry_date})</option>`
+                list.map(t =>
+                    `<option value="${t.id}">${t.symbol || 'NIFTY'} · ${t.trade_type.replace('_',' ')} ${t.strike} (${t.expiry_date})</option>`
                 ).join('');
+            // Build the underlying autocomplete from the symbols actually traded.
+            const dl = document.getElementById('alert-symbol-options');
+            if (dl) {
+                const syms = [...new Set(openTrades.map(t => t.symbol || 'NIFTY'))].sort();
+                dl.innerHTML = syms.map(s => `<option value="${s}">`).join('');
+            }
+        }
+
+        // Filter the position list as the user types an underlying.
+        function onAlertSymbolFilter() {
+            populateTradeSelect(document.getElementById('alert-symbol-search').value);
         }
 
         async function submitAlert() {
