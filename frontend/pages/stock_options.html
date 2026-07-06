@@ -43,6 +43,9 @@
         #confirmed-list .so-grid { grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); }
         #radar-list .so-grid { grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); }
         .so-grid > * { min-width:0; }
+        /* Section pagination (Picks / Radar) */
+        .so-pager { display:flex; align-items:center; justify-content:center; gap:14px; margin-top:14px; }
+        .so-pager-info { font-size:11.5px; color:var(--text-muted); font-weight:600; }
         .so-card { background:var(--bg-card); border:1px solid var(--border-light);
             border-top:3px solid var(--primary); border-radius:10px; padding:13px;
             box-sizing:border-box; min-width:0; overflow:hidden;
@@ -314,10 +317,12 @@
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
+    <script src="/js/ne-scroll.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Not authenticated');
         document.getElementById('sidebar').innerHTML = Utils.buildSidebar('stock-options');
         document.getElementById('header').innerHTML = Utils.buildHeader('Stock Options');
+        Utils.initHeader();
         // CE/PE colour code: soft-cyan for CE (calls), muted coral for PE (puts).
         const CE_COLOR = '#26C6DA', PE_COLOR = '#F0857A';
         const sideCol = side => side === 'CE' ? CE_COLOR : PE_COLOR;
@@ -426,15 +431,48 @@
             if (el) el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
         }
 
+        // ── Client-side pagination for the two screener sections ──────────
+        // Picks show 8 per page (2 rows), Radar shows 5 per page (1 row). The
+        // full filtered lists are stored so page navigation re-slices without a
+        // re-fetch; the page is clamped (not reset) across auto-refreshes so the
+        // user's position survives a background screen update.
+        const CONF_PAGE_SIZE = 8, RADAR_PAGE_SIZE = 5;
+        let _confList = [], _confPage = 1;
+        let _radarList = [], _radarPage = 1;
+
+        function _pagerBar(page, pages, total, noun, navFn) {
+            if (pages <= 1) return '';
+            return `<div class="so-pager">
+                <button class="btn btn-secondary btn-sm" ${page <= 1 ? 'disabled' : ''} onclick="${navFn}(-1)">← Prev</button>
+                <span class="so-pager-info">Page ${page} of ${pages} · ${total} ${noun}</span>
+                <button class="btn btn-secondary btn-sm" ${page >= pages ? 'disabled' : ''} onclick="${navFn}(1)">Next →</button>
+            </div>`;
+        }
+
         function renderConfirmed(list) {
+            _confList = Array.isArray(list) ? list : [];
+            _confPage = 1;
+            _paintConfirmed();
+        }
+        function confPage(delta) {
+            _confPage += delta;
+            _paintConfirmed();
+        }
+        function _paintConfirmed() {
             const el = document.getElementById('confirmed-list');
+            const list = _confList;
             if (!list || !list.length) {
                 el.innerHTML = '<div class="text-muted" style="padding:16px">No DeMark 9 setups right now — wait for the next screen.</div>';
                 return;
             }
+            const pages = Math.max(1, Math.ceil(list.length / CONF_PAGE_SIZE));
+            if (_confPage > pages) _confPage = pages;
+            if (_confPage < 1) _confPage = 1;
+            const start = (_confPage - 1) * CONF_PAGE_SIZE;
+            const pageItems = list.slice(start, start + CONF_PAGE_SIZE);
             // Clean preview: name + trade, DeMark, safety bar, the Pick + yield.
             // Filter exceptions and the full metrics (RSI/IVP/Δ/OI…) live behind Details.
-            el.innerHTML = '<div class="so-grid">' + list.map((s, i) => {
+            el.innerHTML = '<div class="so-grid">' + pageItems.map((s, i) => {
                 const did = `det-conf-${i}`;
                 return `
                 <div class="so-card so-card-compact">
@@ -459,19 +497,34 @@
                         <div style="font-size:11px;color:var(--text-muted);margin-top:8px">${s.age_days!=null?(s.age_days===0?'Added today':'Added '+s.age_days+'d ago')+' · ':''}Direction — ${esc(s.side_reason)}</div>
                     </div>
                 </div>`;
-            }).join('') + '</div>';
+            }).join('') + '</div>' + _pagerBar(_confPage, pages, list.length, 'picks', 'confPage');
         }
 
         function renderRadar(list) {
+            _radarList = Array.isArray(list) ? list : [];
+            _radarPage = 1;
+            _paintRadar();
+        }
+        function radarPage(delta) {
+            _radarPage += delta;
+            _paintRadar();
+        }
+        function _paintRadar() {
             const el = document.getElementById('radar-list');
+            const list = _radarList;
             if (!list || !list.length) {
                 el.innerHTML = '<div class="text-muted">No DeMark 7-8 setups forming right now.</div>';
                 return;
             }
+            const pages = Math.max(1, Math.ceil(list.length / RADAR_PAGE_SIZE));
+            if (_radarPage > pages) _radarPage = pages;
+            if (_radarPage < 1) _radarPage = 1;
+            const start = (_radarPage - 1) * RADAR_PAGE_SIZE;
+            const pageItems = list.slice(start, start + RADAR_PAGE_SIZE);
             // Radar = a forming DeMark 7-8 on the daily chart. Compact preview (Pick +
             // exceptions); CMP/IVP/RSI etc. live behind the Details toggle.
             el.innerHTML = '<div class="so-grid">' +
-                list.map((r, i) => {
+                pageItems.map((r, i) => {
                     const pref = r.side || r.preferred_side || 'PE';
                     const rsi = r.rsi || {};
                     const did = `det-rad-${i}`;
@@ -495,7 +548,7 @@
                             </div>
                         </div>
                     </div>`;
-                }).join('') + '</div>';
+                }).join('') + '</div>' + _pagerBar(_radarPage, pages, list.length, 'suggestions', 'radarPage');
         }
 
         // ── Sub-page tabs (Screener | Most Active | Track Record) ──────────
@@ -776,11 +829,11 @@
         loadMostActive();
         // Refresh both confirmed + radar picks every 2 min (polling — keeps querying
         // light; the heavy scan runs in the background scheduler, not per refresh).
-        setInterval(applyFilters, 120000);
+        Utils.poll(applyFilters, 120000);
         // Most-active feed refreshes on its own ~1-min cadence.
-        setInterval(loadMostActive, 60000);
+        Utils.poll(loadMostActive, 60000);
         // Track Record re-checks live conditions while its tab is open.
-        setInterval(() => {
+        Utils.poll(() => {
             const h = document.getElementById('tab-history');
             if (h && h.style.display !== 'none') loadHistory();
         }, 60000);

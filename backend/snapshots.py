@@ -17,11 +17,14 @@ Storage is a small JSON file per kind (and per user for positions) under
 import os
 import json
 import threading
+import logging
 from datetime import datetime, timedelta
 
 # Single source of truth for market hours / holidays (no circular import:
 # scheduler imports only database/models/config, never the routes or this module).
 from scheduler import IST, NSE_HOLIDAYS_2026, is_market_open
+
+log = logging.getLogger("niftyedge.snapshots")
 
 _DIR = os.path.join(os.path.dirname(__file__), "_snapshots")
 _lock = threading.Lock()
@@ -86,7 +89,7 @@ def save_snapshot(kind: str, payload, user_id=None) -> None:
             with open(_path(kind, user_id), "w", encoding="utf-8") as f:
                 json.dump(record, f, default=str)
     except Exception as e:
-        print(f"[Snapshot] save {kind} failed: {e}")
+        log.error(f"[Snapshot] save {kind} failed: {e}")
 
 
 def load_snapshot(kind: str, user_id=None):

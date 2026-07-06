@@ -32,13 +32,29 @@ def _today_realized_pnl(db: Session, user_id: int) -> float:
     return total
 
 
+# Per-user sweep guard: expiry status can only change at an IST day boundary,
+# so re-running the sweep on every read endpoint within the same minute is
+# wasted write-path work. Guarded to at most once/minute per user.
+_expire_sweep_last: dict[int, float] = {}
+_EXPIRE_SWEEP_INTERVAL = 60.0
+
+
 def _expire_past_trades(db: Session, user_id: int) -> int:
     """Auto-transition any OPEN trades whose expiry date has passed (IST) to EXPIRED.
 
     This is a lightweight cleanup that runs before position queries so that
     expired options never appear in the "open positions" views.
     Returns the count of trades transitioned.
+
+    Rate-limited to once per minute per user — results can only change at an
+    IST midnight boundary, so the guard never changes observable behavior.
     """
+    import time as _t
+    _now = _t.monotonic()
+    if _now - _expire_sweep_last.get(user_id, 0.0) < _EXPIRE_SWEEP_INTERVAL:
+        return 0
+    _expire_sweep_last[user_id] = _now
+
     today_ist = datetime.now(_IST).date()
 
     open_trades = db.query(Trade).filter(
@@ -78,6 +94,17 @@ def _expire_past_trades(db: Session, user_id: int) -> int:
 
     return count
 
+def _journal_cutoff(user: User):
+    """Return the user's journal-clear watermark, or None.
+
+    Closed trades with exit_date at/before this timestamp are hidden from the
+    Journal DISPLAY only (list with journal_view, journal summary, journal
+    export). Every other consumer — analytics, signals, risk — still sees the
+    full trade history, so clearing the journal never affects analysis.
+    """
+    return getattr(user, "journal_cleared_at", None)
+
+
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
 
@@ -108,10 +135,16 @@ class CloseTradeRequest(BaseModel):
 def list_trades(
     status: str = Query(None),
     expiry: str = Query(None),
+    journal_view: bool = Query(False),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List user's trades, optionally filtered by status and expiry."""
+    """List user's trades, optionally filtered by status and expiry.
+
+    journal_view=True applies the per-user "Clear journal" watermark so cleared
+    trades are hidden from the Journal page. It has no effect on any other
+    caller (positions, dashboard) which never pass it.
+    """
     # Sweep expired trades into EXPIRED status before returning the list
     # so the positions page never shows stale open positions.
     _expire_past_trades(db, user.id)
@@ -128,6 +161,11 @@ def list_trades(
             query = query.filter(Trade.status == status)
     if expiry:
         query = query.filter(Trade.expiry_date == expiry)
+    if journal_view:
+        cutoff = _journal_cutoff(user)
+        if cutoff:
+            # Hide trades closed at/before the clear watermark from the journal.
+            query = query.filter(Trade.exit_date != None, Trade.exit_date > cutoff)  # noqa: E711
 
     trades = query.order_by(Trade.entry_date.desc()).all()
 
@@ -337,11 +375,15 @@ def journal_summary(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Aggregate P&L stats for closed trades."""
-    closed = db.query(Trade).filter(
+    """Aggregate P&L stats for closed trades (respects the journal-clear watermark)."""
+    q = db.query(Trade).filter(
         Trade.user_id == user.id,
         Trade.status == TradeStatus.CLOSED.value,
-    ).all()
+    )
+    cutoff = _journal_cutoff(user)
+    if cutoff:
+        q = q.filter(Trade.exit_date != None, Trade.exit_date > cutoff)  # noqa: E711
+    closed = q.all()
 
     if not closed:
         return {
@@ -391,14 +433,18 @@ def export_journal_csv(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Export closed trades as CSV download."""
+    """Export closed trades as CSV download (respects the journal-clear watermark)."""
     from fastapi.responses import StreamingResponse
     import io, csv
 
-    closed = db.query(Trade).filter(
+    q = db.query(Trade).filter(
         Trade.user_id == user.id,
         Trade.status == TradeStatus.CLOSED.value,
-    ).order_by(Trade.exit_date.desc()).all()
+    )
+    cutoff = _journal_cutoff(user)
+    if cutoff:
+        q = q.filter(Trade.exit_date != None, Trade.exit_date > cutoff)  # noqa: E711
+    closed = q.order_by(Trade.exit_date.desc()).all()
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -434,6 +480,27 @@ def export_journal_csv(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=niftyedge_trades.csv"},
     )
+
+
+@router.post("/journal/clear")
+def clear_journal(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Clear the Journal DISPLAY by setting a watermark on the user.
+
+    This does NOT delete anything: every closed trade stays in the database and
+    remains visible to analytics, signals, risk, and any historical analysis.
+    Only the Journal page (list with journal_view, journal summary/export) hides
+    trades closed at/before this moment. Booking new trades or closing open ones
+    after clearing will show them in the journal again.
+    """
+    u = db.query(User).filter(User.id == user.id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    u.journal_cleared_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True, "cleared_at": u.journal_cleared_at.isoformat()}
 
 
 @router.get("/risk")

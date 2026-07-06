@@ -42,6 +42,11 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     settings = Column(JSON, default=dict)
+    # Watermark for the "Clear journal" action: closed trades with exit_date
+    # at/before this timestamp are hidden from the Journal DISPLAY only.
+    # Analytics / signals / exports for historical analysis still see every
+    # trade — nothing is deleted. NULL = journal never cleared.
+    journal_cleared_at = Column(DateTime, nullable=True)
 
     trades = relationship("Trade", back_populates="user")
     alerts = relationship("AlertRule", back_populates="user")
@@ -115,26 +120,6 @@ class MarketSnapshot(Base):
     directional_direction = Column(String, nullable=True)  # BULLISH, BEARISH, NEUTRAL
     directional_score = Column(Float, nullable=True)
     directional_factors_agree = Column(Integer, nullable=True)
-
-
-# ── Strike Data (per strike per snapshot) ────────────────────────────────────
-
-class StrikeData(Base):
-    __tablename__ = "strike_data"
-
-    id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    strike = Column(Integer, nullable=False, index=True)
-    expiry_date = Column(String, nullable=False)
-    option_type = Column(String, nullable=False)  # CE or PE
-    ltp = Column(Float, nullable=True)
-    iv = Column(Float, nullable=True)
-    delta = Column(Float, nullable=True)
-    gamma = Column(Float, nullable=True)
-    theta = Column(Float, nullable=True)
-    vega = Column(Float, nullable=True)
-    oi = Column(Float, nullable=True)
-    volume = Column(Float, nullable=True)
 
 
 # ── Support/Resistance Levels ────────────────────────────────────────────────

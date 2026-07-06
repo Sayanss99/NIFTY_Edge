@@ -140,6 +140,102 @@ const Utils = {
         }, 3500);
     },
 
+    /** Alias — some pages call showToast() */
+    showToast(message, type = 'info') {
+        return this.toast(message, type);
+    },
+
+    /**
+     * Render a standard error state into a container.
+     * Pass retryFn to show a Retry button. Returns the container.
+     */
+    errorState(container, msg = 'Failed to load data', retryFn = null) {
+        const el = typeof container === 'string' ? document.getElementById(container) : container;
+        if (!el) return null;
+        const btnId = 'err-retry-' + Math.random().toString(36).slice(2, 8);
+        el.innerHTML = `
+            <div class="empty-state" role="alert">
+                <div class="empty-state-icon" aria-hidden="true">⚠</div>
+                <div style="color:var(--red);font-weight:600;margin-bottom:4px">${this.escapeHtml(String(msg))}</div>
+                ${retryFn ? `<button id="${btnId}" class="btn btn-sm btn-secondary" style="margin-top:8px">↻ Retry</button>` : ''}
+            </div>`;
+        if (retryFn) {
+            const b = document.getElementById(btnId);
+            if (b) b.addEventListener('click', retryFn);
+        }
+        return el;
+    },
+
+    /** Render a standard empty state (journal-style) into a container. */
+    emptyState(container, icon = '◌', text = 'No data yet', sub = '') {
+        const el = typeof container === 'string' ? document.getElementById(container) : container;
+        if (!el) return null;
+        el.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon" aria-hidden="true">${icon}</div>
+                <div>${this.escapeHtml(String(text))}</div>
+                ${sub ? `<div class="text-muted" style="font-size:12px;margin-top:4px">${this.escapeHtml(String(sub))}</div>` : ''}
+            </div>`;
+        return el;
+    },
+
+    /**
+     * Debounced window-resize redraw hook for canvas charts.
+     * Also re-fires on theme change so theme-aware charts repaint.
+     */
+    onResizeRedraw(fn, delay = 150) {
+        let t = null;
+        const run = () => { clearTimeout(t); t = setTimeout(fn, delay); };
+        window.addEventListener('resize', run);
+        window.addEventListener('themechange', run);
+        return run;
+    },
+
+    /**
+     * Visibility-aware polling: like setInterval but pauses while the tab is
+     * hidden and fires immediately on return if an interval was missed.
+     * Returns { stop() }.
+     */
+    poll(fn, ms, { immediate = false } = {}) {
+        let id = null;
+        let missed = false;
+        const start = () => { if (id === null) id = setInterval(fn, ms); };
+        const stop = () => { if (id !== null) { clearInterval(id); id = null; } };
+        const onVis = () => {
+            if (document.hidden) { stop(); missed = true; }
+            else { start(); if (missed) { missed = false; try { fn(); } catch (e) {} } }
+        };
+        document.addEventListener('visibilitychange', onVis);
+        if (immediate) { try { fn(); } catch (e) {} }
+        if (!document.hidden) start();
+        return { stop: () => { stop(); document.removeEventListener('visibilitychange', onVis); } };
+    },
+
+    /**
+     * Wire a modal for Esc-to-close. closeFn is called on Escape while the
+     * modal element is visible (display not 'none').
+     */
+    modalEscClose(modalEl, closeFn) {
+        const el = typeof modalEl === 'string' ? document.getElementById(modalEl) : modalEl;
+        if (!el) return;
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && el.style.display !== 'none' && el.offsetParent !== null) closeFn();
+        });
+    },
+
+    /**
+     * Guard a submit button during an async action: disables it, restores
+     * label + state afterwards. Prevents double-submits.
+     */
+    async withButtonBusy(btn, busyLabel, action) {
+        if (!btn || btn.disabled) return;
+        const orig = btn.textContent;
+        btn.disabled = true;
+        if (busyLabel) btn.textContent = busyLabel;
+        try { return await action(); }
+        finally { btn.disabled = false; btn.textContent = orig; }
+    },
+
     /** Smooth number tween animation */
     tweenNumber(element, newValue, decimals = 0, duration = 400) {
         const current = parseFloat(element.textContent.replace(/[₹,+]/g, '')) || 0;
@@ -603,7 +699,9 @@ const Utils = {
      * Initialize common header state — loads market status, populates expiry
      * selector, and sets refresh-info text. Call on every page after buildHeader().
      */
-    async initHeader() {
+    async initHeader(opts = {}) {
+        // opts.skipExpiry: pages that manage their own expiry selector
+        // (option chain) pass true so we don't race their loader.
         try {
             const status = await API.getMarketStatus();
             const el = document.getElementById('refresh-info');
@@ -622,6 +720,7 @@ const Utils = {
 
         // Load LIVE expiries from NSE (works regardless of market hours)
         try {
+            if (opts.skipExpiry) throw 'skip';
             const expResp = await API.getExpiries();
             const sel = document.getElementById('expiry-selector');
             if (sel && expResp && expResp.expiries && expResp.expiries.length) {
@@ -795,6 +894,14 @@ const Utils = {
             html.setAttribute('data-theme', 'dark');
             localStorage.setItem('niftyedge_theme', 'dark');
         }
+        // Keep the Tweaks panel's theme store in sync so the two theme
+        // systems can't disagree on next page load.
+        try {
+            const raw = localStorage.getItem('niftyedge_tweaks_v1');
+            const tw = raw ? JSON.parse(raw) : {};
+            tw.theme = isDark ? 'light' : 'dark';
+            localStorage.setItem('niftyedge_tweaks_v1', JSON.stringify(tw));
+        } catch (e) {}
         const toggle = document.getElementById('ne-theme-toggle');
         if (toggle) toggle.classList.toggle('on', !isDark);
         window.dispatchEvent(new CustomEvent('themechange', {
@@ -1275,4 +1382,70 @@ const Utils = {
     } else {
         boot();
     }
+})();
+
+// ── Scroll-position persistence across reloads ──────────────────────────────
+// Loaded on every app page (all include utils.js), so this covers the whole
+// app automatically. On a refresh (reload navigation only) the window scroll
+// offset for the current page is restored, retrying while async-loaded content
+// grows the page — so the user lands back where they were instead of at the
+// top. Fresh link navigations still open at the top. A genuine user scroll
+// during restore cancels it so we never fight the user.
+(function initScrollRestore() {
+    if (typeof window === 'undefined' || !window.sessionStorage) return;
+    try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch (e) {}
+
+    const KEY = 'ne_scroll_' + location.pathname;
+
+    // ── Save (throttled) ────────────────────────────────────────────────
+    let saveT = null;
+    function save() {
+        try { sessionStorage.setItem(KEY, String(window.scrollY || window.pageYOffset || 0)); } catch (e) {}
+    }
+    window.addEventListener('scroll', () => {
+        if (saveT) return;
+        saveT = setTimeout(() => { saveT = null; save(); }, 150);
+    }, { passive: true });
+    window.addEventListener('beforeunload', save);
+    window.addEventListener('pagehide', save);
+
+    // ── Restore (reload + back/forward, not fresh link navigation) ──────
+    // We set scrollRestoration to 'manual' above, which also suppresses the
+    // browser's native back/forward restore — so we cover both here. Fresh
+    // link navigations still open at the top.
+    function shouldRestore() {
+        try {
+            const nav = performance.getEntriesByType('navigation')[0];
+            if (nav && nav.type) return nav.type === 'reload' || nav.type === 'back_forward';
+            // legacy: 1 = reload, 2 = back_forward
+            const t = performance.navigation && performance.navigation.type;
+            return t === 1 || t === 2;
+        } catch (e) { return false; }
+    }
+    const target = parseInt(sessionStorage.getItem(KEY) || '0', 10);
+    if (!shouldRestore() || !target) return;
+
+    let cancelled = false;
+    const cancel = () => { cancelled = true; };
+    // Only genuine user input cancels — programmatic scrollTo does not fire these.
+    window.addEventListener('wheel', cancel, { passive: true, once: true });
+    window.addEventListener('touchmove', cancel, { passive: true, once: true });
+    window.addEventListener('keydown', (e) => {
+        if (['PageDown', 'PageUp', 'ArrowDown', 'ArrowUp', 'Home', 'End', ' '].indexOf(e.key) !== -1) cancel();
+    }, { once: true });
+
+    const deadline = Date.now() + 3000;   // keep retrying up to ~3s as content loads
+    function attempt() {
+        if (cancelled) return;
+        const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+        window.scrollTo(0, Math.min(target, Math.max(0, maxScroll)));
+        const reached = maxScroll >= target - 2;
+        if (!reached && Date.now() < deadline) setTimeout(attempt, 100);
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attempt, { once: true });
+    } else {
+        attempt();
+    }
+    window.addEventListener('load', attempt);   // final pass once everything settled
 })();

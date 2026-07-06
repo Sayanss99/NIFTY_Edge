@@ -851,6 +851,7 @@
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
+    <script src="/js/ne-scroll.js"></script>
     <script src="/js/ne-live.js"></script>
     <script src="/js/ws.js"></script>
     <script>
@@ -1032,13 +1033,13 @@
 
             // Margin & capital tracker (independent of market hours)
             loadMarginSummary();
-            setInterval(loadMarginSummary, 60000);
+            Utils.poll(loadMarginSummary, 60000);
 
             // EOD summary (visible after 15:30 IST). Polls every 5 min so the
             // card transitions from "no data" to populated cleanly without
             // requiring a page reload at market close.
             loadEodSummary();
-            setInterval(loadEodSummary, 5 * 60 * 1000);
+            Utils.poll(loadEodSummary, 5 * 60 * 1000);
 
             // Load IV tile (independent of market hours — uses DB history). Verdict
             // is the composite IV score (70% IV-percentile + 30% IV-rank); also shows
@@ -2499,7 +2500,58 @@
             resolveLabels(rightLabels, 14);
             drawResolvedLabels(leftLabels, 'left');
             drawResolvedLabels(rightLabels, 'right');
+
+            // ── Hover-tooltip geometry (read by the mousemove handler) ──
+            // Purely additive: records what was drawn so hovering can show
+            // the price at the cursor + any nearby levels. No draw changes.
+            _rangeHover = {
+                PAD, chartW, chartH, yMin, yMax,
+                levels: [...leftLabels, ...rightLabels].map(lb => ({
+                    y: lb.lineY, text: lb.text, color: lb.color,
+                })),
+            };
         }
+
+        // ── Range-chart hover tooltip ──────────────────────────────────
+        let _rangeHover = null;
+        (function wireRangeTooltip() {
+            const canvas = document.getElementById('range-canvas');
+            if (!canvas) return;
+            let tip = document.getElementById('range-chart-tooltip');
+            if (!tip) {
+                tip = document.createElement('div');
+                tip.id = 'range-chart-tooltip';
+                tip.style.cssText = 'position:absolute;pointer-events:none;display:none;z-index:50;' +
+                    'background:var(--bg-card,#fff);border:1px solid var(--border-light,#e2e8f0);' +
+                    'border-radius:8px;padding:6px 10px;font:11px JetBrains Mono,monospace;' +
+                    'box-shadow:0 4px 12px rgba(0,0,0,0.15);white-space:nowrap';
+                canvas.parentElement.style.position = 'relative';
+                canvas.parentElement.appendChild(tip);
+            }
+            canvas.addEventListener('mousemove', (e) => {
+                const h = _rangeHover;
+                if (!h) return;
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+                const inPlot = mx >= h.PAD.left && mx <= h.PAD.left + h.chartW &&
+                               my >= h.PAD.top && my <= h.PAD.top + h.chartH;
+                if (!inPlot) { tip.style.display = 'none'; return; }
+                const price = h.yMin + (1 - (my - h.PAD.top) / h.chartH) * (h.yMax - h.yMin);
+                const near = h.levels.filter(l => Math.abs(l.y - my) <= 10);
+                let html = `<div style="font-weight:700">${Utils.formatNum(price, 0)}</div>`;
+                for (const l of near.slice(0, 4)) {
+                    html += `<div style="color:${l.color}">▸ ${l.text}</div>`;
+                }
+                tip.innerHTML = html;
+                tip.style.display = 'block';
+                // Keep the tooltip inside the container
+                const cw = canvas.parentElement.clientWidth;
+                tip.style.left = Math.min(mx + 14, cw - 130) + 'px';
+                tip.style.top = Math.max(my - 12, 4) + 'px';
+            });
+            canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+        })();
 
         window.addEventListener('resize', () => {
             redrawChart();
@@ -2551,11 +2603,11 @@
 
         loadNewsTicker();
         loadNewsContext();
-        setInterval(loadNewsContext, 90000);
+        Utils.poll(loadNewsContext, 90000);
         // News ticker is now 24/7 on the backend — keep it fresh on the
         // dashboard even when the WS is quiet (e.g. dashboard opened during
         // off-market hours, no market_update pushes happening).
-        setInterval(loadNewsTicker, 5 * 60 * 1000);
+        Utils.poll(loadNewsTicker, 5 * 60 * 1000);
 
         // ── Market Verdict ─────────────────────────────────────────────
         // Reads the *backend-computed* verdict from /api/strategies/market-
@@ -2659,8 +2711,8 @@
 
         loadMarketVerdict();
         loadNewsTone();
-        setInterval(loadMarketVerdict, 60000);
-        setInterval(loadNewsTone, 90000);
+        Utils.poll(loadMarketVerdict, 60000);
+        Utils.poll(loadNewsTone, 90000);
         WS.on('news_alert', () => loadNewsTone());
         document.getElementById('expiry-selector')?.addEventListener('change', loadMarketVerdict);
 

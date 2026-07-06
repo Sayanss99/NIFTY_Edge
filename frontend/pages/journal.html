@@ -147,6 +147,27 @@
             font-size: 32px;
             margin-bottom: 12px;
         }
+        .journal-pagination {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            padding: 14px;
+            border-top: 1px solid var(--border);
+        }
+        .journal-page-info {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+        .btn-clear-journal {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            margin-right: 8px;
+            font-size: 11px;
+        }
+        .btn-clear-journal svg { width: 12px; height: 12px; }
         /* ── Annotation pencil + modal (Batch B.1) ─────────────────── */
         .note-btn {
             background: transparent;
@@ -300,6 +321,11 @@
                     </select>
                     <div style="flex:1"></div>
                     <button class="btn btn-secondary btn-sm" onclick="exportCSV()" style="margin-right:8px;font-size:11px">Export CSV</button>
+                    <button class="btn btn-secondary btn-sm btn-clear-journal" onclick="openClearConfirm()"
+                            title="Clear the journal display — analytics keep every trade">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                        Clear
+                    </button>
                     <div class="view-toggle">
                         <button class="active" id="view-flat" onclick="setView('flat')">All Trades</button>
                         <button id="view-grouped" onclick="setView('grouped')">By Expiry</button>
@@ -331,23 +357,26 @@
         document.getElementById('header').innerHTML = Utils.buildHeader('Trade Journal');
 
         let allTrades = [];
-        let currentView = 'flat';
+        let currentView = localStorage.getItem('niftyedge_journal_view') || 'flat';
         let sortCol = 'exit_date';
         let sortDir = -1; // -1 = desc
+        // Flat-view pagination — 15 logs per page.
+        const JOURNAL_PAGE_SIZE = 15;
+        let journalPage = 1;
 
         // ── Load data ─────────────────────────────────────────────────
         (async () => {
             Utils.initHeader();
             try {
                 const [tradesResp, summaryResp] = await Promise.all([
-                    API.fetch('/api/trades/?status=CLOSED'),
+                    API.fetch('/api/trades/?status=CLOSED&journal_view=true'),
                     API.fetch('/api/trades/journal/summary'),
                 ]);
 
                 if (tradesResp && tradesResp.trades) {
                     allTrades = tradesResp.trades;
                     populateExpiryFilter();
-                    renderCurrentView();
+                    setView(currentView);   // restores persisted flat/grouped view
                     _prefetchAnnotations();
                 }
 
@@ -356,6 +385,7 @@
                 }
             } catch (e) {
                 console.error('Failed to load journal:', e);
+                Utils.errorState('journal-content', e.message || 'Failed to load journal', () => window.location.reload());
             }
         })();
 
@@ -427,12 +457,15 @@
                 sortCol = col;
                 sortDir = col === 'realized_pnl' || col === 'exit_date' ? -1 : 1;
             }
+            journalPage = 1;
             renderCurrentView();
         }
 
         // ── View toggle ───────────────────────────────────────────────
         function setView(view) {
             currentView = view;
+            journalPage = 1;
+            try { localStorage.setItem('niftyedge_journal_view', view); } catch (e) {}
             document.getElementById('view-flat').classList.toggle('active', view === 'flat');
             document.getElementById('view-grouped').classList.toggle('active', view === 'grouped');
             renderCurrentView();
@@ -448,10 +481,10 @@
 
         // ── Flat table view ───────────────────────────────────────────
         function renderFlatView() {
-            const trades = sortTrades(getFilteredTrades());
+            const allFiltered = sortTrades(getFilteredTrades());
             const container = document.getElementById('journal-content');
 
-            if (!trades.length) {
+            if (!allFiltered.length) {
                 container.innerHTML = `
                     <div class="empty-state">
                         <div class="icon">&#9776;</div>
@@ -459,6 +492,14 @@
                     </div>`;
                 return;
             }
+
+            // Paginate — 15 logs per page. Clamp the current page in case the
+            // filtered set shrank (e.g. after applying a filter).
+            const pages = Math.max(1, Math.ceil(allFiltered.length / JOURNAL_PAGE_SIZE));
+            if (journalPage > pages) journalPage = pages;
+            if (journalPage < 1) journalPage = 1;
+            const pageStart = (journalPage - 1) * JOURNAL_PAGE_SIZE;
+            const trades = allFiltered.slice(pageStart, pageStart + JOURNAL_PAGE_SIZE);
 
             // Single column descriptor list drives BOTH the header row and
             // each body row.  Each column's `cell(t)` returns the rendered
@@ -543,11 +584,23 @@
                 return `<tr class="${rowClass}">${cols.map(c => c.cell(t)).join('')}</tr>`;
             }).join('');
 
+            const pagerHtml = pages > 1 ? `
+                <div class="journal-pagination">
+                    <button class="btn btn-secondary btn-sm" ${journalPage <= 1 ? 'disabled' : ''} onclick="journalPageNav(-1)">← Prev</button>
+                    <span class="journal-page-info">Page ${journalPage} of ${pages} · ${allFiltered.length} logs</span>
+                    <button class="btn btn-secondary btn-sm" ${journalPage >= pages ? 'disabled' : ''} onclick="journalPageNav(1)">Next →</button>
+                </div>` : '';
+
             container.innerHTML = `
                 <table class="journal-table">
                     <thead><tr>${headerHtml}</tr></thead>
                     <tbody>${bodyHtml}</tbody>
-                </table>`;
+                </table>${pagerHtml}`;
+        }
+
+        function journalPageNav(delta) {
+            journalPage += delta;
+            renderFlatView();
         }
 
         // ── Grouped by expiry view ────────────────────────────────────
@@ -642,9 +695,10 @@
         }
 
         // ── Filter change listeners ───────────────────────────────────
-        document.getElementById('filter-expiry').onchange = renderCurrentView;
-        document.getElementById('filter-type').onchange = renderCurrentView;
-        document.getElementById('filter-result').onchange = renderCurrentView;
+        function onFilterChange() { journalPage = 1; renderCurrentView(); }
+        document.getElementById('filter-expiry').onchange = onFilterChange;
+        document.getElementById('filter-type').onchange = onFilterChange;
+        document.getElementById('filter-result').onchange = onFilterChange;
 
         // ── Annotation modal (Batch B.1) ──────────────────────────────
         // annotationsByTrade: { [trade_id]: {notes, mistake_tags[]} | null }
@@ -744,11 +798,55 @@
             }));
             renderCurrentView();
         }
-        // Esc closes modal
+        // ── Clear journal (display-only) ──────────────────────────────
+        function openClearConfirm() {
+            document.getElementById('clear-modal-bg').classList.add('open');
+        }
+        function closeClearConfirm(ev) {
+            if (ev && ev.target && ev.target.id !== 'clear-modal-bg' && ev.type === 'click') return;
+            document.getElementById('clear-modal-bg').classList.remove('open');
+        }
+        async function confirmClearJournal() {
+            const btn = document.getElementById('clear-confirm-btn');
+            btn.disabled = true;
+            btn.textContent = 'Clearing…';
+            try {
+                await API.post('/api/trades/journal/clear');
+                Utils.toast('Journal cleared', 'success');
+                // Reload so the list + summary reflect the backend watermark
+                // (empty display; analytics untouched).
+                setTimeout(() => window.location.reload(), 500);
+            } catch (e) {
+                Utils.toast('Failed to clear journal', 'error');
+                btn.disabled = false;
+                btn.textContent = 'Clear journal';
+            }
+        }
+
+        // Esc closes whichever modal is open
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closeAnnotationModal();
+            if (e.key !== 'Escape') return;
+            closeAnnotationModal();
+            closeClearConfirm();
         });
     </script>
+
+    <!-- Clear-journal confirmation modal -->
+    <div id="clear-modal-bg" class="ann-modal-bg" onclick="closeClearConfirm(event)">
+        <div class="ann-modal" onclick="event.stopPropagation()" style="width:min(460px,92vw)">
+            <h3>Clear journal display?</h3>
+            <div class="ann-sub" style="margin-bottom:16px">
+                This hides all currently listed trades from the Journal page and resets it to empty.
+                Your full trade history is <b>kept</b> — Analytics, signals, risk, and reports still
+                use every trade for historical analysis. Nothing that feeds analysis is deleted.
+                New trades you close later will appear here again.
+            </div>
+            <div class="ann-actions">
+                <button class="btn btn-sm btn-secondary" onclick="closeClearConfirm()">Cancel</button>
+                <button id="clear-confirm-btn" class="btn btn-sm btn-danger" onclick="confirmClearJournal()">Clear journal</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Annotation modal -->
     <div id="ann-modal-bg" class="ann-modal-bg" onclick="closeAnnotationModal(event)">

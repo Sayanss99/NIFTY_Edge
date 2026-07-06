@@ -7,6 +7,7 @@ Ported from Sheet_dasboard_codes/option_chain_greeks.py and risk_monitor.py.
 
 import math
 import threading
+import logging
 import time as _time
 import numpy as np
 import pandas as pd
@@ -14,6 +15,8 @@ from scipy.stats import norm
 from datetime import datetime, date, timedelta
 from pnsea import NSE
 from config import RISK_FREE_RATE, LOT_SIZE, FAST_REFRESH_SECONDS
+
+log = logging.getLogger("niftyedge.market_data")
 
 CONFLUENCE_WINDOW = 75  # pts — OI and Fib levels within this band are merged
 
@@ -155,7 +158,7 @@ def _fetch_lot_size_map() -> dict:
                 out[sym] = lot
         return out
     except Exception as e:
-        print(f"  [WARN] lot-size master fetch failed: {e}")
+        log.warning(f"  [WARN] lot-size master fetch failed: {e}")
         return {}
 
 
@@ -414,7 +417,10 @@ def build_chain(symbol="NIFTY", expiry_date=None, risk_free_rate=None,
         except Exception as e:
             last_err = e
         if attempt < 2:
-            _time.sleep(0.7)
+            # Exponential backoff with jitter (0.7s, ~1.4s) — spreads retries
+            # out so a struggling NSE endpoint isn't hammered in lockstep.
+            import random as _random
+            _time.sleep(0.7 * (2 ** attempt) + _random.uniform(0, 0.3))
             nse = NSE()   # fresh session/cookies for the retry
 
     if chain_df is None or chain_df.empty:
@@ -565,7 +571,7 @@ def _fetch_vix_raw(nse=None) -> dict | None:
                 result["nifty_change_pct"] = float(idx.get("percentChange", 0))
         return result if "last" in result else None
     except Exception as e:
-        print(f"  [WARN] VIX fetch failed: {e}")
+        log.warning(f"  [WARN] VIX fetch failed: {e}")
     return None
 
 
@@ -841,7 +847,7 @@ def _fetch_fibonacci_levels_raw(lookback_days: int = 20) -> list[int]:
         fib_ratios = [0.236, 0.382, 0.500, 0.618, 0.786]
         return sorted(int(round(swing_low + diff * r)) for r in fib_ratios)
     except Exception as e:
-        print(f"  [WARN] Fibonacci fetch failed: {e}")
+        log.warning(f"  [WARN] Fibonacci fetch failed: {e}")
         return []
 
 
@@ -875,7 +881,7 @@ def _fetch_pivot_levels_raw(lookback_days: int = 1) -> dict:
             "resistances": [int(round(2*P - L)), int(round(P + (H-L))), int(round(H + 2*(P-L)))],
         }
     except Exception as e:
-        print(f"  [WARN] Pivot fetch failed: {e}")
+        log.warning(f"  [WARN] Pivot fetch failed: {e}")
         return {}
 
 

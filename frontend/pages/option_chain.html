@@ -222,6 +222,7 @@
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
+    <script src="/js/ne-scroll.js"></script>
     <script src="/js/ne-live.js"></script>
     <script src="/js/sizing.js"></script>
     <script src="/js/ws.js"></script>
@@ -230,6 +231,9 @@
 
         document.getElementById('sidebar').innerHTML = Utils.buildSidebar('option-chain');
         document.getElementById('header').innerHTML = Utils.buildHeader('Option Chain');
+        // Market-status text + alert bell; expiry selector stays managed by
+        // this page's own loadChain() (skipExpiry avoids a populate race).
+        Utils.initHeader({ skipExpiry: true });
 
         let chainData = [];
         let currentSpot = 0;
@@ -439,13 +443,25 @@
                 rows = rows.filter(r => r.strike >= lo && r.strike <= hi);
             }
 
+            // OI magnitude bars: scale each side's cell background against the
+            // max OI among displayed strikes (CE bar grows from the right edge,
+            // PE from the left — mirroring the table's CE|strike|PE layout).
+            const maxOi = Math.max(1, ...rows.map(r => Math.max(r.ce_oi || 0, r.pe_oi || 0)));
+            const oiBar = (oi, side) => {
+                const pct = Math.round(Math.min(1, (oi || 0) / maxOi) * 100);
+                if (!pct) return '';
+                const col = side === 'CE' ? 'rgba(38,198,218,0.18)' : 'rgba(240,133,122,0.18)';
+                const dir = side === 'CE' ? 'to left' : 'to right';
+                return `background:linear-gradient(${dir}, ${col} ${pct}%, transparent ${pct}%)`;
+            };
+
             let html = '';
             for (const r of rows) {
                 const isAtm = r.strike === atm.strike;
                 const rowClass = isAtm ? 'atm' : '';
 
                 html += `<tr class="${rowClass}" onclick="onRowClick(${r.strike})" style="cursor:pointer">
-                    <td class="ce-cell font-mono">${r.ce_oi ? Utils.formatNum(r.ce_oi) : '-'}</td>
+                    <td class="ce-cell font-mono" style="${oiBar(r.ce_oi, 'CE')}">${r.ce_oi ? Utils.formatNum(r.ce_oi) : '-'}</td>
                     <td class="ce-cell font-mono">${r.ce_iv ? r.ce_iv.toFixed(1) : '-'}</td>
                     <td class="ce-cell font-mono fw-600">${r.ce_ltp ? r.ce_ltp.toFixed(2) : '-'}</td>
                     <td class="ce-cell font-mono">${r.ce_delta ? Math.abs(r.ce_delta).toFixed(3) : '-'}</td>
@@ -453,7 +469,7 @@
                     <td class="pe-cell font-mono">${r.pe_delta ? Math.abs(r.pe_delta).toFixed(3) : '-'}</td>
                     <td class="pe-cell font-mono fw-600">${r.pe_ltp ? r.pe_ltp.toFixed(2) : '-'}</td>
                     <td class="pe-cell font-mono">${r.pe_iv ? r.pe_iv.toFixed(1) : '-'}</td>
-                    <td class="pe-cell font-mono">${r.pe_oi ? Utils.formatNum(r.pe_oi) : '-'}</td>
+                    <td class="pe-cell font-mono" style="${oiBar(r.pe_oi, 'PE')}">${r.pe_oi ? Utils.formatNum(r.pe_oi) : '-'}</td>
                 </tr>`;
             }
 

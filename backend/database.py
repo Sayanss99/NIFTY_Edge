@@ -1,9 +1,12 @@
 """Database setup — SQLite + SQLAlchemy async-compatible engine."""
 
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
-DATABASE_URL = "sqlite:///./niftyedge.db"
+DATABASE_URL = os.getenv("NIFTYEDGE_DATABASE_URL", "sqlite:///./niftyedge.db")
+# Plain filesystem path to the SQLite file (used by the backup job)
+DATABASE_PATH = DATABASE_URL.replace("sqlite:///", "")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -44,6 +47,12 @@ def _migrate_db():
     ]:
         if col not in cols:
             c.execute(f"ALTER TABLE market_snapshots ADD COLUMN {col} {typ}")
+
+    # Ensure users has the journal-clear watermark column
+    c.execute("PRAGMA table_info(users)")
+    user_cols = {r[1] for r in c.fetchall()}
+    if "journal_cleared_at" not in user_cols:
+        c.execute("ALTER TABLE users ADD COLUMN journal_cleared_at DATETIME")
 
     # Ensure trades has strategy_id column
     c.execute("PRAGMA table_info(trades)")

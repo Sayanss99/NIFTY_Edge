@@ -1,7 +1,28 @@
 """Stratovex — FastAPI backend entry point."""
 
 import asyncio
+import logging
+import os
+import time
+from logging.handlers import RotatingFileHandler
 from contextlib import asynccontextmanager
+
+# ── Logging: console + rotating file (logs/niftyedge.log) ───────────────────
+_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+_fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+_file_handler = RotatingFileHandler(
+    os.path.join(_LOG_DIR, "niftyedge.log"), maxBytes=5 * 1024 * 1024, backupCount=3,
+    encoding="utf-8",
+)
+_file_handler.setFormatter(_fmt)
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_fmt)
+_root = logging.getLogger("niftyedge")
+_root.setLevel(os.getenv("NIFTYEDGE_LOG_LEVEL", "INFO").upper())
+_root.addHandler(_file_handler)
+_root.addHandler(_console_handler)
+logger = logging.getLogger("niftyedge.main")
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -36,6 +57,34 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Stratovex", version="1.0.0", lifespan=lifespan)
+
+
+# ── Health check (unauthenticated) ───────────────────────────────────────────
+@app.get("/health")
+async def health():
+    import scheduler as _sched
+    from sqlalchemy import text as _text
+    from database import SessionLocal as _SL
+
+    db_ok = True
+    try:
+        _db = _SL()
+        _db.execute(_text("SELECT 1"))
+        _db.close()
+    except Exception:
+        db_ok = False
+
+    last_cycle = getattr(_sched, "LAST_CYCLE_TS", None)
+    ws_clients = sum(len(v) for v in getattr(manager, "active_connections", {}).values()) \
+        if isinstance(getattr(manager, "active_connections", None), dict) else None
+
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "db_ok": db_ok,
+        "last_cycle_age_s": round(time.time() - last_cycle, 1) if last_cycle else None,
+        "ws_clients": ws_clients,
+        "market_open": _sched.is_market_open().get("open"),
+    }
 
 # API routes
 app.include_router(auth_router)

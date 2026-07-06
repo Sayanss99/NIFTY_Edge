@@ -6,6 +6,8 @@ Outside these hours, no API calls are made — only a "market_closed" message is
 """
 
 import asyncio
+import logging
+import time
 import traceback
 import numpy as np
 from datetime import datetime, timezone, timedelta
@@ -15,7 +17,6 @@ from models import MarketSnapshot, SRLevel, Trade, TradeStatus, IVDailyRecord
 from config import (
     LOT_SIZE, FAST_REFRESH_SECONDS, SLOW_REFRESH_MULTIPLIER,
     NEWS_DESK_ENABLED, NEWS_POLL_CYCLE_MULTIPLIER,
-    NEWS_ACTIVE_HOUR_START, NEWS_ACTIVE_HOUR_END,
 )
 
 
@@ -30,33 +31,54 @@ def _py(val):
 # IST = UTC+5:30
 IST = timezone(timedelta(hours=5, minutes=30))
 
+log = logging.getLogger("niftyedge.scheduler")
+
+# Epoch seconds of the last completed scheduler iteration (read by /health)
+LAST_CYCLE_TS = None
+
 # Cross-cycle state for directional signal OI buildup tracking
 _prev_oi_snapshot = None
 
 # NSE holidays for 2026 (update yearly)
-# Source: NSE circular — add dates as they are announced
-NSE_HOLIDAYS_2026 = {
+# Source: NSE circular — add dates as they are announced.
+#
+# Confirmed holidays hard-close the market. Tentative holidays (moon-sighting-
+# dependent festivals whose exact date is guessed months ahead) MUST NOT hard-
+# close the app: a wrong tentative date would black out an entire trading day
+# for every page (see is_market_open). They are tracked separately and only
+# flagged, never used to force "market closed".
+NSE_HOLIDAYS_CONFIRMED_2026 = {
     "2026-01-26",  # Republic Day
-    "2026-02-17",  # Mahashivratri (tentative)
     "2026-03-10",  # Holi
-    "2026-03-30",  # Id-Ul-Fitr (tentative)
     "2026-04-02",  # Ram Navami
     "2026-04-03",  # Mahavir Jayanti
     "2026-04-14",  # Dr. Ambedkar Jayanti / Good Friday
     "2026-05-01",  # Maharashtra Day
+    "2026-08-15",  # Independence Day
+    "2026-10-02",  # Mahatma Gandhi Jayanti
+    "2026-12-25",  # Christmas
+}
+
+# Tentative — verify against the official NSE circular and promote to CONFIRMED
+# once the date is fixed. Do not rely on these to close the market.
+NSE_HOLIDAYS_TENTATIVE_2026 = {
+    "2026-02-17",  # Mahashivratri (tentative)
+    "2026-03-30",  # Id-Ul-Fitr (tentative)
     "2026-05-25",  # Buddha Purnima (tentative)
     "2026-06-06",  # Bakri Id (tentative)
     "2026-07-06",  # Muharram (tentative)
-    "2026-08-15",  # Independence Day
     "2026-08-25",  # Ganesh Chaturthi (tentative)
-    "2026-10-02",  # Mahatma Gandhi Jayanti
     "2026-10-20",  # Dussehra (tentative)
     "2026-10-21",  # Dussehra (tentative)
     "2026-11-09",  # Diwali (Laxmi Puja) (tentative)
     "2026-11-10",  # Diwali (Balipratipada) (tentative)
     "2026-11-30",  # Guru Nanak Jayanti (tentative)
-    "2026-12-25",  # Christmas
 }
+
+# Union — kept for callers that only need a best-effort trading-day estimate
+# (theta / days-to-expiry counting, snapshot day detection). Never use this for
+# the live market-open decision; use NSE_HOLIDAYS_CONFIRMED_2026 for that.
+NSE_HOLIDAYS_2026 = NSE_HOLIDAYS_CONFIRMED_2026 | NSE_HOLIDAYS_TENTATIVE_2026
 
 
 def is_market_open() -> dict:
@@ -84,10 +106,11 @@ def is_market_open() -> dict:
             "next_open": next_open.strftime("%a %d %b, 9:00 AM"),
         }
 
-    # NSE holiday
-    if today_str in NSE_HOLIDAYS_2026:
+    # Confirmed NSE holiday — hard close. Tentative holidays are handled below
+    # and never force a close (a wrong tentative date must not black out the app).
+    if today_str in NSE_HOLIDAYS_CONFIRMED_2026:
         next_day = now_ist + timedelta(days=1)
-        while next_day.weekday() >= 5 or next_day.strftime("%Y-%m-%d") in NSE_HOLIDAYS_2026:
+        while next_day.weekday() >= 5 or next_day.strftime("%Y-%m-%d") in NSE_HOLIDAYS_CONFIRMED_2026:
             next_day += timedelta(days=1)
         return {
             "open": False,
@@ -106,12 +129,23 @@ def is_market_open() -> dict:
     # After market hours
     if current_time > "15:45":
         next_day = now_ist + timedelta(days=1)
-        while next_day.weekday() >= 5 or next_day.strftime("%Y-%m-%d") in NSE_HOLIDAYS_2026:
+        while next_day.weekday() >= 5 or next_day.strftime("%Y-%m-%d") in NSE_HOLIDAYS_CONFIRMED_2026:
             next_day += timedelta(days=1)
         return {
             "open": False,
             "reason": "Market closed",
             "next_open": next_day.strftime("%a %d %b, 9:00 AM"),
+        }
+
+    # Weekday, within hours, not a confirmed holiday → open. If today is a
+    # *tentative* holiday, stay open but surface a note so the UI/logs can warn
+    # rather than silently blacking out the app on a possibly-wrong guess.
+    if today_str in NSE_HOLIDAYS_TENTATIVE_2026:
+        return {
+            "open": True,
+            "reason": "",
+            "next_open": "",
+            "note": "Possible NSE holiday (unconfirmed) — verify if data looks stale",
         }
 
     # Market is open
@@ -120,6 +154,7 @@ def is_market_open() -> dict:
 
 async def run_scheduler(ws_manager):
     """Main scheduler loop — runs in background."""
+    global LAST_CYCLE_TS
     cycle = 0
     last_market_status = None
     last_news_fetch_ts = 0.0   # epoch seconds; tracks news independently of market status
@@ -128,7 +163,10 @@ async def run_scheduler(ws_manager):
     screen_interval = 600.0    # re-run Step1+Step2 prefilter every ~10 min
     last_active_ts = 0.0       # most-active-by-OI scan cadence
     active_interval = 300.0    # re-rank most-active stock options every ~5 min
-    print("[Scheduler] Starting market data refresh loop...")
+    log.info("[Scheduler] Starting market data refresh loop...")
+    _startup_status = is_market_open()
+    if _startup_status.get("note"):
+        log.warning("[Scheduler] %s", _startup_status["note"])
 
     # ── Seed fetch: refresh on startup if the DB has no snapshot OR the latest
     # one is stale (regardless of market hours).  Without the staleness check the
@@ -154,25 +192,35 @@ async def run_scheduler(ws_manager):
 
         if needs_seed:
             why = "no snapshot data" if latest is None else f"latest snapshot is stale ({age/60:.0f} min old)"
-            print(f"[Scheduler] {why} — running startup seed fetch...")
+            log.info(f"[Scheduler] {why} — running startup seed fetch...")
             db = SessionLocal()
             try:
                 data = await asyncio.get_event_loop().run_in_executor(
                     None, _fetch_market_data, db, True  # slow_cycle=True to also fetch S/R
                 )
                 if data:
-                    print(f"[Scheduler] Seed fetch complete — spot={data['snapshot'].get('nifty_spot')}")
+                    log.info(f"[Scheduler] Seed fetch complete — spot={data['snapshot'].get('nifty_spot')}")
                 else:
-                    print("[Scheduler] Seed fetch returned no data (NSE may be unreachable)")
+                    log.info("[Scheduler] Seed fetch returned no data (NSE may be unreachable)")
             finally:
                 db.close()
     except Exception as e:
-        print(f"[Scheduler] Seed fetch error: {e}")
+        log.error(f"[Scheduler] Seed fetch error: {e}")
 
     while True:
         try:
             import time as _time
             now_ts = _time.monotonic()
+            LAST_CYCLE_TS = time.time()   # read by /health
+
+            # ── Daily DB maintenance (retention prune + backup + weekly VACUUM).
+            # Cheap no-op until the UTC day changes; runs in the executor so the
+            # prune/VACUUM never blocks the live loop.
+            try:
+                from maintenance import run_daily_maintenance
+                asyncio.get_event_loop().run_in_executor(None, run_daily_maintenance)
+            except Exception as e:
+                log.error(f"[Scheduler] Maintenance error: {e}")
 
             # ── News fetch — 24/7 cadence, no market-hour or active-window gate.
             # The dashboard ticker and News Desk page consume this feed at all
@@ -185,7 +233,7 @@ async def run_scheduler(ws_manager):
                 try:
                     await _fetch_and_store_news(db, ws_manager)
                 except Exception as e:
-                    print(f"[Scheduler] News fetch error: {e}")
+                    log.error(f"[Scheduler] News fetch error: {e}")
                 finally:
                     db.close()
 
@@ -212,7 +260,7 @@ async def run_scheduler(ws_manager):
                     from stock_screener import run_prefilter_and_log
                     asyncio.get_event_loop().run_in_executor(None, run_prefilter_and_log)
                 except Exception as e:
-                    print(f"[Scheduler] Stock screener error: {e}")
+                    log.error(f"[Scheduler] Stock screener error: {e}")
 
             # ── Most-active stock options (ranked by traded volume×lot) ────
             # Re-scans the highest-lot stocks' live chains every ~5 min so the
@@ -226,7 +274,7 @@ async def run_scheduler(ws_manager):
                     from stock_screener import refresh_most_active
                     asyncio.get_event_loop().run_in_executor(None, refresh_most_active)
                 except Exception as e:
-                    print(f"[Scheduler] Most-active error: {e}")
+                    log.error(f"[Scheduler] Most-active error: {e}")
 
             market_status = is_market_open()
 
@@ -234,7 +282,7 @@ async def run_scheduler(ws_manager):
             if not market_status["open"]:
                 if last_market_status is None or last_market_status.get("open", True):
                     # Status just changed to closed — broadcast once
-                    print(f"[Scheduler] Market closed: {market_status['reason']}")
+                    log.info(f"[Scheduler] Market closed: {market_status['reason']}")
 
                     # Send last known snapshot + closed status
                     db = SessionLocal()
@@ -295,7 +343,7 @@ async def run_scheduler(ws_manager):
 
             # Market is open — normal refresh cycle
             if last_market_status and not last_market_status.get("open", True):
-                print("[Scheduler] Market opened — resuming live data refresh")
+                log.info("[Scheduler] Market opened — resuming live data refresh")
                 await ws_manager.broadcast({
                     "type": "market_status",
                     "data": {"open": True, "reason": "", "next_open": ""},
@@ -360,9 +408,9 @@ async def run_scheduler(ws_manager):
                                 "data": alert,
                             })
                         if triggered:
-                            print(f"[Scheduler] {len(triggered)} alert(s) triggered")
+                            log.info(f"[Scheduler] {len(triggered)} alert(s) triggered")
                     except Exception as e:
-                        print(f"[Scheduler] Alert eval error: {e}")
+                        log.error(f"[Scheduler] Alert eval error: {e}")
 
                     # ── Trade Suggestion Engine ───────────────────────
                     try:
@@ -393,7 +441,7 @@ async def run_scheduler(ws_manager):
                                 if sug:
                                     db.add(TradeSuggestion(**sug))
                                     db.commit()
-                                    print(f"[Scheduler] Overnight suggestion: {sug['direction']} {sug['option_type']} {sug['strike']}")
+                                    log.info(f"[Scheduler] Overnight suggestion: {sug['direction']} {sug['option_type']} {sug['strike']}")
 
                         # Overnight sanity check (15:25-15:30)
                         if "15:25" <= time_str <= "15:30":
@@ -405,7 +453,7 @@ async def run_scheduler(ws_manager):
                             for s in pending:
                                 passed = run_sanity_check(db, s, snap, chain_df)
                                 msg = "PASSED" if passed else "FAILED"
-                                print(f"[Scheduler] Overnight sanity check {msg}: {s.strike}")
+                                log.info(f"[Scheduler] Overnight sanity check {msg}: {s.strike}")
 
                         # Intraday trigger (10:00-10:05)
                         if "10:00" <= time_str <= "10:05":
@@ -419,7 +467,7 @@ async def run_scheduler(ws_manager):
                                 if sug:
                                     db.add(TradeSuggestion(**sug))
                                     db.commit()
-                                    print(f"[Scheduler] Intraday suggestion: {sug['direction']} {sug['option_type']} {sug['strike']}")
+                                    log.info(f"[Scheduler] Intraday suggestion: {sug['direction']} {sug['option_type']} {sug['strike']}")
 
                         # Intraday sanity checks (every cycle 10:15-14:00, ~15min intervals handled by scheduler cycle)
                         if "10:15" <= time_str <= "14:00":
@@ -465,7 +513,7 @@ async def run_scheduler(ws_manager):
                                 ],
                             })
                     except Exception as e:
-                        print(f"[Scheduler] Trade suggestion error: {e}")
+                        log.error(f"[Scheduler] Trade suggestion error: {e}")
 
                     # ── EOD Signal Capture (3:28-3:35 window) ─────────
                     try:
@@ -474,13 +522,13 @@ async def run_scheduler(ws_manager):
                         if "15:28" <= time_str <= "15:35":
                             _capture_eod_snapshot(db, data)
                     except Exception as e:
-                        print(f"[Scheduler] EOD capture error: {e}")
+                        log.error(f"[Scheduler] EOD capture error: {e}")
 
             finally:
                 db.close()
 
         except Exception as e:
-            print(f"[Scheduler] Error: {e}")
+            log.error(f"[Scheduler] Error: {e}")
             traceback.print_exc()
 
         await asyncio.sleep(FAST_REFRESH_SECONDS)
@@ -493,7 +541,7 @@ async def _fetch_and_store_news(db: Session, ws_manager):
     stats, new_items = await asyncio.get_event_loop().run_in_executor(
         None, fetch_and_store_news, db
     )
-    print(f"[Scheduler] News: fetched={stats['fetched']}, stored={stats['new_stored']}, "
+    log.info(f"[Scheduler] News: fetched={stats['fetched']}, stored={stats['new_stored']}, "
           f"dup={stats['skipped_dup']}, low={stats['skipped_low_score']}, err={stats['errors']}")
 
     push_items = [i for i in new_items if i.impact_tier in ("HIGH", "CRITICAL")]
@@ -535,7 +583,7 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
         # ~20s is served from memory instead of re-scraping NSE.
         chain_df, expiries, spot = build_chain("NIFTY", refresh=True)
         if chain_df.empty:
-            print("[Scheduler] Empty chain data")
+            log.info("[Scheduler] Empty chain data")
             return None
         # Keep the NEAREST-expiry chain for the Call/Put OI monitor: that is the
         # "current expiry" view NSE/Sensibull show. The dashboard rolls past a
@@ -543,7 +591,7 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
         # OI is read on the nearest expiry so our numbers match those sources.
         oi_chain = chain_df
     except Exception as e:
-        print(f"[Scheduler] Chain fetch failed: {e}")
+        log.error(f"[Scheduler] Chain fetch failed: {e}")
         return None
 
     # Pick the *active* expiry: nearest one with ≥ 2 trading days remaining.
@@ -562,9 +610,9 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
         try:
             chain_df, _exp_list, spot = build_chain("NIFTY", expiry, refresh=True)
             if chain_df.empty:
-                print(f"[Scheduler] Empty chain for rolled expiry {expiry}; keeping nearest")
+                log.info(f"[Scheduler] Empty chain for rolled expiry {expiry}; keeping nearest")
         except Exception as e:
-            print(f"[Scheduler] Failed to rebuild chain for {expiry}: {e}")
+            log.error(f"[Scheduler] Failed to rebuild chain for {expiry}: {e}")
 
     vix_data = fetch_vix(refresh=True)
     vix = vix_data["last"] if vix_data else 0
@@ -604,7 +652,7 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
         from fii_dii import get_fii_dii
         fii_dii_data = get_fii_dii()
     except Exception as e:
-        print(f"[Scheduler] FII/DII fetch failed: {e}")
+        log.error(f"[Scheduler] FII/DII fetch failed: {e}")
         fii_dii_data = {}
     market_tone = compute_market_tone(
         oi_totals, fii_dii_data, rr.get("rr_value"),
@@ -765,7 +813,7 @@ def _fetch_market_data(db: Session, is_slow_cycle: bool) -> dict | None:
                 "fib_levels": fib_levels,
             }
         except Exception as e:
-            print(f"[Scheduler] S/R fetch failed: {e}")
+            log.error(f"[Scheduler] S/R fetch failed: {e}")
 
     return result
 
@@ -823,7 +871,7 @@ def _capture_eod_snapshot(db: Session, data: dict):
             )
 
     db.commit()
-    print(f"[Scheduler] EOD signal snapshot captured for {today}")
+    log.info(f"[Scheduler] EOD signal snapshot captured for {today}")
 
     # ── Capture actual ATM IV for IV Rank history ──────────────────────────
     try:
@@ -901,10 +949,10 @@ def _capture_eod_snapshot(db: Session, data: dict):
                                 atm_iv=round(atm_iv, 4),
                             ))
                 except Exception as e_skew:
-                    print(f"[Scheduler] Skew capture error: {e_skew}")
+                    log.error(f"[Scheduler] Skew capture error: {e_skew}")
 
                 db.commit()
-                print(f"[Scheduler] IV record captured for {today}: ATM IV={atm_iv:.2f}% (CE={ce_iv:.2f}%, PE={pe_iv:.2f}%)")
+                log.info(f"[Scheduler] IV record captured for {today}: ATM IV={atm_iv:.2f}% (CE={ce_iv:.2f}%, PE={pe_iv:.2f}%)")
 
         # ── Term structure: capture ATM IV for up to 4 expiries ───────────
         try:
@@ -938,12 +986,15 @@ def _capture_eod_snapshot(db: Session, data: dict):
                     except Exception:
                         continue
                 db.commit()
-                print(f"[Scheduler] Term structure captured for {today} ({min(4, len(expiries_list))} expiries)")
+                log.info(f"[Scheduler] Term structure captured for {today} ({min(4, len(expiries_list))} expiries)")
         except Exception as e_ts:
-            print(f"[Scheduler] Term structure capture error: {e_ts}")
+            log.error(f"[Scheduler] Term structure capture error: {e_ts}")
 
     except Exception as e:
-        print(f"[Scheduler] IV record capture error: {e}")
+        log.error(f"[Scheduler] IV record capture error: {e}")
+
+
+_expire_sweep_last: dict[int, float] = {}
 
 
 def _expire_user_past_trades(db: Session, user_id: int) -> int:
@@ -951,7 +1002,15 @@ def _expire_user_past_trades(db: Session, user_id: int) -> int:
 
     Duplicates the logic in routes_trades._expire_past_trades so the scheduler
     can call it without creating a circular import with the routes module.
+
+    Guarded to once/minute per user — expiry status only changes at an IST day
+    boundary, so sweeping every 15s cycle per connected user is wasted writes.
     """
+    _now = time.monotonic()
+    if _now - _expire_sweep_last.get(user_id, 0.0) < 60.0:
+        return 0
+    _expire_sweep_last[user_id] = _now
+
     today_ist = datetime.now(IST).date()
 
     open_trades = db.query(Trade).filter(
@@ -988,7 +1047,7 @@ def _expire_user_past_trades(db: Session, user_id: int) -> int:
             for child in orphaned_children:
                 child.parent_trade_id = None
         db.commit()
-        print(f"[Scheduler] Auto-expired {count} trade(s) for user {user_id}")
+        log.info(f"[Scheduler] Auto-expired {count} trade(s) for user {user_id}")
 
     return count
 
@@ -1051,7 +1110,7 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
             else:
                 chain_by_key[(sym, exp)] = chain_df_default if sym == "NIFTY" else None
         except Exception as e:
-            print(f"[Scheduler] Failed to fetch chain for {sym} {exp}: {e}")
+            log.error(f"[Scheduler] Failed to fetch chain for {sym} {exp}: {e}")
             chain_by_key[(sym, exp)] = chain_df_default if sym == "NIFTY" else None
 
     # Get S/R levels for hedge engine
@@ -1206,7 +1265,7 @@ def _compute_user_positions(db: Session, user_id: int, market_data: dict) -> dic
                             "hedge": hedge,
                         })
                 except Exception as e:
-                    print(f"[Scheduler] Hedge computation failed for trade {trade.id}: {e}")
+                    log.error(f"[Scheduler] Hedge computation failed for trade {trade.id}: {e}")
 
         # For long options, max loss is the premium paid (no margin, no assignment).
         max_loss = (

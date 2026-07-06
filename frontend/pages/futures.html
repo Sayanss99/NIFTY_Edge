@@ -380,6 +380,7 @@
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
+    <script src="/js/ne-scroll.js"></script>
     <script src="/js/ne-live.js"></script>
     <script src="/js/ws.js"></script>
     <script>
@@ -406,6 +407,10 @@
                 console.error('Futures load failed', e);
                 document.getElementById('source-label').textContent =
                     'Source: nseindia.com — fetch failed (' + (e.message || 'unknown') + ')';
+                if (!_futData) {
+                    // Nothing rendered yet — show an error state instead of frozen "Loading…"
+                    Utils.errorState('contracts-grid', e.message || 'Failed to load futures', () => loadFutures(true));
+                }
             }
         }
 
@@ -632,7 +637,7 @@
 
         // Initial + 30s auto-refresh (matches backend cache TTL)
         loadFutures();
-        setInterval(loadFutures, 30000);
+        Utils.poll(loadFutures, 30000);
     </script>
 </body>
 </html>

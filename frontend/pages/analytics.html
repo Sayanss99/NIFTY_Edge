@@ -632,6 +632,7 @@
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
+    <script src="/js/ne-scroll.js"></script>
     <script src="/js/ne-live.js"></script>
     <script src="/js/ws.js"></script>
     <script>
@@ -669,6 +670,16 @@
             if (tab === 'signals' && !signalData) loadSignalData();
         }
 
+        // Redraw the visible tab's canvases on window resize / theme change
+        // (canvases are drawn at a fixed pixel size and don't self-resize).
+        Utils.onResizeRedraw(() => {
+            try {
+                if (currentTab === 'performance' && perfData) renderPerformance(perfData);
+                else if (currentTab === 'patterns' && patternData) renderPatterns(patternData);
+                else if (currentTab === 'signals' && signalData) drawSignalChart(signalData);
+            } catch (e) { console.error('resize redraw:', e); }
+        });
+
         // ── Load data ─────────────────────────────────────────────────
         let scopeSymbol = '';   // '' = Global; else a specific underlying
 
@@ -701,6 +712,8 @@
                 try { renderPatterns(patterns); } catch (e) { console.error('patterns render:', e); }
             } catch (e) {
                 console.error('Analytics load error:', e);
+                Utils.errorState('tab-performance', e.message || 'Failed to load analytics', () => loadAnalytics());
+                document.getElementById('tab-performance').style.display = '';
             }
         }
 
@@ -1372,7 +1385,7 @@
             }).join('');
         }
 
-        // Click a heatmap cell (or "By Underlying" row) → scope the page to it.
+        // Click a heatmap cell → scope the page to it.
         function scopeTo(sym) {
             const sel = document.getElementById('symbol-scope');
             if (sel) sel.value = sym;
@@ -1380,20 +1393,42 @@
         }
 
         // ── By Underlying: win-rate, avg P&L, CE vs PE split ──────────
+        // Paginated at 15 underlyings per page. Full data is cached so page
+        // navigation re-slices without a re-fetch.
+        const BY_UNDER_PAGE_SIZE = 15;
+        let _byUnderData = null;   // { symbolPnl:[], sideBy:{} }
+        let _byUnderPage = 1;
+
         function renderByUnderlying(symbolPnl, sidePnl) {
+            const sideBy = {};
+            (sidePnl || []).forEach(s => { sideBy[s.symbol] = s; });
+            _byUnderData = { symbolPnl: symbolPnl || [], sideBy };
+            _byUnderPage = 1;
+            _paintByUnderlying();
+        }
+        function byUnderPage(delta) {
+            _byUnderPage += delta;
+            _paintByUnderlying();
+        }
+        function _paintByUnderlying() {
             const el = document.getElementById('by-underlying');
             if (!el) return;
-            if (!symbolPnl || !symbolPnl.length) {
+            const data = _byUnderData;
+            if (!data || !data.symbolPnl.length) {
                 el.innerHTML = '<span class="text-muted" style="font-size:11px">No data yet</span>';
                 return;
             }
-            const sideBy = {};
-            (sidePnl || []).forEach(s => { sideBy[s.symbol] = s; });
-            const rows = symbolPnl.map(r => {
-                const sd = sideBy[r.symbol] || {ce_pnl:0, pe_pnl:0, ce_trades:0, pe_trades:0};
+            const all = data.symbolPnl;
+            const pages = Math.max(1, Math.ceil(all.length / BY_UNDER_PAGE_SIZE));
+            if (_byUnderPage > pages) _byUnderPage = pages;
+            if (_byUnderPage < 1) _byUnderPage = 1;
+            const start = (_byUnderPage - 1) * BY_UNDER_PAGE_SIZE;
+            const pageRows = all.slice(start, start + BY_UNDER_PAGE_SIZE);
+            const rows = pageRows.map(r => {
+                const sd = data.sideBy[r.symbol] || {ce_pnl:0, pe_pnl:0, ce_trades:0, pe_trades:0};
                 const avg = r.trades ? r.pnl / r.trades : 0;
                 const cePnl = sd.ce_pnl || 0, pePnl = sd.pe_pnl || 0;
-                return `<tr style="cursor:pointer" onclick="scopeTo('${r.symbol}')">
+                return `<tr>
                     <td class="fw-700">${r.symbol}</td>
                     <td class="font-mono">${r.trades}</td>
                     <td class="font-mono">${r.win_rate}%</td>
@@ -1403,10 +1438,16 @@
                     <td class="font-mono">${pePnl ? Utils.pnlHtml(pePnl) : '<span class="text-muted">—</span>'} <span class="text-muted" style="font-size:10px">${sd.pe_trades||0}</span></td>
                 </tr>`;
             }).join('');
+            const pager = pages > 1 ? `
+                <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:12px">
+                    <button class="btn btn-secondary btn-sm" ${_byUnderPage <= 1 ? 'disabled' : ''} onclick="byUnderPage(-1)">← Prev</button>
+                    <span style="font-size:11.5px;color:var(--text-muted);font-weight:600">Page ${_byUnderPage} of ${pages} · ${all.length} underlyings</span>
+                    <button class="btn btn-secondary btn-sm" ${_byUnderPage >= pages ? 'disabled' : ''} onclick="byUnderPage(1)">Next →</button>
+                </div>` : '';
             el.innerHTML = `<table class="data-table" style="width:100%;font-size:12px">
                 <thead><tr>
                     <th>Underlying</th><th>Trades</th><th>Win%</th><th>P&L</th><th>Avg/Trade</th><th>CE P&L</th><th>PE P&L</th>
-                </tr></thead><tbody>${rows}</tbody></table>`;
+                </tr></thead><tbody>${rows}</tbody></table>${pager}`;
         }
 
         // ── Patterns Tab ──────────────────────────────────────────────

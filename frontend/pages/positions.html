@@ -378,6 +378,7 @@
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
+    <script src="/js/ne-scroll.js"></script>
     <script src="/js/ne-live.js"></script>
     <script src="/js/sizing.js"></script>
     <script src="/js/ws.js"></script>
@@ -555,7 +556,7 @@
 
         // Off-hours, the WS is silent — refresh the frozen snapshot periodically.
         // During market hours (_posClosed=false) the WS handles updates, so this idles.
-        setInterval(() => { if (_posClosed) loadLivePnl(); }, 60000);
+        Utils.poll(() => { if (_posClosed) loadLivePnl(); }, 60000);
 
         // ── WebSocket: live position updates ───────────────────────────
 
@@ -930,6 +931,16 @@
             });
         }
 
+        // Esc closes whichever modal is currently open (class- or display-driven)
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            document.querySelectorAll('.modal-overlay.active').forEach(m => m.classList.remove('active'));
+            ['hedge-choice-modal', 'roll-modal', 'margin-modal'].forEach(id => {
+                const m = document.getElementById(id);
+                if (m && m.style.display !== 'none' && m.style.display !== '') m.style.display = 'none';
+            });
+        });
+
         function closeAddModal() {
             document.getElementById('add-modal').classList.remove('active');
             document.getElementById('ltp-hint').textContent = '';
@@ -945,6 +956,11 @@
 
         async function submitAddTrade(e) {
             e.preventDefault();
+            // Prevent double-submits while the request is in flight
+            const submitBtn = e.target.querySelector('button[type="submit"], .btn-primary');
+            if (submitBtn && submitBtn.disabled) return;
+            if (submitBtn) submitBtn.disabled = true;
+            try {
             const trade = {
                 trade_type: document.getElementById('add-type').value,
                 strike: parseInt(document.getElementById('add-strike').value),
@@ -1001,6 +1017,9 @@
                 await loadPositions();
             } else {
                 Utils.toast(resp?.detail || 'Failed to add trade', 'error');
+            }
+            } finally {
+                if (submitBtn) submitBtn.disabled = false;
             }
         }
 

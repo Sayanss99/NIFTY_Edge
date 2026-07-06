@@ -58,6 +58,22 @@ const API = {
             return null;
         }
 
+        if (resp.status >= 500) {
+            // Server failures throw a typed error so pages can show an error
+            // state instead of a frozen "Loading…". 4xx responses keep the
+            // existing contract of returning the parsed body (callers check
+            // resp.detail / resp.error for validation messages).
+            let detail = '';
+            try {
+                const body = await resp.json();
+                detail = body && (body.detail || body.error) || '';
+            } catch (e) { /* non-JSON error body */ }
+            const err = new Error(detail || `Server error (${resp.status})`);
+            err.status = resp.status;
+            err.path = path;
+            throw err;
+        }
+
         return resp.json();
     },
 

@@ -4,27 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="/favicon.png">
-    <title>Stratovex — Options Intelligence Platform</title>
+    <title>Stratovex — Institutional-grade FnO Analytics</title>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         :root {
-            /* Cobalt-tuned palette to match Stratovex v3 (dark + cobalt + grid + round) */
             --blue:    oklch(0.62 0.16 220);
             --blue-d:  oklch(0.50 0.16 220);
             --blue-hi: oklch(0.74 0.13 220);
             --green:   oklch(0.72 0.18 150);
             --red:     oklch(0.68 0.20 27);
             --amber:   oklch(0.78 0.15 75);
-            --bg:      #07090F;
-            --bg2:     #0E1219;
-            --bg3:     #161B26;
-            --border:  rgba(255,255,255,0.06);
-            --border-2: rgba(255,255,255,0.10);
-            --text:    #E5E7EB;
+            --bg:      #06080D;
+            --bg2:     #0C1017;
+            --border:  rgba(255,255,255,0.07);
+            --border-2:rgba(255,255,255,0.12);
+            --text:    #E7EAF0;
             --muted:   #6B7280;
-            --muted-2: #9CA3AF;
-            --card-bg: rgba(14, 18, 25, 0.92);
+            --muted-2: #98A2B3;
             --radius:  20px;
         }
 
@@ -37,350 +34,293 @@
             letter-spacing: -0.005em;
             overflow: hidden;
         }
-        /* Hairline grid texture matches v3 backgrounds across the app */
-        body::before {
-            content: '';
+
+        /* ── Breathing background layers ─────────────────────────────── */
+        #surface-canvas {
             position: fixed;
-            inset: 0;
-            pointer-events: none;
-            z-index: 0;
-            background-image:
-                linear-gradient(to right, rgba(255,255,255,0.025) 1px, transparent 1px),
-                linear-gradient(to bottom, rgba(255,255,255,0.025) 1px, transparent 1px);
-            background-size: 32px 32px;
-            mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, #000 50%, transparent 100%);
-            -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, #000 50%, transparent 100%);
-        }
-
-        /* ── Ticker strip ─────────────────────────────────────────────── */
-        .ticker-strip {
-            height: 30px;
-            background: rgba(255,255,255,0.03);
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            align-items: center;
-            overflow: hidden;
-            position: relative;
-            z-index: 10;
-        }
-        .ticker-track {
-            display: flex;
-            gap: 0;
-            animation: ticker-scroll 120s linear infinite;
-            white-space: nowrap;
-            will-change: transform;
-            backface-visibility: hidden;
-            -webkit-backface-visibility: hidden;
-        }
-        .ticker-item {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 0 24px;
-            font-size: 11px;
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            border-right: 1px solid var(--border);
-        }
-        .ticker-item .t-label { color: var(--muted); }
-        .ticker-item .t-val   { font-weight: 600; }
-        .ticker-item .t-chg   { font-size: 10px; }
-        .t-up   { color: var(--green); }
-        .t-down { color: var(--red); }
-        .t-neu  { color: var(--amber); }
-        @keyframes ticker-scroll {
-            0%   { transform: translate3d(0, 0, 0); }
-            100% { transform: translate3d(-50%, 0, 0); }
-        }
-        /* slowed for readability; translate3d forces GPU compositing so slow motion
-           stays smooth at full refresh rate instead of stepping by integer pixels. */
-
-        /* ── Main split ───────────────────────────────────────────────── */
-        .landing-split {
-            display: flex;
-            height: calc(100vh - 30px);
-        }
-
-        /* ── Hero panel (left) ────────────────────────────────────────── */
-        .hero-panel {
-            flex: 1;
-            position: relative;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            background:
-                radial-gradient(1200px 600px at 8% 110%, color-mix(in srgb, var(--blue) 22%, transparent), transparent 60%),
-                radial-gradient(900px 500px at 92% -10%, rgba(129,140,248,0.10), transparent 60%);
-        }
-
-        #price-canvas {
-            position: absolute;
             inset: 0;
             width: 100%;
             height: 100%;
+            z-index: 0;
         }
-
-        /* Radial overlay to keep left edge readable */
-        .hero-panel::after {
-            content: '';
-            position: absolute;
+        .aurora {
+            position: fixed;
             inset: 0;
-            background: linear-gradient(
-                to right,
-                rgba(7,13,26,0.10) 0%,
-                rgba(7,13,26,0.05) 60%,
-                rgba(7,13,26,0.55) 100%
-            );
+            z-index: 0;
             pointer-events: none;
+            overflow: hidden;
+        }
+        .aurora span {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(90px);
+            opacity: 0.5;
+            animation: breathe 11s ease-in-out infinite;
+            will-change: transform, opacity;
+        }
+        .aurora .a1 {
+            width: 52vw; height: 52vw;
+            left: -14vw; bottom: -22vw;
+            background: radial-gradient(circle, color-mix(in srgb, var(--blue) 26%, transparent), transparent 70%);
+        }
+        .aurora .a2 {
+            width: 38vw; height: 38vw;
+            right: 18vw; top: -16vw;
+            background: radial-gradient(circle, rgba(129,140,248,0.16), transparent 70%);
+            animation-delay: -4s;
+        }
+        .aurora .a3 {
+            width: 26vw; height: 26vw;
+            right: -8vw; bottom: 6vh;
+            background: radial-gradient(circle, color-mix(in srgb, var(--green) 12%, transparent), transparent 70%);
+            animation-delay: -7.5s;
+        }
+        @keyframes breathe {
+            0%, 100% { transform: scale(1)    translateY(0);     opacity: 0.42; }
+            50%      { transform: scale(1.12) translateY(-2.5%); opacity: 0.62; }
         }
 
-        .hero-content {
+        /* ── Layout ──────────────────────────────────────────────────── */
+        .stage {
             position: relative;
             z-index: 2;
-            padding: 44px 56px 44px;
+            height: 100vh;
+            display: grid;
+            grid-template-columns: 1fr minmax(400px, 460px);
+            gap: 0;
+        }
+        @media (max-width: 980px) {
+            html, body { overflow: auto; }
+            .stage { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
+        }
+
+        /* ── Hero (left) ─────────────────────────────────────────────── */
+        .hero {
             display: flex;
             flex-direction: column;
-            height: 100%;
-        }
-
-        /* Slim status row at bottom of hero — matches in-app header rhythm */
-        .hero-statusbar {
-            display: flex;
-            align-items: center;
-            gap: 22px;
-            font-size: 10.5px;
-            font-family: 'SF Mono', 'JetBrains Mono', monospace;
-            color: var(--muted-2);
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            margin-top: 4px;
-            padding-top: 14px;
-            border-top: 1px solid var(--border);
-        }
-        .hero-statusbar .sb-item { display: inline-flex; align-items: center; gap: 7px; }
-        .hero-statusbar .sb-dot {
-            width: 6px; height: 6px; border-radius: 50%;
-            background: var(--green);
-            box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent);
-            animation: sb-pulse 2.4s ease-in-out infinite;
-        }
-        @keyframes sb-pulse { 0%,100%{opacity:1;} 50%{opacity:0.55;} }
-        .hero-statusbar .sb-val { color: #fff; font-weight: 600; letter-spacing: 0; text-transform: none; }
-
-        /* Brand — matches in-app NE monogram */
-        .brand {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: auto;
-        }
-        .brand-gem {
-            width: 36px;
-            height: 36px;
-            background: linear-gradient(135deg, var(--blue) 0%, var(--blue-hi) 100%);
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
             justify-content: center;
-            font-size: 13px;
+            padding: 6vh 72px 6vh 76px;
+            min-width: 0;
+        }
+        @media (max-width: 1200px) { .hero { padding: 6vh 44px; } }
+
+        .wordmark-row {
+            display: flex;
+            align-items: baseline;
+            gap: 16px;
+        }
+        .wordmark {
+            font-size: clamp(46px, 6vw, 84px);
             font-weight: 800;
+            letter-spacing: -0.04em;
+            line-height: 1;
             color: #fff;
-            letter-spacing: 0.02em;
-            box-shadow:
-                inset 0 1px 0 rgba(255,255,255,0.20),
-                0 4px 16px color-mix(in srgb, var(--blue) 35%, transparent);
-        }
-        .brand-name {
-            font-size: 16px;
-            font-weight: 700;
-            letter-spacing: -0.01em;
-        }
-        .brand-beta {
-            font-size: 9px;
-            font-weight: 700;
-            font-family: 'SF Mono', monospace;
-            background: color-mix(in srgb, var(--blue) 16%, transparent);
-            color: var(--blue-hi);
-            border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent);
-            border-radius: 4px;
-            padding: 2px 6px;
-            letter-spacing: 0.08em;
-        }
-
-        /* Eyebrow above headline — gives a product-page rhythm */
-        .hero-eyebrow {
-            display: inline-flex;
-            align-items: center;
-            gap: 12px;
-            font-size: 10.5px;
-            font-weight: 600;
-            color: var(--muted-2);
-            text-transform: uppercase;
-            letter-spacing: 0.18em;
-            margin-bottom: 18px;
-        }
-        .hero-eyebrow::before {
-            content: '';
-            width: 22px; height: 1px;
-            background: var(--blue);
-        }
-
-        /* Main headline */
-        .hero-headline {
-            margin-top: auto;
-            margin-bottom: 8px;
-        }
-        .hero-headline h1 {
-            font-size: clamp(30px, 3.4vw, 48px);
-            font-weight: 700;
-            line-height: 1.08;
-            letter-spacing: -0.025em;
-            color: #fff;
-        }
-        .hero-headline h1 .hl-accent {
-            background: linear-gradient(92deg, var(--blue-hi) 0%, var(--blue) 80%);
+            position: relative;
+            /* shine sweep */
+            background: linear-gradient(
+                100deg,
+                #FFFFFF 0%, #FFFFFF 42%,
+                var(--blue-hi) 50%,
+                #FFFFFF 58%, #FFFFFF 100%
+            );
+            background-size: 250% 100%;
             -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
             background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shine 7s ease-in-out infinite;
         }
-        .hero-sub {
-            margin-top: 16px;
-            font-size: 14px;
+        @keyframes shine {
+            0%, 55%  { background-position: 115% 0; }
+            85%, 100%{ background-position: -35% 0; }
+        }
+        .wordmark-beta {
+            font-size: 11px;
+            font-weight: 700;
+            font-family: 'SF Mono', 'JetBrains Mono', monospace;
+            letter-spacing: 0.14em;
+            color: var(--blue-hi);
+            border: 1px solid color-mix(in srgb, var(--blue) 40%, transparent);
+            background: color-mix(in srgb, var(--blue) 12%, transparent);
+            border-radius: 5px;
+            padding: 3px 8px;
+            transform: translateY(-6px);
+        }
+
+        .tagline {
+            margin-top: 18px;
+            font-size: clamp(16px, 1.7vw, 21px);
+            font-weight: 500;
+            letter-spacing: -0.015em;
             color: var(--muted-2);
-            line-height: 1.6;
-            max-width: 480px;
+        }
+        .tagline strong {
+            color: #fff;
+            font-weight: 600;
+        }
+        .tagline .tick {
+            display: inline-block;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 20%, transparent);
+            margin-right: 12px;
+            transform: translateY(-2px);
+            animation: pulse-dot 2.6s ease-in-out infinite;
+        }
+        @keyframes pulse-dot { 0%,100%{opacity:1;} 50%{opacity:0.45;} }
+
+        /* Divider */
+        .hero-rule {
+            width: 64px;
+            height: 2px;
+            margin: 34px 0 30px;
+            background: linear-gradient(90deg, var(--blue), transparent);
+            border-radius: 2px;
+        }
+
+        /* What we offer — three straight rows */
+        .offer {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-width: 560px;
+        }
+        .offer-row {
+            display: grid;
+            grid-template-columns: 44px 1fr;
+            gap: 16px;
+            align-items: start;
+            padding: 14px 16px 14px 12px;
+            border-radius: 14px;
+            border: 1px solid transparent;
+            transition: background 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+            opacity: 0;
+            transform: translateY(14px);
+            animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        }
+        .offer-row:nth-child(1) { animation-delay: 0.15s; }
+        .offer-row:nth-child(2) { animation-delay: 0.30s; }
+        .offer-row:nth-child(3) { animation-delay: 0.45s; }
+        @keyframes rise { to { opacity: 1; transform: translateY(0); } }
+        .offer-row:hover {
+            background: rgba(255,255,255,0.028);
+            border-color: var(--border);
+            transform: translateX(4px);
+        }
+        .offer-num {
+            font-family: 'SF Mono', 'JetBrains Mono', monospace;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--blue-hi);
+            border: 1px solid color-mix(in srgb, var(--blue) 30%, transparent);
+            background: color-mix(in srgb, var(--blue) 8%, transparent);
+            border-radius: 9px;
+            width: 40px; height: 40px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .offer-title {
+            font-size: 15px;
+            font-weight: 650;
+            color: #fff;
+            letter-spacing: -0.012em;
+            margin-bottom: 3px;
+        }
+        .offer-text {
+            font-size: 12.8px;
+            line-height: 1.55;
+            color: var(--muted-2);
             text-wrap: pretty;
         }
 
-        /* Feature pills */
-        .feature-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
+        /* Plus-line under offers */
+        .also {
             margin-top: 26px;
-            margin-bottom: 28px;
-        }
-        .feature-item {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
             font-size: 11.5px;
-            color: var(--muted-2);
-            background: rgba(255,255,255,0.025);
-            border: 1px solid var(--border);
-            border-radius: 999px;
-            padding: 6px 12px 6px 10px;
+            color: var(--muted);
+            letter-spacing: 0.01em;
+            max-width: 560px;
+            line-height: 1.7;
         }
-        .feature-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-        .fd-blue  { background: var(--blue);  box-shadow: 0 0 6px color-mix(in srgb, var(--blue) 60%, transparent); }
-        .fd-green { background: var(--green); box-shadow: 0 0 6px color-mix(in srgb, var(--green) 60%, transparent); }
-        .fd-amber { background: var(--amber); box-shadow: 0 0 6px color-mix(in srgb, var(--amber) 60%, transparent); }
+        .also b { color: var(--muted-2); font-weight: 600; }
 
-        /* Floating metric badges */
-        .floating-metrics {
-            position: absolute;
-            inset: 0;
-            pointer-events: none;
-            z-index: 1;
-        }
-        .fm-badge {
-            position: absolute;
-            background: rgba(14,18,25,0.78);
-            border: 1px solid var(--border-2);
-            border-radius: 12px;
-            padding: 9px 13px;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            animation: float-bob linear infinite;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.28);
-        }
-        .fm-badge .fm-label {
-            font-size: 8.5px;
+        /* Bottom status line */
+        .hero-status {
+            margin-top: 40px;
+            display: flex;
+            gap: 26px;
+            font-family: 'SF Mono', 'JetBrains Mono', monospace;
+            font-size: 10.5px;
+            letter-spacing: 0.08em;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
             color: var(--muted);
-            margin-bottom: 2px;
         }
-        .fm-badge .fm-val {
-            font-size: 14px;
-            font-weight: 700;
-            font-family: 'SF Mono', monospace;
-        }
-        .fm-badge .fm-sub {
-            font-size: 8px;
-            color: var(--muted);
-            margin-top: 1px;
-        }
-        @keyframes float-bob {
-            0%, 100% { transform: translateY(0px); }
-            50%       { transform: translateY(-8px); }
-        }
+        .hero-status span b { color: var(--muted-2); font-weight: 600; letter-spacing: 0; }
 
-        /* ── Form panel (right) ───────────────────────────────────────── */
-        .form-panel {
-            width: 460px;
-            flex-shrink: 0;
+        /* ── Auth panel (right) ──────────────────────────────────────── */
+        .auth-panel {
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(180deg, var(--bg2) 0%, var(--bg) 100%);
+            padding: 40px 44px;
             border-left: 1px solid var(--border);
-            padding: 40px 40px;
+            background: linear-gradient(180deg, rgba(12,16,23,0.65), rgba(6,8,13,0.35));
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
             position: relative;
         }
-        /* Glassy elevated card around the form */
-        .form-panel .form-card {
-            background: rgba(22,27,38,0.55);
-            border: 1px solid var(--border-2);
-            border-radius: var(--radius);
-            padding: 30px 28px 24px;
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
-            box-shadow:
-                inset 0 1px 0 rgba(255,255,255,0.04),
-                0 24px 64px rgba(0,0,0,0.35);
-        }
-
-        /* Subtle top glow on form panel */
-        .form-panel::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(59,130,246,0.4), transparent);
-        }
+        @media (max-width: 980px) { .auth-panel { border-left: none; border-top: 1px solid var(--border); } }
 
         .form-card {
             width: 100%;
+            max-width: 360px;
+            background: rgba(18,23,33,0.72);
+            border: 1px solid var(--border-2);
+            border-radius: var(--radius);
+            padding: 30px 28px 24px;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            position: relative;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.05),
+                0 24px 70px rgba(0,0,0,0.45);
         }
+        /* breathing border glow */
+        .form-card::before {
+            content: '';
+            position: absolute;
+            inset: -1px;
+            border-radius: calc(var(--radius) + 1px);
+            padding: 1px;
+            background: linear-gradient(150deg,
+                color-mix(in srgb, var(--blue) 55%, transparent),
+                transparent 35%,
+                transparent 65%,
+                color-mix(in srgb, var(--blue) 30%, transparent));
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+            animation: card-breathe 6s ease-in-out infinite;
+        }
+        @keyframes card-breathe { 0%,100%{opacity:0.35;} 50%{opacity:0.9;} }
 
-        .form-card-header {
-            margin-bottom: 22px;
-        }
+        .form-card-header { margin-bottom: 20px; }
         .form-card-header h2 {
-            font-size: 22px;
+            font-size: 21px;
             font-weight: 700;
             color: #fff;
-            margin-bottom: 4px;
             letter-spacing: -0.018em;
+            margin-bottom: 4px;
         }
-        .form-card-header p {
-            font-size: 12.5px;
-            color: var(--muted-2);
-        }
+        .form-card-header p { font-size: 12.5px; color: var(--muted-2); }
 
-        /* Form tab switcher */
         .form-tabs {
             display: flex;
             background: rgba(255,255,255,0.04);
             border: 1px solid var(--border);
-            border-radius: 8px;
+            border-radius: 9px;
             padding: 3px;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
             gap: 2px;
         }
         .form-tab {
@@ -402,17 +342,13 @@
             font-weight: 600;
         }
 
-        /* Form fields */
-        .f-group {
-            margin-bottom: 14px;
-        }
+        .f-group { margin-bottom: 13px; }
         .f-label {
             display: block;
             font-size: 11.5px;
             font-weight: 500;
             color: #94A3B8;
             margin-bottom: 5px;
-            letter-spacing: 0.1px;
         }
         .f-input {
             width: 100%;
@@ -444,73 +380,67 @@
             font-size: 13.5px;
             font-weight: 600;
             cursor: pointer;
-            margin-top: 8px;
+            margin-top: 6px;
             font-family: inherit;
-            letter-spacing: 0.005em;
-            transition: opacity 0.15s, transform 0.1s, box-shadow 0.2s;
+            transition: opacity 0.15s, transform 0.1s;
             box-shadow:
                 inset 0 1px 0 rgba(255,255,255,0.18),
                 0 6px 18px color-mix(in srgb, var(--blue) 35%, transparent);
         }
         .f-submit:hover   { opacity: 0.92; }
         .f-submit:active  { transform: scale(0.99); }
-        .f-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+        .f-submit:disabled{ opacity: 0.6; cursor: not-allowed; }
 
         .f-error {
             color: #F87171;
             font-size: 11.5px;
             text-align: center;
             min-height: 16px;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
         }
 
-        /* Bottom tagline */
-        .form-footer {
-            position: absolute;
-            bottom: 24px;
-            left: 0; right: 0;
-            text-align: center;
-            font-size: 10.5px;
-            color: #334155;
-        }
+        .form-slide.hidden-form { display: none; }
 
-        /* Slide transition between forms */
-        .form-body {
-            overflow: hidden;
-        }
-        .form-slide {
-            transition: opacity 0.18s ease, transform 0.18s ease;
-        }
-        .form-slide.hidden-form {
-            display: none;
-        }
-
-        /* Password field + eye toggle */
         .pwd-wrap { position: relative; }
         .pwd-wrap .f-input { padding-right: 38px; }
         .pwd-toggle {
             position: absolute;
-            right: 10px;
-            top: 50%;
+            right: 10px; top: 50%;
             transform: translateY(-50%);
-            background: none;
-            border: none;
+            background: none; border: none;
             padding: 2px 4px;
             cursor: pointer;
             color: #64748B;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            display: flex; align-items: center; justify-content: center;
             border-radius: 4px;
             transition: color 0.15s, background 0.15s;
         }
         .pwd-toggle:hover { color: var(--blue); background: rgba(59,130,246,0.08); }
         .pwd-toggle svg { width: 16px; height: 16px; display: block; }
 
+        .security-note {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            margin-top: 16px;
+            font-size: 10.5px;
+            color: #3D4A5C;
+        }
+
+        .auth-footer {
+            position: absolute;
+            bottom: 20px;
+            left: 0; right: 0;
+            text-align: center;
+            font-size: 10.5px;
+            color: #2E3947;
+        }
+
         /* Invalid-credentials floating popup */
         .auth-popup {
             position: fixed;
-            top: 50px;
+            top: 26px;
             left: 50%;
             transform: translateX(-50%) translateY(-10px);
             background: linear-gradient(135deg, #7F1D1D 0%, #991B1B 100%);
@@ -520,10 +450,8 @@
             border-radius: 10px;
             font-size: 13px;
             font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            box-shadow: 0 10px 30px rgba(239,68,68,0.35), 0 0 0 1px rgba(248,113,113,0.2);
+            display: flex; align-items: center; gap: 10px;
+            box-shadow: 0 10px 30px rgba(239,68,68,0.35);
             z-index: 9999;
             opacity: 0;
             pointer-events: none;
@@ -544,93 +472,86 @@
             flex-shrink: 0;
         }
 
-        /* Security note */
-        .security-note {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 5px;
-            margin-top: 18px;
-            font-size: 10.5px;
-            color: #334155;
+        /* Respect reduced motion */
+        @media (prefers-reduced-motion: reduce) {
+            .wordmark { animation: none; background-position: 50% 0; }
+            .aurora span, .form-card::before, .tagline .tick { animation: none; }
+            .offer-row { animation: none; opacity: 1; transform: none; }
         }
     </style>
 </head>
 <body>
 
-    <!-- ── Invalid credentials popup ──────────────────────────────────── -->
+    <!-- Invalid credentials popup -->
     <div class="auth-popup" id="auth-popup" role="alert" aria-live="assertive">
         <span class="ap-icon">!</span>
         <span id="auth-popup-msg">Invalid credentials</span>
     </div>
 
-    <!-- ── Ticker strip ───────────────────────────────────────────────── -->
-    <div class="ticker-strip">
-        <div class="ticker-track" id="ticker-track">
-            <!-- Populated by JS, duplicated for infinite scroll -->
-        </div>
-    </div>
+    <!-- Breathing background -->
+    <canvas id="surface-canvas" aria-hidden="true"></canvas>
+    <div class="aurora" aria-hidden="true"><span class="a1"></span><span class="a2"></span><span class="a3"></span></div>
 
-    <!-- ── Main split ─────────────────────────────────────────────────── -->
-    <div class="landing-split">
+    <div class="stage">
 
-        <!-- Left: Hero panel -->
-        <div class="hero-panel">
-            <canvas id="price-canvas"></canvas>
+        <!-- ── Hero ──────────────────────────────────────────────────── -->
+        <div class="hero">
+            <div class="wordmark-row">
+                <div class="wordmark">Stratovex</div>
+                <span class="wordmark-beta">BETA</span>
+            </div>
 
-            <!-- Floating live-look metric badges -->
-            <div class="floating-metrics" id="floating-metrics"></div>
+            <div class="tagline">
+                <span class="tick"></span><strong>Institutional-grade FnO analytics</strong> for retail traders.
+            </div>
 
-            <div class="hero-content">
-                <!-- Brand -->
-                <div class="brand">
-                    <div class="brand-gem">SV</div>
-                    <span class="brand-name">Stratovex</span>
-                    <span class="brand-beta">BETA</span>
-                </div>
+            <div class="hero-rule"></div>
 
-                <!-- Eyebrow + Headline + sub -->
-                <div class="hero-eyebrow">Options Intelligence Platform</div>
-                <div class="hero-headline">
-                    <h1>Options intelligence,<br><span class="hl-accent">edge-forward.</span></h1>
-                    <p class="hero-sub">
-                        Real-time IV analytics, GEX regime detection, directional signals,
-                        and AI-scored strategy recommendations — all in one terminal built for NIFTY.
-                    </p>
-                    <div class="feature-list">
-                        <div class="feature-item">
-                            <div class="feature-dot fd-blue"></div>
-                            18-factor market analytics — IV rank, skew, butterfly, term structure &amp; more
-                        </div>
-                        <div class="feature-item">
-                            <div class="feature-dot fd-green"></div>
-                            Gamma exposure (GEX) regime — know if the market is pinned or trending
-                        </div>
-                        <div class="feature-item">
-                            <div class="feature-dot fd-amber"></div>
-                            Strategy builder scores and ranks setups against current market conditions
-                        </div>
+            <div class="offer">
+                <div class="offer-row">
+                    <div class="offer-num">01</div>
+                    <div>
+                        <div class="offer-title">Stock-option picking</div>
+                        <div class="offer-text">Screens the F&amp;O universe for high-conviction option-buying candidates — confirmed picks, an early-warning radar, and live tradeable suggestions.</div>
                     </div>
                 </div>
-                <!-- Live status row anchored to bottom of hero -->
-                <div class="hero-statusbar">
-                    <span class="sb-item"><span class="sb-dot"></span>Live · NSE feed</span>
-                    <span class="sb-item">NIFTY <span class="sb-val">24,312.50</span></span>
-                    <span class="sb-item">IV Rank <span class="sb-val">49.2%</span></span>
-                    <span class="sb-item">GEX <span class="sb-val">+0.58M</span></span>
+                <div class="offer-row">
+                    <div class="offer-num">02</div>
+                    <div>
+                        <div class="offer-title">NIFTY directional analysis</div>
+                        <div class="offer-text">Reads live spot, volatility, ranges, and positioning to gauge direction and conviction — with expected-move ranges and a composite market verdict.</div>
+                    </div>
                 </div>
+                <div class="offer-row">
+                    <div class="offer-num">03</div>
+                    <div>
+                        <div class="offer-title">NIFTY strategy builder</div>
+                        <div class="offer-text">Assemble multi-leg option strategies with payoff previews, rankings against current conditions, and margin estimates — compare setups before booking.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="also">
+                Plus everything around the trade: <b>live option chains</b>, <b>position &amp; risk tracking</b>,
+                <b>hedge &amp; roll ideas</b>, <b>alerts</b>, <b>news context</b>, <b>futures hedging</b>,
+                a <b>trade journal</b>, and <b>performance analytics</b>.
+            </div>
+
+            <div class="hero-status">
+                <span><b>●</b> Live NSE data</span>
+                <span>Refresh <b>15s</b></span>
+                <span>Local-first <b>· your data stays yours</b></span>
             </div>
         </div>
 
-        <!-- Right: Form panel -->
-        <div class="form-panel">
+        <!-- ── Auth panel ────────────────────────────────────────────── -->
+        <div class="auth-panel">
             <div class="form-card">
                 <div class="form-card-header">
                     <h2 id="form-heading">Welcome back</h2>
                     <p id="form-subheading">Sign in to your Stratovex account</p>
                 </div>
 
-                <!-- Tab switcher -->
                 <div class="form-tabs">
                     <button class="form-tab active" id="tab-login" onclick="switchTab('login')">Sign in</button>
                     <button class="form-tab"        id="tab-signup" onclick="switchTab('signup')">Create account</button>
@@ -638,7 +559,6 @@
 
                 <div class="f-error" id="f-error"></div>
 
-                <!-- Login form -->
                 <div class="form-body">
                     <form id="login-form" class="form-slide" onsubmit="handleLogin(event)">
                         <div class="f-group">
@@ -655,7 +575,6 @@
                         <button type="submit" class="f-submit" id="login-btn">Sign In</button>
                     </form>
 
-                    <!-- Signup form -->
                     <form id="signup-form" class="form-slide hidden-form" onsubmit="handleSignup(event)">
                         <div class="f-group">
                             <label class="f-label">Name</label>
@@ -692,7 +611,7 @@
                 </div>
             </div>
 
-            <div class="form-footer">Stratovex · For educational and personal use · Not SEBI registered</div>
+            <div class="auth-footer">Stratovex · For educational and personal use · Not SEBI registered</div>
         </div>
 
     </div>
@@ -827,272 +746,80 @@
             btn.disabled = false; btn.textContent = 'Create Account';
         }
 
-        // ── Ticker strip ──────────────────────────────────────────────────
-        const tickerData = [
-            { label: 'NIFTY', val: '24,312.50', chg: '+0.38%', cls: 't-up' },
-            { label: 'IV Rank', val: '49.2%', chg: 'Mid-range', cls: 't-neu' },
-            { label: 'PCR (OI)', val: '1.16', chg: 'Neutral', cls: 't-neu' },
-            { label: 'ATM IV', val: '16.58%', chg: 'Normal', cls: 't-neu' },
-            { label: 'VIX', val: '17.21', chg: '−0.4%', cls: 't-up' },
-            { label: 'GEX', val: '+0.58M', chg: 'Mean-rev', cls: 't-up' },
-            { label: 'Max Pain', val: '24,050', chg: '+304 dist', cls: 't-neu' },
-            { label: 'IV Skew', val: '+3.55%', chg: 'Put demand', cls: 't-down' },
-            { label: 'Straddle', val: '₹562', chg: '±2.31%', cls: 't-neu' },
-            { label: 'OI Supp.', val: '21,000', chg: 'PE wall', cls: 't-up' },
-            { label: 'OI Resist', val: '26,000', chg: 'CE wall', cls: 't-down' },
-            { label: 'Term Str.', val: 'Backwd.', chg: 'Near stress', cls: 't-down' },
-        ];
+        // ── Breathing volatility surface (background canvas) ──────────────
+        // Slow-drifting topographic ridge lines built from layered sine waves,
+        // gently attracted toward the cursor. Whole field "inhales/exhales" on
+        // an ~9s cycle. Runs at capped 30fps and disables itself entirely when
+        // the user prefers reduced motion.
+        (function initSurface() {
+            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            const canvas = document.getElementById('surface-canvas');
+            const ctx = canvas.getContext('2d');
 
-        function buildTicker() {
-            const items = [...tickerData, ...tickerData]; // duplicate for seamless loop
-            return items.map(d => `
-                <div class="ticker-item">
-                    <span class="t-label">${d.label}</span>
-                    <span class="t-val ${d.cls}">${d.val}</span>
-                    <span class="t-chg ${d.cls}">${d.chg}</span>
-                </div>`).join('');
-        }
-        document.getElementById('ticker-track').innerHTML = buildTicker();
+            const RIDGES = 22;          // horizontal ridge lines
+            const STEP   = 14;          // x sampling step (px)
+            let W = 0, H = 0;
 
-        // Occasionally "tick" a random value for live feel
-        setInterval(() => {
-            const items = document.querySelectorAll('.ticker-item');
-            const target = items[Math.floor(Math.random() * (items.length / 2))];
-            if (!target) return;
-            const valEl = target.querySelector('.t-val');
-            if (!valEl) return;
-            valEl.style.transition = 'color 0.1s';
-            valEl.style.color = '#fff';
-            setTimeout(() => { valEl.style.color = ''; valEl.style.transition = ''; }, 300);
-        }, 1800);
-
-        // ── Price chart canvas ────────────────────────────────────────────
-        (function initPriceCanvas() {
-            const canvas = document.getElementById('price-canvas');
-            const ctx    = canvas.getContext('2d');
-
-            // Generate a realistic-looking noisy price series
-            let prices = [];
-            let base   = 24200;
-            for (let i = 0; i < 300; i++) {
-                base += (Math.random() - 0.485) * 14;
-                prices.push(base);
-            }
-
-            // MA smoothing helper
-            function ma(arr, n) {
-                return arr.map((_, i) => {
-                    const s = arr.slice(Math.max(0, i - n + 1), i + 1);
-                    return s.reduce((a, b) => a + b, 0) / s.length;
-                });
-            }
-
-            let hoverX = null;
-            canvas.addEventListener('mousemove', e => {
-                const r = canvas.getBoundingClientRect();
-                hoverX = (e.clientX - r.left) * (canvas.width / r.width);
-            });
-            canvas.addEventListener('mouseleave', () => { hoverX = null; });
-
-            let pulse = 0;
-            // Time-based smooth scroll — new point every ADVANCE_MS, but drawing
-            // interpolates the sub-frame offset so motion looks continuous even
-            // when the "tick rate" is slow. This is what kills chop.
-            const ADVANCE_MS = 900;
-            let lastAdvance = performance.now();
-
-            function draw(now) {
-                if (now == null) now = performance.now();
-                const W = canvas.offsetWidth;
-                const H = canvas.offsetHeight;
-                if (canvas.width !== W * devicePixelRatio) {
-                    canvas.width  = W * devicePixelRatio;
-                    canvas.height = H * devicePixelRatio;
-                }
-                const dpr = devicePixelRatio;
+            function fit() {
+                const dpr = Math.min(window.devicePixelRatio || 1, 2);
+                W = canvas.offsetWidth; H = canvas.offsetHeight;
+                canvas.width = W * dpr; canvas.height = H * dpr;
                 ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            }
+            fit();
+            window.addEventListener('resize', fit);
+
+            // Mouse attractor (eased so the field lags the cursor — feels alive)
+            let mx = -1e4, my = -1e4, emx = -1e4, emy = -1e4;
+            window.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
+            window.addEventListener('mouseleave', () => { mx = -1e4; my = -1e4; });
+
+            let last = 0;
+            function frame(t) {
+                requestAnimationFrame(frame);
+                if (t - last < 33) return;   // ~30fps cap
+                last = t;
+
+                emx += (mx - emx) * 0.06;
+                emy += (my - emy) * 0.06;
+
+                const time = t / 1000;
+                // Breath cycle: amplitude swells and relaxes (~9s)
+                const breath = 0.75 + 0.25 * Math.sin(time * (Math.PI * 2 / 9));
 
                 ctx.clearRect(0, 0, W, H);
 
-                // Use last 121 prices so we can scroll a full step smoothly
-                const visible  = prices.slice(-121);
-                const smooth   = ma(visible, 14);
-                const pMin     = Math.min(...visible) - 50;
-                const pMax     = Math.max(...visible) + 50;
-                const pRange   = pMax - pMin;
-                const PAD      = { t: 30, b: 60, l: 0, r: 0 };
-                const cW = W - PAD.l - PAD.r;
-                const cH = H - PAD.t - PAD.b;
+                for (let r = 0; r < RIDGES; r++) {
+                    const yBase = (H * 0.12) + (r / (RIDGES - 1)) * (H * 0.82);
+                    const depth = r / (RIDGES - 1);                 // 0 top → 1 bottom
+                    const amp   = (10 + depth * 26) * breath;       // deeper = taller waves
+                    const speed = 0.10 + depth * 0.10;
+                    const alpha = 0.05 + depth * 0.10;
 
-                // Sub-frame scroll fraction (0..1): how far we are between two tick-adds.
-                const frac = Math.min(1, (now - lastAdvance) / ADVANCE_MS);
-                const xStep = cW / (visible.length - 1);
-                const xShift = -frac * xStep;
-                const toX = i  => PAD.l + (i / (visible.length - 1)) * cW + xShift;
-                const toY = p  => PAD.t + cH - ((p - pMin) / pRange) * cH;
-
-                // Dim grid lines
-                ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-                ctx.lineWidth   = 1;
-                for (let g = 0; g <= 4; g++) {
-                    const y = PAD.t + (g / 4) * cH;
                     ctx.beginPath();
-                    ctx.moveTo(PAD.l, y); ctx.lineTo(W, y);
+                    for (let x = -STEP; x <= W + STEP; x += STEP) {
+                        // Layered sines — organic, non-repeating look
+                        let y = yBase
+                            + Math.sin(x * 0.006 + time * speed * 2.0 + r * 0.9) * amp
+                            + Math.sin(x * 0.013 - time * speed * 1.3 + r * 2.1) * amp * 0.45
+                            + Math.sin(x * 0.028 + time * speed * 0.7 + r * 4.2) * amp * 0.18;
+
+                        // Cursor lift: ridges bow away softly beneath the pointer
+                        const dx = x - emx, dy = yBase - emy;
+                        const d2 = dx * dx + dy * dy;
+                        const lift = Math.exp(-d2 / 26000) * 26 * breath;
+                        y -= lift;
+
+                        x <= 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+                    }
+                    // Blue tint deepens with depth; hue shifts a touch with breath
+                    ctx.strokeStyle = `rgba(${96 + depth * 30}, ${140 + depth * 26}, 246, ${alpha})`;
+                    ctx.lineWidth = 1;
                     ctx.stroke();
                 }
-
-                // Volume bars (simulated, very subtle)
-                for (let i = 0; i < visible.length; i++) {
-                    const x    = toX(i);
-                    const h    = 10 + Math.random() * 18;
-                    const up   = i === 0 || visible[i] >= visible[i - 1];
-                    ctx.fillStyle = up ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.10)';
-                    ctx.fillRect(x - 2, H - PAD.b - h, 4, h);
-                }
-
-                // Price line gradient fill
-                const grad = ctx.createLinearGradient(0, PAD.t, 0, PAD.t + cH);
-                grad.addColorStop(0,   'rgba(59,130,246,0.22)');
-                grad.addColorStop(0.6, 'rgba(59,130,246,0.04)');
-                grad.addColorStop(1,   'rgba(59,130,246,0)');
-
-                ctx.beginPath();
-                visible.forEach((p, i) => {
-                    i === 0 ? ctx.moveTo(toX(i), toY(p)) : ctx.lineTo(toX(i), toY(p));
-                });
-                ctx.lineTo(toX(visible.length - 1), PAD.t + cH);
-                ctx.lineTo(PAD.l, PAD.t + cH);
-                ctx.closePath();
-                ctx.fillStyle = grad;
-                ctx.fill();
-
-                // Price line
-                ctx.beginPath();
-                visible.forEach((p, i) => {
-                    i === 0 ? ctx.moveTo(toX(i), toY(p)) : ctx.lineTo(toX(i), toY(p));
-                });
-                ctx.strokeStyle = '#3B82F6';
-                ctx.lineWidth   = 1.8;
-                ctx.lineJoin    = 'round';
-                ctx.stroke();
-
-                // Moving average line
-                ctx.beginPath();
-                smooth.forEach((p, i) => {
-                    i === 0 ? ctx.moveTo(toX(i), toY(p)) : ctx.lineTo(toX(i), toY(p));
-                });
-                ctx.strokeStyle = 'rgba(251,191,36,0.45)';
-                ctx.lineWidth   = 1.2;
-                ctx.stroke();
-
-                // Live dot at end with pulse
-                pulse += 0.08;
-                const lp  = visible[visible.length - 1];
-                const lx  = toX(visible.length - 1);
-                const ly  = toY(lp);
-                const r   = 4 + Math.sin(pulse) * 1.5;
-
-                ctx.beginPath();
-                ctx.arc(lx, ly, r + 4, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(59,130,246,0.15)';
-                ctx.fill();
-
-                ctx.beginPath();
-                ctx.arc(lx, ly, 4, 0, Math.PI * 2);
-                ctx.fillStyle = '#60A5FA';
-                ctx.shadowBlur  = 10;
-                ctx.shadowColor = '#3B82F6';
-                ctx.fill();
-                ctx.shadowBlur  = 0;
-
-                // Hover crosshair + price label
-                if (hoverX !== null) {
-                    const idx  = Math.round((hoverX / W) * (visible.length - 1));
-                    const clampIdx = Math.max(0, Math.min(visible.length - 1, idx));
-                    const hx   = toX(clampIdx);
-                    const hy   = toY(visible[clampIdx]);
-
-                    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-                    ctx.lineWidth   = 1;
-                    ctx.setLineDash([3, 3]);
-                    ctx.beginPath();
-                    ctx.moveTo(hx, PAD.t); ctx.lineTo(hx, PAD.t + cH);
-                    ctx.stroke();
-                    ctx.beginPath();
-                    ctx.moveTo(PAD.l, hy); ctx.lineTo(W, hy);
-                    ctx.stroke();
-                    ctx.setLineDash([]);
-
-                    // Price tooltip
-                    const price   = visible[clampIdx].toFixed(0);
-                    const label   = `NIFTY  ${Number(price).toLocaleString('en-IN')}`;
-                    ctx.font      = '11px "SF Mono", monospace';
-                    const tw      = ctx.measureText(label).width;
-                    const tx      = Math.min(hx + 8, W - tw - 12);
-                    const ty      = Math.max(hy - 8, PAD.t + 14);
-
-                    ctx.fillStyle = 'rgba(13,21,38,0.85)';
-                    ctx.beginPath();
-                    ctx.roundRect(tx - 4, ty - 13, tw + 8, 18, 4);
-                    ctx.fill();
-                    ctx.fillStyle = '#E2E8F0';
-                    ctx.fillText(label, tx, ty);
-                }
-
-                // Advance only when a full step has been consumed — smooth sub-frame
-                // motion is already handled by `frac` above.
-                if (frac >= 1) {
-                    prices.push(prices[prices.length - 1] + (Math.random() - 0.485) * 4);
-                    if (prices.length > 500) prices.shift();
-                    lastAdvance = now;
-                }
-
-                requestAnimationFrame(draw);
             }
-
-            requestAnimationFrame(draw);
-        })();
-
-        // ── Floating metric badges ────────────────────────────────────────
-        (function initFloatingMetrics() {
-            const metrics = [
-                { label: 'IV Rank', val: '49.2%', sub: '252d history', color: '#F59E0B', x: 14, y: 28, dur: 14 },
-                { label: 'GEX',     val: '+0.58M', sub: 'Mean-reverting', color: '#10B981', x: 52, y: 18, dur: 18 },
-                { label: 'PCR (OI)', val: '1.16', sub: 'Neutral lean', color: '#94A3B8', x: 72, y: 55, dur: 12 },
-                { label: 'VIX',     val: '17.21', sub: 'Elevated', color: '#F59E0B', x: 22, y: 68, dur: 16 },
-                { label: 'IV Skew', val: '+3.55%', sub: 'Put demand', color: '#EF4444', x: 62, y: 75, dur: 15 },
-                { label: 'Straddle', val: '₹562', sub: '±2.31%', color: '#3B82F6', x: 38, y: 48, dur: 17 },
-            ];
-
-            const container = document.getElementById('floating-metrics');
-            metrics.forEach(m => {
-                const el = document.createElement('div');
-                el.className = 'fm-badge';
-                el.style.cssText = `
-                    left: ${m.x}%;
-                    top:  ${m.y}%;
-                    animation-duration: ${m.dur}s;
-                    animation-delay: ${(Math.random() * -m.dur).toFixed(1)}s;
-                    opacity: 0.72;
-                `;
-                el.innerHTML = `
-                    <div class="fm-label">${m.label}</div>
-                    <div class="fm-val" style="color:${m.color}">${m.val}</div>
-                    <div class="fm-sub">${m.sub}</div>
-                `;
-                container.appendChild(el);
-
-                // Occasional "tick" update for live feel
-                setInterval(() => {
-                    const v = el.querySelector('.fm-val');
-                    v.style.transition = 'opacity 0.1s';
-                    v.style.opacity    = '0.3';
-                    setTimeout(() => { v.style.opacity = '1'; }, 120);
-                }, 3000 + Math.random() * 5000);
-            });
+            requestAnimationFrame(frame);
         })();
     </script>
-    <script src="/js/tweaks.js"></script>
-    <script src="/js/ne-live.js"></script>
 </body>
 </html>

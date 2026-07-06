@@ -199,6 +199,14 @@
         state = { ...state, [k]: v };
         save(state);
         apply(state);
+        // Keep the legacy theme store + header toggle in sync so the profile
+        // dark-mode switch and this panel never disagree.
+        if (k === 'theme' && (v === 'light' || v === 'dark')) {
+            localStorage.setItem('niftyedge_theme', v);
+            const toggle = document.getElementById('ne-theme-toggle');
+            if (toggle) toggle.classList.toggle('on', v === 'dark');
+            window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: v } }));
+        }
     }
 
     function rebuild() {

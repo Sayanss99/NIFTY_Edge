@@ -250,12 +250,14 @@
     <script src="/js/api.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/tweaks.js"></script>
+    <script src="/js/ne-scroll.js"></script>
     <script src="/js/ne-live.js"></script>
     <script src="/js/ws.js"></script>
     <script>
         if (!API.requireAuth()) throw new Error('Not authenticated');
         document.getElementById('sidebar').innerHTML = Utils.buildSidebar('news-desk');
         document.getElementById('header').innerHTML = Utils.buildHeader('News Desk');
+        Utils.initHeader();
         // News Desk has no concept of expiry or live market-data refresh;
         // strip the expiry selector and the "Connecting…" status from the header.
         document.getElementById('expiry-selector')?.remove();
@@ -299,7 +301,7 @@
             const cat  = document.getElementById('f-category').value;
             const hrs  = document.getElementById('f-hours').value;
 
-            let url = `/api/news/feed?hours=${hrs}&page=${page}&per_page=30`;
+            let url = `/api/news/feed?hours=${hrs}&page=${page}&per_page=9`;
             if (tier) url += `&tier=${tier}`;
             if (dir)  url += `&direction=${dir}`;
             if (cat)  url += `&category=${cat}`;
@@ -311,7 +313,7 @@
                 const resp = await API.fetch(url);
                 renderFeed(resp);
             } catch (e) {
-                feed.innerHTML = '<div class="text-muted text-center" style="padding:24px">Failed to load news</div>';
+                Utils.errorState(feed, e.message || 'Failed to load news', () => loadFeed(page));
             }
         }
 
@@ -462,7 +464,29 @@
             }
         }
 
-        function applyFilters() { loadFeed(1); }
+        // Persist filter selections across visits
+        const NEWS_FILTER_KEY = 'niftyedge_news_filters';
+        function applyFilters() {
+            try {
+                localStorage.setItem(NEWS_FILTER_KEY, JSON.stringify({
+                    tier: document.getElementById('f-tier').value,
+                    direction: document.getElementById('f-direction').value,
+                    category: document.getElementById('f-category').value,
+                    hours: document.getElementById('f-hours').value,
+                }));
+            } catch (e) {}
+            loadFeed(1);
+        }
+        // Restore persisted filters before the initial load
+        try {
+            const saved = JSON.parse(localStorage.getItem(NEWS_FILTER_KEY) || 'null');
+            if (saved) {
+                if (saved.tier != null) document.getElementById('f-tier').value = saved.tier;
+                if (saved.direction != null) document.getElementById('f-direction').value = saved.direction;
+                if (saved.category != null) document.getElementById('f-category').value = saved.category;
+                if (saved.hours != null) document.getElementById('f-hours').value = saved.hours;
+            }
+        } catch (e) {}
         function changePage(delta) { loadFeed(currentPage + delta); }
 
         WS.on('news_alert', () => {

@@ -24,6 +24,7 @@ import threading
 import time as _time
 import numpy as np
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 
 from database import SessionLocal
@@ -61,12 +62,37 @@ _IVP_MIN_HISTORY = 40        # records needed before IVP is "real" (else HV prox
 GRADUATE_AFTER_DAYS = 2
 EPISODE_GAP_DAYS = 2
 _HISTORY_TTL = 45.0          # cache the live re-evaluation of the log briefly
+# Request-path cache for the assembled screen, keyed by thresholds. Short enough
+# to track the ~20s live chain TTL it's built from; longer when the market is shut.
+_SCREEN_RESULT_TTL_OPEN = 20.0
+_SCREEN_RESULT_TTL_CLOSED = 120.0
 
 # Background prefilter state — the DeMark-9 candidate pool (RSI-screened names
 # that print a fresh TD buy-setup 9 on any timeframe), refreshed by scheduler.
 # Confirmed vs radar is decided per-request in get_screen_results once the user's
 # Step-3 thresholds are applied.
 _SCREEN_STATE = {"pool": [], "ts": 0.0, "universe": 0, "running": False}
+
+_WARM_WORKERS = 8       # parallelism for read-only cache warm-ups (gentle on sources)
+
+
+def _parallel_warm(fn, items, workers: int = _WARM_WORKERS) -> None:
+    """Best-effort concurrent warm-up: run ``fn(item)`` over ``items`` in a thread
+    pool purely to populate the shared (lock-protected) caches before the serial
+    pipeline reads them. Per-item exceptions are swallowed — the serial pass is the
+    source of truth and re-runs anything that didn't warm. No return value."""
+    items = list(items)
+    if not items:
+        return
+
+    def _run(it):
+        try:
+            fn(it)
+        except Exception:
+            pass   # warm-up only; the serial pass handles real errors
+
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(items)))) as ex:
+        list(ex.map(_run, items))
 
 
 # ── Indicators (pure, testable) ─────────────────────────────────────────────
@@ -1016,7 +1042,11 @@ def run_prefilter(limit: int | None = None) -> dict:
         if limit:
             universe = universe[:limit]
         # One batched daily download warms the cache so the scan reads from memory.
+        # Weekly + hourly are batched too so multi_timeframe_rsi (per pooled name)
+        # reads from memory instead of making N×2 serial yfinance calls.
         _prefetch_bars(universe, "1d", "6mo")
+        _prefetch_bars(universe, "1wk", "2y")
+        _prefetch_bars(universe, "1h", "3mo")
         # Chartink live RSI pools (scoring inputs, not gates); fetch PE and CE
         # separately so each side is judged against its own directional rule.
         try:
@@ -1109,8 +1139,27 @@ def _screen_pool(thresholds: dict | None, db) -> tuple[list, list]:
     a failing gate no longer demotes/drops a real 9. ``fully_ok`` marks the names
     that pass everything (used by the Track-Record log)."""
     t = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    pool = list(_SCREEN_STATE["pool"])
+
+    # Parallel cache warm-up: the per-name option chain, anchored VWAP and
+    # Sensibull IVP are the slow, serial, read-only fetches below. Prime their
+    # (lock-protected) caches concurrently first so the serial loop runs all
+    # cache-hits. Best-effort — the serial pass re-fetches anything that missed.
+    def _warm(p):
+        sym = p["symbol"]
+        side = "PE" if p["demark"].get("dir", "buy") == "buy" else "CE"
+        _df, expiries, _spot = build_chain(sym)     # warms the chain cache
+        anchored_vwap_for_symbol(sym, side)         # warms the 5m/daily VWAP cache
+        if expiries:
+            try:
+                from sensibull import get_iv_percentile
+                get_iv_percentile(sym, str(expiries[0]))   # warms the IVP cache
+            except Exception:
+                pass
+    _parallel_warm(_warm, pool)
+
     confirmed, radar = [], []
-    for p in _SCREEN_STATE["pool"]:
+    for p in pool:
         dm = p["demark"]
         # Side is the setup's DIRECTION, not a momentum guess: a bullish TD buy
         # setup is a PE (put) sell; a bearish TD sell setup is a CE (call) sell.
@@ -1191,9 +1240,20 @@ def get_screen_results(thresholds: dict | None = None) -> dict:
     """Live screen for the page. Confirmed = pool names passing all Step-3 gates
     whose confirmation episode is still < 2 days old (newest first); names that
     aged out have graduated to the Track Record log. Radar = a 9 is in but a gate
-    is unmet. Fast — reuses cached chains. Safe to call per request."""
+    is unmet. Fast — reuses cached chains. Safe to call per request.
+
+    Memoized per threshold-set for a short TTL so the page's repeat loads and its
+    2-min poll don't re-run the whole pool build each time. The self-heal kick
+    stays outside the memo so a cold start still triggers a background build."""
     _maybe_kick_prefilter()
     t = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    key = "screen:" + ",".join(f"{k}={round(float(t[k]), 4)}" for k in sorted(t))
+    ttl = _SCREEN_RESULT_TTL_OPEN if _market_is_open() else _SCREEN_RESULT_TTL_CLOSED
+    return _memo(key, ttl, lambda: _build_screen_results(thresholds, t))
+
+
+def _build_screen_results(thresholds: dict | None, t: dict) -> dict:
+    """Assemble the screen payload (uncached). See get_screen_results."""
     db = SessionLocal()
     try:
         confirmed, radar = _screen_pool(thresholds, db)

@@ -873,6 +873,18 @@ input:focus, select:focus, textarea:focus {
 .pnl-value.profit { color: var(--green); }
 .pnl-value.loss { color: var(--red); }
 
+/* ── Shared empty/error state (Utils.emptyState / Utils.errorState) ────── */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+}
+.empty-state .icon,
+.empty-state-icon {
+    font-size: 32px;
+    margin-bottom: 12px;
+}
+
 /* ── Toast Notifications ───────────────────────────────────────────────── */
 .toast-container {
     position: fixed;
@@ -1309,6 +1321,67 @@ input:focus, select:focus, textarea:focus {
 @keyframes ne-rise {
     from { opacity: 0; transform: translateY(10px); }
     to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Scroll reveal — driven by ne-scroll.js (IntersectionObserver) ─────────
+   Format-aware entrances that RE-TRIGGER each time content scrolls into view.
+   Uses the independent `translate`/`scale` CSS properties (NOT `transform`) so
+   these compose with the existing transform-based hover lifts instead of
+   overriding them. JS toggles .ne-in / .ne-rows-in as elements enter/leave.
+   Wrapped in no-preference + :not(calm) so reduced-motion / Calm vibe users
+   keep everything fully visible. */
+@media (prefers-reduced-motion: no-preference) {
+    /* Cards / tiles / panels — rise + fade */
+    html:not([data-ne-vibe="calm"]) .ne-reveal {
+        opacity: 0;
+        translate: 0 26px;
+        transition: opacity var(--motion-slow), translate var(--motion-slow);
+    }
+    /* Visualizations — fade + scale-up (container only; canvas undistorted) */
+    html:not([data-ne-vibe="calm"]) .ne-reveal-viz {
+        opacity: 0;
+        scale: 0.93;
+        transition: opacity var(--motion-slow), scale var(--motion-slow);
+    }
+    /* Table-wrapping cards — fade only, so the row cascade inside reads cleanly */
+    html:not([data-ne-vibe="calm"]) .ne-reveal-fade {
+        opacity: 0;
+        transition: opacity var(--motion-slow);
+    }
+    html:not([data-ne-vibe="calm"]) .ne-reveal.ne-in {
+        opacity: 1;
+        translate: 0 0;
+    }
+    html:not([data-ne-vibe="calm"]) .ne-reveal-viz.ne-in {
+        opacity: 1;
+        scale: 1;
+    }
+    html:not([data-ne-vibe="calm"]) .ne-reveal-fade.ne-in {
+        opacity: 1;
+    }
+
+    /* Log / data table rows — staggered cascade, parent-class driven so live
+       row swaps appear instantly (no replay) and re-entry re-cascades. */
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows > tr {
+        opacity: 0;
+        translate: 0 14px;
+        transition: opacity var(--motion-base), translate var(--motion-base);
+    }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr {
+        opacity: 1;
+        translate: 0 0;
+    }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr:nth-child(1)  { transition-delay:  20ms; }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr:nth-child(2)  { transition-delay:  50ms; }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr:nth-child(3)  { transition-delay:  80ms; }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr:nth-child(4)  { transition-delay: 110ms; }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr:nth-child(5)  { transition-delay: 140ms; }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr:nth-child(6)  { transition-delay: 170ms; }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr:nth-child(7)  { transition-delay: 200ms; }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr:nth-child(8)  { transition-delay: 230ms; }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr:nth-child(9)  { transition-delay: 260ms; }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr:nth-child(10) { transition-delay: 290ms; }
+    html:not([data-ne-vibe="calm"]) tbody.ne-rows.ne-rows-in > tr:nth-child(n+11) { transition-delay: 320ms; }
 }
 
 /* ── Risk gauge: continuous fill gradient + pulsing tip when elevated ── */
